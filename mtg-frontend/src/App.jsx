@@ -290,7 +290,8 @@ const Icons = {
   Send: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
   Cart: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>,
   Sparkles: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>,
-  ExternalLink: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+  ExternalLink: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>,
+  Heart: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
 };
 
 const getScryfallImage = (cardName) => {
@@ -318,7 +319,7 @@ function JudgeWidget({ open, setOpen }) {
     } catch {
       setChat(prev => [...prev, {role: "judge", text: "Verbindungsfehler zum Judge-Netzwerk."}]);
     }
-    loading(false);
+    setLoading(false);
   };
 
   return (
@@ -407,7 +408,7 @@ function AppleHeader({ currentUser, setCurrentUser, isDarkMode, setIsDarkMode, s
            <div className={`mega-content-panel ${hoveredNav === 'suche' ? 'active' : ''}`}>
                <div className="dropdown-column">
                    <h4>Entdecken</h4>
-                   <a onClick={() => {navigate('/'); setIsMenuOpen(false); setHoveredNav(null);}}>Kartensuche</a>
+                   <a onClick={() => {navigate('/?view=search'); setIsMenuOpen(false); setHoveredNav(null);}}>Kartensuche</a>
                    <a onClick={() => {navigate('/?view=trends'); setIsMenuOpen(false); setHoveredNav(null);}}>Beliebte Karten (Trends)</a>
                    <a href="https://www.cardmarket.com/de/Magic" target="_blank" rel="noopener noreferrer" style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
                      Marktplatz (Cardmarket) <Icons.ExternalLink />
@@ -416,8 +417,8 @@ function AppleHeader({ currentUser, setCurrentUser, isDarkMode, setIsDarkMode, s
                <div className="dropdown-column">
                    <h4>KI-Assistent</h4>
                    <a onClick={() => {navigate('/?view=synergy'); setIsMenuOpen(false); setHoveredNav(null);}}>Synergie-Analyse</a>
-                   <a onClick={() => {navigate('/?view=judge&tab=chat'); setIsMenuOpen(false); setHoveredNav(null);}}>MTG Regel-Judge</a>
-                   <a onClick={() => {navigate('/?view=judge&tab=rulebook'); setIsMenuOpen(false); setHoveredNav(null);}}>Offizielles Regelbuch</a>
+                   <a onClick={() => {navigate('/?view=judge'); setIsMenuOpen(false); setHoveredNav(null);}}>MTG Regel-Judge</a>
+                   <a onClick={() => {navigate('/?view=rulebook'); setIsMenuOpen(false); setHoveredNav(null);}}>Offizielles Regelbuch</a>
                </div>
            </div>
 
@@ -495,6 +496,258 @@ function AuthScreen({ onLoginSuccess }) {
       </div>
     </div>
   );
+}
+
+// --- SUCHE & KI HUB (NEUE STRUKTUR) ---
+function EntdeckenHub({ currentUser }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryParams = new URLSearchParams(location.search);
+  const viewMode = queryParams.get('view') || 'search';
+
+  return (
+    <div className="apple-main-container">
+      <div className="segmented-control" style={{marginBottom: '30px', margin: '0 auto 40px auto', display: 'flex'}}>
+        <button className={`segment-btn ${viewMode === 'search' ? 'active' : ''}`} onClick={() => navigate('/?view=search')}>Kartensuche</button>
+        <button className={`segment-btn ${viewMode === 'trends' ? 'active' : ''}`} onClick={() => navigate('/?view=trends')}>Markt-Trends</button>
+        <button className={`segment-btn ${viewMode === 'synergy' ? 'active' : ''}`} onClick={() => navigate('/?view=synergy')}>Synergie-Scanner</button>
+        <button className={`segment-btn ${viewMode === 'judge' ? 'active' : ''}`} onClick={() => navigate('/?view=judge')}>KI-Judge</button>
+        <button className={`segment-btn ${viewMode === 'rulebook' ? 'active' : ''}`} onClick={() => navigate('/?view=rulebook')}>Regelbuch</button>
+      </div>
+
+      {viewMode === 'search' && <KartenSuche currentUser={currentUser} />}
+      {viewMode === 'trends' && <MarktTrends />}
+      {viewMode === 'synergy' && <SynergieAnsicht currentUser={currentUser} />}
+      {viewMode === 'judge' && <JudgeChat />}
+      {viewMode === 'rulebook' && <RegelbuchAnsicht />}
+    </div>
+  );
+}
+
+function KartenSuche({ currentUser }) {
+  const location = useLocation();
+  const queryParams = new URLSearchParams(location.search);
+  const initialQ = queryParams.get('q');
+
+  const [karte, setKarte] = useState(null);
+  const [suche, setSuche] = useState("");
+  const [laedt, setLaedt] = useState(false);
+  const [selectedPrintIndex, setSelectedPrintIndex] = useState(0);
+  const [existingAlben, setExistingAlben] = useState([]);
+  const [albumMode, setAlbumMode] = useState("select");
+  const [albumName, setAlbumName] = useState("");
+
+  const loadAlbums = () => {
+    fetch(`http://localhost:8000/api/sammlung/${currentUser}`).then(res => res.json()).then(data => {
+        if(data && data.erfolg && data.alben) {
+          const keys = Object.keys(data.alben);
+          setExistingAlben(keys);
+          if(keys.length > 0) { setAlbumMode("select"); setAlbumName(keys[0]); } else { setAlbumMode("new"); }
+        }
+    }).catch(e => console.log(e));
+  };
+
+  useEffect(() => { loadAlbums(); }, [currentUser]);
+
+  useEffect(() => {
+    if (initialQ && !karte && !laedt) {
+      setSuche(initialQ);
+      triggerSearch(initialQ);
+    }
+  }, [initialQ]);
+
+  const handleSearchSubmit = () => {
+    if(!suche) return;
+    triggerSearch(suche);
+  }
+
+  const triggerSearch = async (searchTerm) => {
+    setKarte(null); setLaedt(true);
+    try {
+      const res = await fetch(`http://localhost:8000/api/suche/${searchTerm}`)
+      if (!res.ok) { alert("Fehler bei der Serververbindung."); setLaedt(false); return; }
+      const data = await res.json()
+      if (data.error) alert("Karte nicht gefunden."); 
+      else { setKarte(data); setSelectedPrintIndex(0); setSuche(data.name); }
+    } catch { alert("Suche fehlgeschlagen."); }
+    setLaedt(false);
+  }
+
+  const speichereKarte = async (zielAlbum, zeigeAlert = true) => {
+    const actP = karte?.prints?.[selectedPrintIndex];
+    if(!actP) return alert("Fehler beim Speichern der Karte.");
+    try {
+      const res = await fetch(`http://localhost:8000/api/sammlung/hinzufuegen`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: actP.preis && actP.preis !== "N/A" ? String(actP.preis) : "0.00" })
+      });
+      const data = await res.json();
+      if (data && data.erfolg) { 
+        if(zeigeAlert) alert(`Gespeichert in "${zielAlbum}"!`); 
+        loadAlbums();
+      } 
+    } catch { alert("Fehler."); }
+  }
+
+  const handleSichernKlick = () => {
+    const finalAlbumName = albumName.trim();
+    if(!finalAlbumName) return alert("Bitte Albumnamen eingeben.");
+    speichereKarte(finalAlbumName, true);
+  }
+
+  const handleWunschlisteKlick = () => {
+    speichereKarte("Wunschliste", true);
+  }
+
+  const navigate = useNavigate();
+  const navigateToSynergy = () => {
+    if(karte && karte.name) {
+        navigate(`/?view=synergy&card=${encodeURIComponent(karte.name)}`);
+    }
+  }
+
+  const actPrint = karte && Array.isArray(karte.prints) ? karte.prints[selectedPrintIndex] : null;
+  const getCardmarketUrl = (kartenName) => `https://www.cardmarket.com/de/Magic/Products/Search?searchString=${encodeURIComponent(kartenName || "")}`;
+
+  return (
+    <div>
+      <div className="search-hero" style={{paddingTop: '0'}}>
+        <h2>Intelligente Kartensuche.</h2>
+        <p>Finde Versionen, deutsche Übersetzungen und aktuelle Marktdaten.</p>
+        <div className="search-bar-wrapper">
+            <input 
+              id="main-search-input"
+              value={suche} 
+              onChange={(e) => setSuche(e.target.value)} 
+              placeholder="Kartennamen eingeben (z.B. Sol Ring)..." 
+              onKeyDown={(e) => e.key === 'Enter' && handleSearchSubmit()} 
+              style={{boxShadow: '0 8px 20px var(--shadow-color)'}} 
+            />
+            <button className="primary-btn" onClick={handleSearchSubmit}>{laedt && !karte ? "Suche..." : "Suchen"}</button>
+        </div>
+      </div>
+
+      {karte && actPrint && (
+        <div className="content-card">
+          <div className="result-layout">
+            <div className="card-image-wrapper">
+              <img src={actPrint.bild_url || "https://via.placeholder.com/180"} alt={karte?.name || "Unbekannt"} className="main-card-img" />
+              {karte.prints && karte.prints.length > 1 && (
+                <div>
+                  <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600}}>Alle Editionen</span>
+                  <div className="prints-scroll" style={{marginTop: '10px'}}>
+                    {karte.prints.map((p, i) => (
+                      <img key={i} src={p?.bild_url || "https://via.placeholder.com/180"} className={`print-thumb ${i === selectedPrintIndex ? 'active' : ''}`} onClick={() => setSelectedPrintIndex(i)} title={p?.set_name} alt="Edition" />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="info-header">
+                <h3>{karte?.name}</h3>
+                <p>{karte?.typ} • <strong style={{color: 'var(--text-main)'}}>{actPrint?.set_name}</strong></p>
+              </div>
+              <div className="translation-box">
+                <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, display: 'block', marginBottom: '12px'}}>Deutsche Übersetzung (KI)</span>
+                <p style={{color: 'var(--text-main)', fontSize: '1.15rem', margin: 0, fontStyle: 'italic'}}>{karte?.text_de}</p>
+              </div>
+              
+              <div style={{display: 'flex', alignItems: 'center', gap: '25px', marginBottom: '40px', flexWrap: 'wrap'}}>
+                <div>
+                  <span style={{fontSize: '0.95rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, display: 'block'}}>Marktwert</span>
+                  <p className="price-display">{actPrint?.preis || "0.00"} €</p>
+                </div>
+                <a href={getCardmarketUrl(karte?.name)} target="_blank" rel="noopener noreferrer" className="market-btn" style={{marginTop: '15px'}}>
+                   <Icons.Cart /> Auf Cardmarket kaufen
+                </a>
+              </div>
+              
+              <div style={{borderTop: '1px solid var(--border-color)', paddingTop: '30px'}}>
+                <button id="synergy-btn" className="secondary-btn" style={{marginBottom: '30px', width: '100%', padding: '18px', fontSize: '1.1rem'}} onClick={navigateToSynergy}>
+                   <Icons.Sparkles /> KI-Synergien analysieren
+                </button>
+                
+                <div style={{display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap'}}>
+                    <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--btn-secondary)', padding: '20px', borderRadius: '20px', flexGrow: 1}}>
+                      {existingAlben && existingAlben.length > 0 && albumMode === "select" ? (
+                        <select value={albumName} onChange={e => { if(e.target.value === "NEW") { setAlbumMode("new"); setAlbumName(""); } else setAlbumName(e.target.value); }} style={{padding: '14px', flexGrow: 1, border: 'none', background: 'var(--input-bg)'}}>
+                          {(existingAlben || []).map(a => <option key={a} value={a}>{a}</option>)}
+                          <option value="NEW">+ Neues Album erstellen...</option>
+                        </select>
+                      ) : (
+                        <input type="text" placeholder="Neues Album benennen..." value={albumName} onChange={e => setAlbumName(e.target.value)} style={{padding: '14px', flexGrow: 1, border: 'none', background: 'var(--input-bg)'}} />
+                      )}
+                      <button className="primary-btn" style={{padding: '14px 35px'}} onClick={handleSichernKlick}>Sichern</button>
+                    </div>
+
+                    <button className="secondary-btn" style={{padding: '20px', height: '100%', borderRadius: '20px', border: '1px solid var(--border-color)', background: 'var(--bg-card)'}} onClick={handleWunschlisteKlick}>
+                        <Icons.Heart /> Auf Wunschliste
+                    </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MarktTrends() {
+  const navigate = useNavigate();
+  const [trendingCards, setTrendingCards] = useState([]);
+  const [loadingTrends, setLoadingTrends] = useState(false);
+
+  useEffect(() => {
+    const loadTrends = async () => {
+      setLoadingTrends(true);
+      const identifiers = [
+          {name: "The One Ring"}, {name: "Sheoldred, the Apocalypse"},
+          {name: "Dockside Extortionist"}, {name: "Rhystic Study"},
+          {name: "Smothering Tithe"}, {name: "Cyclonic Rift"},
+          {name: "Mana Crypt"}, {name: "Fierce Guardianship"}
+      ];
+      try {
+          const res = await fetch("https://api.scryfall.com/cards/collection", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ identifiers })
+          });
+          const data = await res.json();
+          if(data && Array.isArray(data.data)) setTrendingCards(data.data);
+      } catch (e) {}
+      setLoadingTrends(false);
+    };
+    loadTrends();
+  }, []);
+
+  const clickTrendingCard = (cardName) => {
+      navigate(`/?view=search&q=${encodeURIComponent(cardName)}`);
+  }
+
+  return (
+    <div>
+        <div className="search-hero" style={{paddingTop: '0'}}>
+            <h2>Markt-Trends.</h2>
+            <p>Die aktuell gefragtesten Karten im Format.</p>
+        </div>
+        <div className="content-card">
+            <h3 style={{marginBottom: '20px', fontSize: '1.8rem'}}>Top Staples der Woche</h3>
+            {loadingTrends ? <div className="spinner"></div> : (
+                <div className="trending-grid">
+                    {(trendingCards || []).map(c => (
+                        <div key={c?.id || Math.random()} className="trending-item" onClick={() => clickTrendingCard(c?.name)}>
+                            <img src={c?.image_uris?.normal || "https://via.placeholder.com/180"} alt={c?.name || "Karte"} />
+                            <div className="trending-overlay">
+                                <span>In Suche öffnen</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    </div>
+  )
 }
 
 function SynergieAnsicht({ currentUser }) {
@@ -593,15 +846,17 @@ function SynergieAnsicht({ currentUser }) {
   }
 
   return (
-    <div className="apple-main-container">
-      <div className="search-hero">
-        <h2>Synergie-Analyse.</h2>
-        <p>Entdecke Combos für Einzelkarten oder lasse die KI deine Decks und Alben nach verborgenen Synergien scannen.</p>
-        <div className="segmented-control" style={{marginBottom: '30px', margin: '0 auto 30px auto', display: 'flex'}}>
+    <div>
+      <div className="search-hero" style={{paddingTop: '0'}}>
+        <h2>Synergie-Scanner.</h2>
+        <p>Lass die KI deine Decks und Alben nach verborgenen Combos durchsuchen.</p>
+        
+        <div className="segmented-control" style={{margin: '30px auto', display: 'flex'}}>
             <button className={`segment-btn ${activeMode === 'single' ? 'active' : ''}`} onClick={() => {setActiveMode('single'); setCombos([]); setKarte(null);}}>Einzelkarte</button>
             <button className={`segment-btn ${activeMode === 'decks' ? 'active' : ''}`} onClick={() => {setActiveMode('decks'); setCombos([]); setKarte(null);}}>Meine Decks scannen</button>
             <button className={`segment-btn ${activeMode === 'albums' ? 'active' : ''}`} onClick={() => {setActiveMode('albums'); setCombos([]); setKarte(null);}}>Alben scannen</button>
         </div>
+        
         {activeMode === 'single' && (
             <div className="search-bar-wrapper">
                 <input value={suche} onChange={(e) => setSuche(e.target.value)} placeholder="Kartennamen eingeben..." onKeyDown={(e) => e.key === 'Enter' && handleSearchSubmit()} style={{boxShadow: '0 8px 20px var(--shadow-color)'}} />
@@ -713,14 +968,64 @@ function SynergieAnsicht({ currentUser }) {
   );
 }
 
-function JudgeAnsicht() {
-  const location = useLocation();
-  const queryParams = new URLSearchParams(location.search);
-  const initialTab = queryParams.get('tab') || 'chat';
-  const [activeTab, setActiveTab] = useState(initialTab);
+function JudgeChat() {
   const [question, setQuestion] = useState("");
   const [chat, setChat] = useState([{role: "judge", text: "Willkommen im offiziellen Judge-Center. Bitte beschreibe die Spielsituation oder Regelfrage so genau wie möglich."}]);
   const [loading, setLoading] = useState(false);
+
+  const askJudge = async () => {
+    if(!question.trim()) return;
+    const userQ = question;
+    setChat([...chat, {role: "user", text: userQ}]);
+    setQuestion(""); setLoading(true);
+    try {
+      const res = await fetch(`http://localhost:8000/api/judge`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frage: userQ })
+      });
+      const data = await res.json();
+      setChat(prev => [...prev, {role: "judge", text: data.antwort}]);
+    } catch {
+      setChat(prev => [...prev, {role: "judge", text: "Verbindungsfehler."}]);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{maxWidth: '1000px', margin: '0 auto'}}>
+      <div className="search-hero" style={{paddingTop: '0'}}>
+        <h2>MTG Regel-Judge.</h2>
+        <p>Dein KI-Schiedsrichter für Spielsituationen und Karteninteraktionen.</p>
+      </div>
+
+      <div className="judge-full-container">
+        <div className="judge-full-messages">
+          {(chat || []).map((m, i) => (
+            <div key={i} style={{textAlign: m.role === 'user' ? 'right' : 'left'}}>
+              <div style={{
+                display: 'inline-block', padding: '15px 25px', borderRadius: '24px', 
+                background: m.role === 'user' ? 'var(--accent-color)' : 'var(--bg-card)', 
+                color: m.role === 'user' ? 'var(--accent-text)' : 'var(--text-main)', 
+                maxWidth: '80%', wordWrap: 'break-word', fontSize: '1.1rem',
+                border: m.role === 'judge' ? '1px solid var(--border-color)' : 'none',
+                boxShadow: m.role === 'judge' ? '0 4px 15px var(--shadow-color)' : 'none'
+              }}>
+                {m.text}
+              </div>
+            </div>
+          ))}
+          {loading && <div style={{textAlign: 'left'}}><span style={{display: 'inline-block', padding: '15px 25px', borderRadius: '24px', background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border-color)'}}>Analysiere die Regeln...</span></div>}
+        </div>
+        <div className="judge-full-input">
+          <input value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => e.key === 'Enter' && askJudge()} placeholder="Wie löst sich dieser Effekt auf...?" />
+          <button className="primary-btn" style={{borderRadius: '980px', padding: '0 30px'}} onClick={askJudge}>Fragen</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RegelbuchAnsicht() {
   const [ruleSearch, setRuleSearch] = useState("");
   
   const rulesDatabase = [
@@ -746,286 +1051,32 @@ function JudgeAnsicht() {
     r.id.includes(ruleSearch)
   );
 
-  const askJudge = async () => {
-    if(!question.trim()) return;
-    const userQ = question;
-    setChat([...chat, {role: "user", text: userQ}]);
-    setQuestion(""); setLoading(true);
-    try {
-      const res = await fetch(`http://localhost:8000/api/judge`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ frage: userQ })
-      });
-      const data = await res.json();
-      setChat(prev => [...prev, {role: "judge", text: data.antwort}]);
-    } catch {
-      setChat(prev => [...prev, {role: "judge", text: "Verbindungsfehler."}]);
-    }
-    setLoading(false);
-  };
-
   return (
-    <div className="apple-main-container" style={{maxWidth: '1000px'}}>
-      <div className="search-hero" style={{paddingBottom: '20px'}}>
-        <h2>MTG Regel-Judge.</h2>
-        <p>Dein KI-Schiedsrichter für Spielsituationen und das Handbuch für komplexe Mechaniken.</p>
+    <div style={{maxWidth: '1000px', margin: '0 auto'}}>
+      <div className="search-hero" style={{paddingTop: '0'}}>
+        <h2>Offizielles Regelbuch.</h2>
+        <p>Das Handbuch für komplexe Mechaniken und Keywords.</p>
       </div>
 
-      <div className="segmented-control" style={{marginBottom: '30px', margin: '0 auto', display: 'flex'}}>
-        <button className={`segment-btn ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>KI-Chat</button>
-        <button className={`segment-btn ${activeTab === 'rulebook' ? 'active' : ''}`} onClick={() => setActiveTab('rulebook')}>Offizielles Regelbuch</button>
+      <div className="content-card" style={{padding: '40px'}}>
+        <input 
+          type="text" 
+          placeholder="Regelbuch durchsuchen (z.B. 'Kampfphase', 'Trampelschaden', '702.1')..." 
+          value={ruleSearch} 
+          onChange={(e) => setRuleSearch(e.target.value)} 
+          style={{marginBottom: '30px', background: 'var(--btn-secondary)', border: 'none', boxShadow: 'none'}}
+        />
+        <div>
+          {filteredRules.length === 0 ? <p>Keine passende Regel gefunden.</p> : filteredRules.map((rule, i) => (
+            <div key={i} className="rule-card">
+              <h4><span className="rule-id">{rule.id}</span> {rule.title}</h4>
+              <p>{rule.text}</p>
+            </div>
+          ))}
+        </div>
       </div>
-
-      {activeTab === 'chat' && (
-        <div className="judge-full-container">
-          <div className="judge-full-messages">
-            {(chat || []).map((m, i) => (
-              <div key={i} style={{textAlign: m.role === 'user' ? 'right' : 'left'}}>
-                <div style={{
-                  display: 'inline-block', padding: '15px 25px', borderRadius: '24px', 
-                  background: m.role === 'user' ? 'var(--accent-color)' : 'var(--bg-card)', 
-                  color: m.role === 'user' ? 'var(--accent-text)' : 'var(--text-main)', 
-                  maxWidth: '80%', wordWrap: 'break-word', fontSize: '1.1rem',
-                  border: m.role === 'judge' ? '1px solid var(--border-color)' : 'none',
-                  boxShadow: m.role === 'judge' ? '0 4px 15px var(--shadow-color)' : 'none'
-                }}>
-                  {m.text}
-                </div>
-              </div>
-            ))}
-            {loading && <div style={{textAlign: 'left'}}><span style={{display: 'inline-block', padding: '15px 25px', borderRadius: '24px', background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border-color)'}}>Analysiere die Regeln...</span></div>}
-          </div>
-          <div className="judge-full-input">
-            <input value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => e.key === 'Enter' && askJudge()} placeholder="Wie löst sich dieser Effekt auf...?" />
-            <button className="primary-btn" style={{borderRadius: '980px', padding: '0 30px'}} onClick={askJudge}>Fragen</button>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'rulebook' && (
-        <div className="content-card" style={{padding: '40px'}}>
-          <input 
-            type="text" 
-            placeholder="Regelbuch durchsuchen (z.B. 'Kampfphase', 'Trampelschaden', '702.1')..." 
-            value={ruleSearch} 
-            onChange={(e) => setRuleSearch(e.target.value)} 
-            style={{marginBottom: '30px', background: 'var(--btn-secondary)', border: 'none', boxShadow: 'none'}}
-          />
-          <div>
-            {filteredRules.length === 0 ? <p>Keine passende Regel gefunden.</p> : filteredRules.map((rule, i) => (
-              <div key={i} className="rule-card">
-                <h4><span className="rule-id">{rule.id}</span> {rule.title}</h4>
-                <p>{rule.text}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
-}
-
-function KartenSuche({ currentUser }) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const queryParams = new URLSearchParams(location.search);
-  const viewMode = queryParams.get('view') || 'search';
-
-  const [karte, setKarte] = useState(null);
-  const [suche, setSuche] = useState("");
-  const [laedt, setLaedt] = useState(false);
-  const [selectedPrintIndex, setSelectedPrintIndex] = useState(0);
-  const [existingAlben, setExistingAlben] = useState([]);
-  const [albumMode, setAlbumMode] = useState("select");
-  const [albumName, setAlbumName] = useState("");
-  const [trendingCards, setTrendingCards] = useState([]);
-  const [loadingTrends, setLoadingTrends] = useState(false);
-
-  const isTrendsView = viewMode === 'trends';
-
-  useEffect(() => {
-    fetch(`http://localhost:8000/api/sammlung/${currentUser}`).then(res => res.json()).then(data => {
-        if(data && data.erfolg && data.alben) {
-          const keys = Object.keys(data.alben);
-          setExistingAlben(keys);
-          if(keys.length > 0) { setAlbumMode("select"); setAlbumName(keys[0]); } else { setAlbumMode("new"); }
-        }
-      }).catch(e => console.log(e));
-  }, [currentUser]);
-
-  useEffect(() => {
-      if (isTrendsView && trendingCards.length === 0) loadTrends();
-      if (!isTrendsView && suche === "") setKarte(null);
-  }, [isTrendsView]);
-
-  if (viewMode === 'synergy') return <SynergieAnsicht currentUser={currentUser} />;
-  if (viewMode === 'judge') return <JudgeAnsicht />;
-
-  const loadTrends = async () => {
-      setLoadingTrends(true);
-      const identifiers = [
-          {name: "The One Ring"}, {name: "Sheoldred, the Apocalypse"},
-          {name: "Dockside Extortionist"}, {name: "Rhystic Study"},
-          {name: "Smothering Tithe"}, {name: "Cyclonic Rift"},
-          {name: "Mana Crypt"}, {name: "Fierce Guardianship"}
-      ];
-      try {
-          const res = await fetch("https://api.scryfall.com/cards/collection", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ identifiers })
-          });
-          const data = await res.json();
-          if(data && Array.isArray(data.data)) setTrendingCards(data.data);
-      } catch (e) {}
-      setLoadingTrends(false);
-  };
-
-  const handleSearchSubmit = () => {
-    if(!suche) return;
-    if(isTrendsView) navigate('/');
-    triggerSearch(suche);
-  }
-
-  const triggerSearch = async (searchTerm) => {
-    setKarte(null); setLaedt(true);
-    try {
-      const res = await fetch(`http://localhost:8000/api/suche/${searchTerm}`)
-      if (!res.ok) { alert("Fehler bei der Serververbindung."); setLaedt(false); return; }
-      const data = await res.json()
-      if (data.error) alert("Karte nicht gefunden."); 
-      else { setKarte(data); setSelectedPrintIndex(0); setSuche(data.name); }
-    } catch { alert("Suche fehlgeschlagen."); }
-    setLaedt(false);
-  }
-
-  const navigateToSynergy = () => {
-    if(karte && karte.name) {
-        navigate(`/?view=synergy&card=${encodeURIComponent(karte.name)}`);
-    }
-  }
-
-  const speichereKarte = async () => {
-    const finalAlbumName = albumName.trim();
-    if(!finalAlbumName) return alert("Bitte Albumnamen eingeben.");
-    const actP = karte?.prints?.[selectedPrintIndex];
-    if(!actP) return alert("Fehler beim Speichern der Karte.");
-    try {
-      const res = await fetch(`http://localhost:8000/api/sammlung/hinzufuegen`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: finalAlbumName, bild_url: actP.bild_url || "", preis: actP.preis && actP.preis !== "N/A" ? String(actP.preis) : "0.00" })
-      });
-      const data = await res.json();
-      if (data && data.erfolg) { 
-        alert(`Gespeichert in "${finalAlbumName}"!`); 
-        if(!existingAlben.includes(finalAlbumName)) setExistingAlben([...existingAlben, finalAlbumName]);
-        setAlbumMode("select");
-      } 
-    } catch { alert("Fehler."); }
-  }
-
-  const clickTrendingCard = (cardName) => {
-      setSuche(cardName);
-      navigate('/');
-      triggerSearch(cardName);
-  }
-
-  const actPrint = karte && Array.isArray(karte.prints) ? karte.prints[selectedPrintIndex] : null;
-  const getCardmarketUrl = (kartenName) => `https://www.cardmarket.com/de/Magic/Products/Search?searchString=${encodeURIComponent(kartenName || "")}`;
-
-  return (
-    <div className="apple-main-container">
-      <div className="search-hero">
-        <h2>{isTrendsView ? 'Markt-Trends.' : 'Intelligente Kartensuche.'}</h2>
-        <p>{isTrendsView ? 'Die aktuell gefragtesten Karten im Format.' : 'Finde Versionen, deutsche Übersetzungen und aktuelle Marktdaten.'}</p>
-        <div className="search-bar-wrapper">
-            <input 
-              id="main-search-input"
-              value={suche} 
-              onChange={(e) => setSuche(e.target.value)} 
-              placeholder="Kartennamen eingeben (z.B. Sol Ring)..." 
-              onKeyDown={(e) => e.key === 'Enter' && handleSearchSubmit()} 
-              style={{boxShadow: '0 8px 20px var(--shadow-color)'}} 
-            />
-            <button className="primary-btn" onClick={handleSearchSubmit}>{laedt && !karte ? "Suche..." : "Suchen"}</button>
-        </div>
-      </div>
-      
-      {isTrendsView && (
-          <div className="content-card">
-              <h3 style={{marginBottom: '20px', fontSize: '1.8rem'}}>Top Staples der Woche</h3>
-              {loadingTrends ? <div className="spinner"></div> : (
-                  <div className="trending-grid">
-                      {(trendingCards || []).map(c => (
-                          <div key={c?.id || Math.random()} className="trending-item" onClick={() => clickTrendingCard(c?.name)}>
-                              <img src={c?.image_uris?.normal || "https://via.placeholder.com/180"} alt={c?.name || "Karte"} />
-                              <div className="trending-overlay">
-                                  <span>Karte suchen</span>
-                              </div>
-                          </div>
-                      ))}
-                  </div>
-              )}
-          </div>
-      )}
-
-      {!isTrendsView && karte && actPrint && (
-        <div className="content-card">
-          <div className="result-layout">
-            <div className="card-image-wrapper">
-              <img src={actPrint.bild_url || "https://via.placeholder.com/180"} alt={karte?.name || "Unbekannt"} className="main-card-img" />
-              {karte.prints && karte.prints.length > 1 && (
-                <div>
-                  <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600}}>Alle Editionen</span>
-                  <div className="prints-scroll" style={{marginTop: '10px'}}>
-                    {karte.prints.map((p, i) => (
-                      <img key={i} src={p?.bild_url || "https://via.placeholder.com/180"} className={`print-thumb ${i === selectedPrintIndex ? 'active' : ''}`} onClick={() => setSelectedPrintIndex(i)} title={p?.set_name} alt="Edition" />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div>
-              <div className="info-header">
-                <h3>{karte?.name}</h3>
-                <p>{karte?.typ} • <strong style={{color: 'var(--text-main)'}}>{actPrint?.set_name}</strong></p>
-              </div>
-              <div className="translation-box">
-                <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, display: 'block', marginBottom: '12px'}}>Deutsche Übersetzung (KI)</span>
-                <p style={{color: 'var(--text-main)', fontSize: '1.15rem', margin: 0, fontStyle: 'italic'}}>{karte?.text_de}</p>
-              </div>
-              
-              <div style={{display: 'flex', alignItems: 'center', gap: '25px', marginBottom: '40px', flexWrap: 'wrap'}}>
-                <div>
-                  <span style={{fontSize: '0.95rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, display: 'block'}}>Marktwert</span>
-                  <p className="price-display">{actPrint?.preis || "0.00"} €</p>
-                </div>
-                <a href={getCardmarketUrl(karte?.name)} target="_blank" rel="noopener noreferrer" className="market-btn" style={{marginTop: '15px'}}>
-                   <Icons.Cart /> Auf Cardmarket kaufen
-                </a>
-              </div>
-              
-              <div style={{borderTop: '1px solid var(--border-color)', paddingTop: '30px'}}>
-                <button id="synergy-btn" className="secondary-btn" style={{marginBottom: '30px', width: '100%', padding: '18px', fontSize: '1.1rem'}} onClick={navigateToSynergy}>
-                   <Icons.Sparkles /> KI-Synergien analysieren
-                </button>
-                <div style={{display: 'flex', gap: '15px', alignItems: 'center', background: 'var(--btn-secondary)', padding: '20px', borderRadius: '20px'}}>
-                  {existingAlben && existingAlben.length > 0 && albumMode === "select" ? (
-                    <select value={albumName} onChange={e => { if(e.target.value === "NEW") { setAlbumMode("new"); setAlbumName(""); } else setAlbumName(e.target.value); }} style={{padding: '14px', flexGrow: 1, border: 'none', background: 'var(--input-bg)'}}>
-                      {(existingAlben || []).map(a => <option key={a} value={a}>{a}</option>)}
-                      <option value="NEW">+ Neues Album erstellen...</option>
-                    </select>
-                  ) : (
-                    <input type="text" placeholder="Neues Album benennen..." value={albumName} onChange={e => setAlbumName(e.target.value)} style={{padding: '14px', flexGrow: 1, border: 'none', background: 'var(--input-bg)'}} />
-                  )}
-                  <button className="primary-btn" style={{padding: '14px 35px'}} onClick={speichereKarte}>Sichern</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function MeineSammlung({ currentUser }) {
@@ -1959,7 +2010,7 @@ function App() {
     <>
       <style>{globalStyles}</style>
       <AppleHeader currentUser={currentUser} setCurrentUser={setCurrentUser} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} setIsJudgeOpen={setIsJudgeOpen} />
-      <main><Routes><Route path="/" element={<KartenSuche currentUser={currentUser} />} /><Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} />} /><Route path="/decks" element={<DecksView currentUser={currentUser} />} /></Routes></main>
+      <main><Routes><Route path="/" element={<EntdeckenHub currentUser={currentUser} />} /><Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} />} /><Route path="/decks" element={<DecksView currentUser={currentUser} />} /></Routes></main>
       <JudgeWidget open={isJudgeOpen} setOpen={setIsJudgeOpen} />
     </>
   );
