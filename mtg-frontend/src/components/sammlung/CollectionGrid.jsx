@@ -1,0 +1,311 @@
+import { useState } from 'react';
+import { getFallbackCardImage } from '../../utils/scryfallHelpers';
+
+function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
+  const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
+  const [sortBy, setSortBy] = useState("name"); // "name" | "priceDesc" | "priceAsc" | "cmc" | "rarity"
+  const [currentPage, setCurrentPage] = useState(1);
+  const cardsPerPage = 24;
+
+  const getPriceVal = (k) => {
+    if (!k) return 0;
+    return parseFloat(String(k.livePreis || k.preis || "0").replace(',', '.')) || 0;
+  };
+
+  const getRarityWeight = (rarity) => {
+    switch (String(rarity).toLowerCase()) {
+      case 'mythic': return 4;
+      case 'rare': return 3;
+      case 'uncommon': return 2;
+      case 'common': return 1;
+      default: return 0;
+    }
+  };
+
+  // 1. Sort Cards
+  const sortedCards = [...karten].sort((a, b) => {
+    if (sortBy === "name") {
+      return (a.name || "").localeCompare(b.name || "");
+    }
+    if (sortBy === "priceDesc") {
+      return getPriceVal(b) - getPriceVal(a);
+    }
+    if (sortBy === "priceAsc") {
+      return getPriceVal(a) - getPriceVal(b);
+    }
+    if (sortBy === "cmc") {
+      return (a.cmc || 0) - (b.cmc || 0);
+    }
+    if (sortBy === "rarity") {
+      return getRarityWeight(b.rarity) - getRarityWeight(a.rarity);
+    }
+    return 0;
+  });
+
+  // 2. Paginate Cards
+  const totalCards = sortedCards.length;
+  const indexOfLastCard = currentPage * cardsPerPage;
+  const indexOfFirstCard = indexOfLastCard - cardsPerPage;
+  const currentCards = sortedCards.slice(indexOfFirstCard, indexOfLastCard);
+  const totalPages = Math.ceil(totalCards / cardsPerPage);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
+
+  return (
+    <div>
+      {/* Controls: Sorting, View Mode, Counter */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '20px',
+        flexWrap: 'wrap',
+        gap: '15px'
+      }}>
+        <div style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>
+          Karten gefunden: <strong style={{ color: 'var(--text-main)' }}>{totalCards}</strong>
+        </div>
+
+        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+          {/* Sorting */}
+          <select
+            value={sortBy}
+            onChange={e => { setSortBy(e.target.value); setCurrentPage(1); }}
+            style={{
+              padding: '8px 12px',
+              fontSize: '0.9rem',
+              width: 'auto',
+              borderRadius: '8px',
+              background: 'var(--btn-secondary)',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="name">Alphabetisch (A-Z)</option>
+            <option value="priceDesc">Preis: Hoch → Tief</option>
+            <option value="priceAsc">Preis: Tief → Hoch</option>
+            <option value="cmc">Manakosten (CMC)</option>
+            <option value="rarity">Seltenheit</option>
+          </select>
+
+          {/* View Mode Toggle */}
+          <div style={{
+            display: 'flex',
+            background: 'var(--btn-secondary)',
+            padding: '3px',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)'
+          }}>
+            <button
+              onClick={() => setViewMode("grid")}
+              style={{
+                background: viewMode === "grid" ? "var(--bg-card)" : "transparent",
+                color: "var(--text-main)",
+                border: 'none',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                boxShadow: viewMode === "grid" ? "0 2px 4px var(--shadow-color)" : "none"
+              }}
+            >
+              Grid
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              style={{
+                background: viewMode === "list" ? "var(--bg-card)" : "transparent",
+                color: "var(--text-main)",
+                border: 'none',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                boxShadow: viewMode === "list" ? "0 2px 4px var(--shadow-color)" : "none"
+              }}
+            >
+              Liste
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      {totalCards === 0 ? (
+        <div style={{
+          padding: '60px',
+          textAlign: 'center',
+          color: 'var(--text-muted)',
+          fontSize: '1.1rem',
+          fontStyle: 'italic',
+          background: 'var(--bg-card)',
+          borderRadius: '16px',
+          border: '1px dashed var(--border-color)'
+        }}>
+          Keine Karten entsprechen den ausgewählten Filtern.
+        </div>
+      ) : viewMode === "grid" ? (
+        /* GRID VIEW */
+        <div className="gallery-grid" style={{ marginTop: 0 }}>
+          {currentCards.map((karte, idx) => (
+            <div key={karte.id || idx} className="gallery-item" style={{
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              minHeight: '320px'
+            }}>
+              <div>
+                <button className="gallery-remove-btn" onClick={() => loescheKarte(karte.id)}>✕</button>
+                <div style={{ overflow: 'hidden', borderRadius: '4.75% / 3.5%', position: 'relative' }}>
+                  <img
+                    src={karte.image_url || getFallbackCardImage(karte.name, karte.type)}
+                    alt={karte.name}
+                    className="gallery-img"
+                    style={{
+                      transition: 'transform 0.3s ease',
+                      width: '100%'
+                    }}
+                    loading="lazy"
+                    onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(karte.name, karte.type); }}
+                  />
+                </div>
+                <span style={{
+                  fontWeight: 600,
+                  fontSize: '0.95rem',
+                  display: 'block',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  marginTop: '10px',
+                  marginBottom: '2px'
+                }} title={karte.name}>
+                  {karte.name}
+                </span>
+                <span style={{
+                  fontSize: '0.78rem',
+                  color: 'var(--text-muted)',
+                  display: 'block',
+                  textTransform: 'uppercase',
+                  fontWeight: 600
+                }}>
+                  {karte.set ? `[${karte.set.toUpperCase()}]` : ""} {karte.type || "Karte"}
+                </span>
+              </div>
+              <div style={{ marginTop: '10px' }}>
+                <span className="gallery-price-tag" style={{ margin: 0 }}>
+                  {karte.price || "0.00"} €
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* LIST VIEW */
+        <div style={{
+          background: 'var(--bg-card)',
+          borderRadius: '16px',
+          border: '1px solid var(--border-color)',
+          overflow: 'hidden',
+          boxShadow: '0 4px 12px var(--shadow-color)'
+        }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+            <thead>
+              <tr style={{ background: 'var(--btn-secondary)', borderBottom: '1px solid var(--border-color)' }}>
+                <th style={{ padding: '15px 20px', fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Name</th>
+                <th style={{ padding: '15px 20px', fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Typ</th>
+                <th style={{ padding: '15px 20px', fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Edition</th>
+                <th style={{ padding: '15px 20px', fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Rarität</th>
+                <th style={{ padding: '15px 20px', fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Preis</th>
+                <th style={{ padding: '15px 20px', width: '60px' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {currentCards.map((karte, idx) => (
+                <tr key={karte.id || idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                  <td style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--text-main)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <img
+                        src={karte.image_url || getFallbackCardImage(karte.name, karte.type)}
+                        alt={karte.name}
+                        style={{ width: '35px', borderRadius: '2px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
+                        onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(karte.name, karte.type); }}
+                      />
+                      {karte.name}
+                    </div>
+                  </td>
+                  <td style={{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '0.95rem' }}>{karte.type || "Unbekannt"}</td>
+                  <td style={{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '0.95rem' }}>
+                    <span style={{ textTransform: 'uppercase', fontWeight: 600, background: 'var(--btn-secondary)', padding: '2px 6px', borderRadius: '4px', marginRight: '6px' }}>
+                      {karte.set}
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '0.95rem', textTransform: 'capitalize' }}>
+                    {karte.rarity}
+                  </td>
+                  <td style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--price-color)' }}>
+                    {karte.price || "0.00"} €
+                  </td>
+                  <td style={{ padding: '12px 20px', textAlign: 'center' }}>
+                    <button
+                      onClick={() => loescheKarte(karte.id)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--danger-color)',
+                        fontSize: '1.1rem',
+                        cursor: 'pointer',
+                        padding: '4px 8px'
+                      }}
+                      title="Karte entfernen"
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: '10px',
+          marginTop: '30px'
+        }}>
+          <button
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="secondary-btn"
+            style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
+          >
+            Zurück
+          </button>
+          
+          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+            Seite <strong style={{ color: 'var(--text-main)' }}>{currentPage}</strong> von {totalPages}
+          </span>
+
+          <button
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="secondary-btn"
+            style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
+          >
+            Weiter
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default CollectionGrid;
