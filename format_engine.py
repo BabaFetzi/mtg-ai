@@ -10,24 +10,63 @@ class ValidationResult(BaseModel):
     details: Dict
 
 # Simple helper to clean and parse deck lines
-def parse_deck_liste(deck_liste: str) -> List[Tuple[int, str]]:
+def parse_deck_liste_with_commander(deck_liste: str) -> List[Tuple[int, str, bool]]:
     parsed = []
     lines = deck_liste.strip().split('\n')
+    current_section_is_commander = False
+    
+    metadata_headers = {"deck", "commander", "companion", "sideboard", "mainboard", "main"}
     for line in lines:
         line = line.strip()
-        if not line or line.startswith('#') or line.startswith('//'):
+        if not line:
             continue
-        
-        # Regex to match counts like "1x Sol Ring", "4 Lightning Bolt", "Sol Ring"
+            
+        # Check if this line is a section header
+        if line.lower() in metadata_headers:
+            if line.lower() == "commander":
+                current_section_is_commander = True
+            else:
+                current_section_is_commander = False
+            continue
+
+        if line.startswith('#') or line.startswith('//'):
+            lower_line = line.lower()
+            if "commander" in lower_line or "cmdr" in lower_line:
+                header_match = re.match(r'^(?://|#)\s*(commander|cmdr)s?\b', lower_line)
+                if header_match:
+                    current_section_is_commander = True
+                    continue
+            header_reset = re.match(r'^(?://|#)\s*(?!commander|cmdr)\w+', lower_line)
+            if header_reset:
+                current_section_is_commander = False
+                continue
+            
+            # If it's a generic comment, check if it contains commander keyword inline, else skip
+            if not any(keyword in lower_line for keyword in ["commander", "cmdr"]):
+                continue
+
+        # Parse quantity and card name
         match = re.match(r'^(\d+)\s*x?\s+(.+)$', line)
         if match:
             count = int(match.group(1))
             name = match.group(2).strip()
-            parsed.append((count, name))
         else:
-            # Fallback if no count is provided (default to 1)
-            parsed.append((1, line))
+            count = 1
+            name = line
+            
+        # Detect inline commander tag
+        is_cmdr = current_section_is_commander
+        cmdr_tag_pattern = r'\s+(?:\*CMDR\*|\*CMDR\b|\[CMDR\]|\(CMDR\)|\/\/ Commander)\s*$'
+        if re.search(cmdr_tag_pattern, name, re.IGNORECASE):
+            is_cmdr = True
+            name = re.sub(cmdr_tag_pattern, '', name, flags=re.IGNORECASE).strip()
+            
+        parsed.append((count, name, is_cmdr))
+        
     return parsed
+
+def parse_deck_liste(deck_liste: str) -> List[Tuple[int, str]]:
+    return [(count, name) for count, name, _ in parse_deck_liste_with_commander(deck_liste)]
 
 def get_color_identity_symbol_name(symbol: str) -> str:
     # Maps color identity symbols to names
@@ -39,11 +78,22 @@ BASIC_LANDS = {"plains", "island", "swamp", "mountain", "forest",
                "wastes", "snow-covered plains", "snow-covered island", 
                "snow-covered swamp", "snow-covered mountain", "snow-covered forest"}
 
+# List of cards that allow unlimited copies
+UNLIMITED_COPY_CARDS = {
+    "relentless rats",
+    "rat colony",
+    "dragon's approach",
+    "shadowborn apostle",
+    "persistent petitioners",
+    "templar knight"
+}
+
 class FormatValidator:
     @staticmethod
     async def validate_deck(deck_liste: str, format_name: str, card_details_provider) -> ValidationResult:
         format_name = format_name.lower().strip()
-        parsed_cards = parse_deck_liste(deck_liste)
+        parsed_cards_with_cmdr = parse_deck_liste_with_commander(deck_liste)
+        parsed_cards = [(count, name) for count, name, _ in parsed_cards_with_cmdr]
         
         if not parsed_cards:
             return ValidationResult(
@@ -95,50 +145,65 @@ class FormatValidator:
         if unresolved_cards:
             errors.append(f"Folgende Karten wurden in Scryfall nicht gefunden: {', '.join(unresolved_cards)}")
 
+        # Resolve explicit commander names to normalized scryfall name
+        resolved_explicit_commanders = set()
+        for count, raw_name, is_cmdr in parsed_cards_with_cmdr:
+            if is_cmdr:
+                normalized = raw_name.lower().strip()
+                # Find in details_dict
+                for k, v in details_dict.items():
+                    if k == normalized or v.get("name", "").lower().strip() == normalized:
+                        resolved_explicit_commanders.add(v["name"].lower().strip())
+
         # Format specific validations
         if format_name == "commander":
             # 1. Total cards must be exactly 100 (including Commander)
-            # Wait, standard commander is 100, but players sometimes put 99 + 1 commander or partner commander (98 + 2). We will warn if not 100.
             if total_cards != 100:
                 errors.append(f"Ein Commander-Deck muss exakt 100 Karten enthalten. Dein Deck hat {total_cards} Karten.")
                 
             # 2. Find commander candidates
             commander_candidates = []
-            for norm_name, info in cards_info.items():
-                type_line = info.get("type", "").lower()
-                # A commander can be a legendary creature, or a planeswalker with commander text, etc.
-                if "legendary" in type_line and "creature" in type_line:
-                    commander_candidates.append(norm_name)
-                    
-            if not commander_candidates:
-                warnings.append("Keine legendäre Kreatur als Commander im Deck gefunden.")
-                commander_identity = set(['W', 'U', 'B', 'R', 'G']) # Fallback: allow all colors
-            else:
-                # We assume the first legendary creature (or most expensive / user selected) is the commander.
-                # In front-end, let's assume the player has a commander.
-                # Let's get the color identity of the commander(s)
-                # If there are multiple, they might have partner, or one is selected. Let's merge their identities for validation.
+            
+            # Check if we have explicit commanders
+            tagged_commanders = []
+            for norm_name in cards_info:
+                if norm_name in resolved_explicit_commanders:
+                    tagged_commanders.append(norm_name)
+            
+            if tagged_commanders:
+                commander_candidates = tagged_commanders
+                commander_names = [original_names[c] for c in tagged_commanders]
                 commander_identity = set()
-                commander_names = []
-                for cand in commander_candidates:
-                    info = cards_info[cand]
-                    # We only parse the commander if it's explicitly designated or if there's only one.
-                    # Since we don't know, let's check all cards color identities against candidate's color identity.
-                    # Actually, if we just check color identities, let's check if cards match the color identity of ANY of the candidates.
-                    # Or, let's get the first candidate as the primary commander.
-                    pass
+                for c in tagged_commanders:
+                    commander_identity.update(cards_info[c].get("color_identity", []))
+                warnings.append(f"Validiere Farben basierend auf dem explizit markierten Commander: {', '.join(commander_names)}")
+            else:
+                # Fallback to legendaries
+                legendaries = []
+                for norm_name, info in cards_info.items():
+                    type_line = info.get("type", "").lower()
+                    if "legendary" in type_line and ("creature" in type_line or "planeswalker" in type_line):
+                        legendaries.append(norm_name)
                 
-                # To be lenient and accurate: check if there's a commander, and validate that cards fit.
-                # Let's find if the user has a line with "commander" in the name or we just use the first candidate.
-                primary_commander = commander_candidates[0]
-                commander_identity = set(cards_info[primary_commander].get("color_identity", []))
-                commander_names.append(original_names[primary_commander])
-                
-                warnings.append(f"Validiere Farben basierend auf dem angenommenen Commander: {', '.join(commander_names)}")
+                if len(legendaries) == 1:
+                    primary = legendaries[0]
+                    commander_identity = set(cards_info[primary].get("color_identity", []))
+                    commander_names = [original_names[primary]]
+                    warnings.append(f"Validiere Farben basierend auf der einzigen legendären Kreatur/Planeswalker im Deck: {commander_names[0]}")
+                    commander_candidates = [primary]
+                elif len(legendaries) > 1:
+                    warnings.append("Mehrere legendäre Kreaturen im Deck gefunden. Bitte markiere deinen Commander mit *CMDR* (z.B. '1 Krenko, Mob Boss *CMDR*') für eine präzise Farbprüfung.")
+                    commander_identity = set(['W', 'U', 'B', 'R', 'G']) # Allow all colors to avoid false positives
+                    commander_candidates = legendaries
+                    commander_names = ["Keiner (Mehrere Kandidaten)"]
+                else:
+                    warnings.append("Keine legendäre Kreatur/Planeswalker als Commander im Deck gefunden. Bitte markiere deinen Commander mit *CMDR*.")
+                    commander_identity = set(['W', 'U', 'B', 'R', 'G']) # Allow all colors
+                    commander_names = []
 
             # 3. Singleton Rule (Max 1 copy of any non-basic land)
             for norm_name, count in card_counts.items():
-                if norm_name not in BASIC_LANDS and count > 1:
+                if norm_name not in BASIC_LANDS and norm_name not in UNLIMITED_COPY_CARDS and count > 1:
                     errors.append(f"Commander ist ein Singleton-Format. Du hast {count}x '{original_names[norm_name]}' im Deck (erlaubt: 1).")
 
             # 4. Color Identity Rule
@@ -157,7 +222,7 @@ class FormatValidator:
                 
             # Max 4 copies of any non-basic land
             for norm_name, count in card_counts.items():
-                if norm_name not in BASIC_LANDS and count > 4:
+                if norm_name not in BASIC_LANDS and norm_name not in UNLIMITED_COPY_CARDS and count > 4:
                     errors.append(f"In diesem Format sind maximal 4 Kopien einer Karte erlaubt. Du hast {count}x '{original_names[norm_name]}'.")
 
         # 5. Format Legality check (Scryfall legality)

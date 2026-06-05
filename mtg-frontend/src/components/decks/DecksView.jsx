@@ -3,10 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
 import PremiumOverlay from '../layout/PremiumOverlay';
+import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw, Infinity } from 'lucide-react';
 import DeckEditor from './DeckEditor';
 import DeckAnalysis from './DeckAnalysis';
 
-function DecksView({ currentUser, userRole }) {
+function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const location = useLocation();
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
@@ -23,6 +24,8 @@ function DecksView({ currentUser, userRole }) {
   const [playtest, setPlaytest] = useState(null);
   const [hoveredCard, setHoveredCard] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [cmcFilter, setCmcFilter] = useState("all");
+  const [copyStatus, setCopyStatus] = useState("");
 
   const handleMouseMove = (e) => {
     const cardWidth = 240;
@@ -39,11 +42,16 @@ function DecksView({ currentUser, userRole }) {
   const [laedt, setLaedt] = useState(false);
   const [analyse, setAnalyse] = useState(null);
   const [stats, setStats] = useState(null);
+  const [roastData, setRoastData] = useState(null);
+  const [roastLoading, setRoastLoading] = useState(false);
+  const [compareDeckId, setCompareDeckId] = useState("");
   const [deckWert, setDeckWert] = useState(null);
   const [quickSearch, setQuickSearch] = useState("");
+  const [loadedImages, setLoadedImages] = useState({});
   const [quickResult, setQuickResult] = useState(null);
   const [selectedFormat, setSelectedFormat] = useState("commander");
   const [validation, setValidation] = useState(null);
+  const [newDeckFormat, setNewDeckFormat] = useState("commander");
 
   const createInputRef = useRef(null);
 
@@ -61,11 +69,17 @@ function DecksView({ currentUser, userRole }) {
       const res = await fetch(`/api/decks/erstellen`, { 
         method: "POST", 
         headers: {"Content-Type": "application/json"}, 
-        body: JSON.stringify({ benutzername: currentUser, deck_name: newDeckName, deck_liste: importListe }) 
+        body: JSON.stringify({ benutzername: currentUser, deck_name: newDeckName, deck_liste: importListe, format: newDeckFormat }) 
       });
+      
+      if (res.status === 403) {
+        onShowPremiumModal();
+        return;
+      }
+      
       const data = await res.json();
       if (data && data.erfolg) {
-        setNewDeckName(""); setImportListe(""); 
+        setNewDeckName(""); setImportListe(""); setNewDeckFormat("commander");
         const resList = await fetch(`/api/decks/${currentUser}`); 
         const dataList = await resList.json();
         if(Array.isArray(dataList)) {
@@ -75,9 +89,44 @@ function DecksView({ currentUser, userRole }) {
             navigate(`/decks?tab=editor&deckId=${created.id}`);
           }
         }
+      } else {
+        alert(data.error || "Fehler beim Erstellen des Decks.");
       }
     } catch {
       alert("Fehler beim Erstellen des Decks.");
+    }
+  };
+
+  const kloneTemplateDeck = async (templateName, templateListe) => {
+    try {
+      const res = await fetch(`/api/decks/erstellen`, { 
+        method: "POST", 
+        headers: {"Content-Type": "application/json"}, 
+        body: JSON.stringify({ benutzername: currentUser, deck_name: templateName, deck_liste: templateListe }) 
+      });
+      
+      if (res.status === 403) {
+        onShowPremiumModal();
+        return;
+      }
+      
+      const data = await res.json();
+      if (data && data.erfolg) {
+        const resList = await fetch(`/api/decks/${currentUser}`); 
+        const dataList = await resList.json();
+        if(Array.isArray(dataList)) {
+          setDecks(dataList);
+          const created = dataList.find(d => d.name === templateName) || dataList[dataList.length - 1];
+          if (created) {
+            navigate(`/decks?tab=editor&deckId=${created.id}`);
+          }
+        }
+      } else {
+        alert(data.error || "Fehler beim Klonen des Decks.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Fehler beim Klonen des Decks.");
     }
   };
 
@@ -115,10 +164,106 @@ function DecksView({ currentUser, userRole }) {
     }
   };
 
+  const addCardFromTuning = async (cardName) => {
+    if (!selectedDeck) return;
+    try {
+      const res = await fetch(`/api/deck/add-card`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deck_id: selectedDeck.id, card_name: cardName, benutzername: currentUser })
+      });
+      const data = await res.json();
+      if (data && data.erfolg) {
+        setSelectedDeck({ ...selectedDeck, liste: data.deck_liste });
+        ladeDecks();
+        alert(`"${cardName}" zum Deck hinzugefügt!`);
+      } else {
+        alert(data.error || "Fehler beim Hinzufügen.");
+      }
+    } catch {
+      alert("Fehlgeschlagen.");
+    }
+  };
+
+  const removeCardFromTuning = async (cardName) => {
+    if (!selectedDeck) return;
+    try {
+      const res = await fetch(`/api/deck/remove-card`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deck_id: selectedDeck.id, card_name: cardName, benutzername: currentUser })
+      });
+      const data = await res.json();
+      if (data && data.erfolg) {
+        setSelectedDeck({ ...selectedDeck, liste: data.deck_liste });
+        ladeDecks();
+        alert(`"${cardName}" aus dem Deck entfernt.`);
+      } else {
+        alert(data.error || "Fehler beim Entfernen.");
+      }
+    } catch {
+      alert("Fehlgeschlagen.");
+    }
+  };
+
+  const formatDeckForArena = (liste) => {
+    if (!liste) return "";
+    return liste.split('\n')
+      .map(line => {
+        const clean = line.trim();
+        if (!clean) return "";
+        if (clean.startsWith('//') || clean.startsWith('#')) return "";
+        const match = clean.match(/^(\d+)[xX]?\s+(.+)$/);
+        if (match) {
+          return `${match[1]} ${match[2].trim()}`;
+        }
+        return `1 ${clean}`;
+      })
+      .filter(line => line !== "")
+      .join('\n');
+  };
+
+  const exportDeckText = () => {
+    if (!selectedDeck || !selectedDeck.liste) return;
+    const text = formatDeckForArena(selectedDeck.liste);
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        setCopyStatus("Kopiert!");
+        setTimeout(() => setCopyStatus(""), 2000);
+      })
+      .catch((err) => {
+        console.error("Clipboard copy failed:", err);
+        alert("Kopieren fehlgeschlagen. Hier ist die Liste:\n\n" + text);
+      });
+  };
+
+  const holeRoast = async () => {
+    if (!selectedDeck || !selectedDeck.liste) return;
+    setRoastLoading(true);
+    try {
+      const res = await fetch('/api/deck/roast', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deck_liste: selectedDeck.liste,
+          benutzername: currentUser,
+          format: selectedFormat
+        })
+      });
+      const data = await res.json();
+      setRoastData(data);
+    } catch (e) {
+      console.error(e);
+      alert("Roast-Generierung fehlgeschlagen.");
+    } finally {
+      setRoastLoading(false);
+    }
+  };
+
   const handleQuickSearch = async () => {
     if(!quickSearch) return;
     try {
-      const res = await fetch(`/api/suche/${quickSearch}?benutzername=${currentUser}`);
+      const res = await fetch(`/api/suche/${encodeURIComponent(quickSearch)}?benutzername=${currentUser}`);
       const data = await res.json();
       if(!data.error) setQuickResult(data); else alert("Nicht gefunden.");
     } catch {
@@ -187,9 +332,19 @@ function DecksView({ currentUser, userRole }) {
     setLaedt(true);
     try {
       const res = await fetch(`/api/deck/visualize`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ deck_liste: selectedDeck.liste }) });
+      if (!res.ok) {
+        throw new Error(`Server antwortete mit Status ${res.status}`);
+      }
       const data = await res.json();
-      if(data && Array.isArray(data.karten)) setVisualDeck(data.karten);
-    } catch { alert("Fehler beim Laden der Bilder."); }
+      if(data && Array.isArray(data.karten)) {
+        setVisualDeck(data.karten);
+      } else {
+        throw new Error("Ungültiges Datenformat erhalten.");
+      }
+    } catch (err) {
+      console.error("Fehler beim Visualisieren des Decks:", err);
+      alert("Fehler beim Laden der Bilder: " + err.message);
+    }
     setLaedt(false);
   };
 
@@ -246,10 +401,13 @@ function DecksView({ currentUser, userRole }) {
       if (match) {
         if (!selectedDeck || String(selectedDeck.id) !== String(match.id)) {
           setSelectedDeck(match);
+          setSelectedFormat(match.format || "commander");
           setVisualDeck(null);
           setStats(null);
           setAnalyse(null);
           setDeckWert(null);
+          setRoastData(null);
+          setCompareDeckId("");
         }
       } else {
         setSelectedDeck(null);
@@ -274,24 +432,62 @@ function DecksView({ currentUser, userRole }) {
       if (!visualDeck && !laedt) {
         ladeVisuelleAnsicht(currentTab);
       }
-    } else if (currentTab === 'stats') {
+      if (currentTab === 'visual' && userRole === 'premium' && !analyse && !laedt) {
+        fetch(`/api/deck/analyse`, { 
+          method: "POST", 
+          headers: {"Content-Type": "application/json"}, 
+          body: JSON.stringify({ deck_liste: selectedDeck.liste, benutzername: currentUser, format: selectedFormat }) 
+        })
+        .then(res => res.json())
+        .then(data => setAnalyse(data))
+        .catch((err) => console.error("Error loading combos in background", err));
+      }
+    } else if (currentTab === 'stats' || currentTab === 'tuning') {
       ladeStatsUndAnalyse();
     }
-  }, [currentTab, selectedDeck, selectedFormat]);
+  }, [currentTab, selectedDeck, selectedFormat, userRole]);
+
+  useEffect(() => {
+    if (currentTab === 'stats' && focusParam === 'combos') {
+      const timer = setTimeout(() => {
+        const el = document.getElementById('analysis-combos');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.style.boxShadow = '0 0 20px rgba(196, 146, 62, 0.6)';
+          setTimeout(() => {
+            el.style.boxShadow = '';
+          }, 2000);
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [currentTab, focusParam, laedt, analyse]);
+
+  const findCombosForCard = (cardName) => {
+    if (!analyse || !Array.isArray(analyse.combos)) return [];
+    const cleanName = (name) => (name || "").toLowerCase().trim();
+    const searchName = cleanName(cardName);
+    return analyse.combos.filter(combo => {
+      if (Array.isArray(combo.karten)) {
+        return combo.karten.some(k => cleanName(k) === searchName);
+      }
+      return false;
+    });
+  };
 
   const renderGruppierteKarten = () => {
     if(!visualDeck || !Array.isArray(visualDeck) || visualDeck.length === 0) return <p style={{textAlign: 'center', color: 'var(--text-muted)'}}>Keine Karten gefunden. Bitte prüfe die Namen im Editor.</p>;
     
     const grouped = { 
       Unbekannt: [], 
-      Kommander: [], 
+      Commander: [], 
       Kreaturen: [], 
       Planeswalker: [],
       Artefakte: [], 
-      Hexereien_Spontanzauber: [], 
+      "Spontanzauber & Hexereien": [], 
       Verzauberungen: [], 
       Länder: [],
-      Andere: []
+      Sonstige: []
     };
     
     visualDeck.forEach(k => {
@@ -300,14 +496,14 @@ function DecksView({ currentUser, userRole }) {
        const isNotFound = k.type === "Unbekannt" || !k.image || (k.name && k.name.includes("(Nicht gefunden)"));
        
        if(isNotFound) grouped.Unbekannt.push(k);
-       else if(t.includes('legendary creature') && grouped.Kommander.length === 0) grouped.Kommander.push(k);
+       else if(t.includes('legendary creature') && grouped.Commander.length === 0) grouped.Commander.push(k);
        else if(t.includes('creature')) grouped.Kreaturen.push(k);
        else if(t.includes('planeswalker')) grouped.Planeswalker.push(k);
        else if(t.includes('artifact')) grouped.Artefakte.push(k);
-       else if(t.includes('instant') || t.includes('sorcery')) grouped.Hexereien_Spontanzauber.push(k);
+       else if(t.includes('instant') || t.includes('sorcery')) grouped["Spontanzauber & Hexereien"].push(k);
        else if(t.includes('enchantment')) grouped.Verzauberungen.push(k);
        else if(t.includes('land')) grouped.Länder.push(k);
-       else grouped.Andere.push(k);
+       else grouped.Sonstige.push(k);
     });
 
     return (
@@ -333,7 +529,7 @@ function DecksView({ currentUser, userRole }) {
                 justifyContent: 'space-between',
                 alignItems: 'center'
               }}>
-                <span>{gruppe.replace('_', ' & ')}</span>
+                <span>{gruppe}</span>
                 <span style={{fontSize: '0.9rem', color: 'var(--text-muted)', background: 'var(--bg-main)', padding: '4px 10px', borderRadius: '20px'}}>
                   {karten.reduce((acc, k) => acc + (k.count || 1), 0)} Karten
                 </span>
@@ -379,6 +575,31 @@ function DecksView({ currentUser, userRole }) {
                         }}>
                           {k.name}
                         </span>
+                        {findCombosForCard(k.name).length > 0 && (
+                          <span 
+                            title="Combo-Teil! Klicke hier, um die Combo-Erklärung zu sehen."
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/decks?tab=stats&deckId=${selectedDeck.id}&focus=combos`);
+                            }}
+                            style={{
+                              marginLeft: '8px',
+                              background: 'rgba(196, 146, 62, 0.15)',
+                              border: '1px solid rgba(196, 146, 62, 0.4)',
+                              color: '#C4923E',
+                              fontSize: '0.75rem',
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <Infinity size={12} /> Combo-Teil
+                          </span>
+                        )}
                       </div>
                       
                       <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
@@ -418,11 +639,14 @@ function DecksView({ currentUser, userRole }) {
       <p style={{marginBottom: '40px', fontSize: '1.2rem', color: 'var(--text-muted)'}}>Erstelle, editiere und analysiere deine Decks mit KI-Unterstützung.</p>
 
       {/* TABS SEGMENTED CONTROL */}
-      <div className="segmented-control" style={{marginBottom: '40px', display: 'flex', justifyContent: 'center'}}>
-        <button className={`segment-btn ${currentTab === 'overview' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=overview${deckId ? `&deckId=${deckId}` : ''}`)}>Deck-Center</button>
+      <div className="segmented-control" style={{marginBottom: '40px', display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '5px'}}>
+        <button className={`segment-btn ${currentTab === 'overview' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=overview${deckId ? `&deckId=${deckId}` : ''}`)}>Deck-Bibliothek</button>
         <button className={`segment-btn ${currentTab === 'editor' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=editor${deckId ? `&deckId=${deckId}` : ''}`)}>Text-Editor</button>
         <button className={`segment-btn ${currentTab === 'visual' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=visual${deckId ? `&deckId=${deckId}` : ''}`)}>Deckliste</button>
         <button className={`segment-btn ${currentTab === 'stats' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=stats${deckId ? `&deckId=${deckId}` : ''}`)}>Analyse & Stats</button>
+        <button className={`segment-btn ${currentTab === 'tuning' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=tuning${deckId ? `&deckId=${deckId}` : ''}`)}>Tuning</button>
+        <button className={`segment-btn ${currentTab === 'compare' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=compare${deckId ? `&deckId=${deckId}` : ''}`)}>Vergleich</button>
+        <button className={`segment-btn ${currentTab === 'roast' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=roast${deckId ? `&deckId=${deckId}` : ''}`)}>Deck-Roast</button>
         <button className={`segment-btn ${currentTab === 'proxy' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=proxy${deckId ? `&deckId=${deckId}` : ''}`)}>Proxy-Druck</button>
       </div>
 
@@ -431,6 +655,57 @@ function DecksView({ currentUser, userRole }) {
         <div style={{display: 'flex', alignItems: 'center', gap: '15px', background: 'var(--btn-secondary)', padding: '15px 25px', borderRadius: '16px', marginBottom: '30px', flexWrap: 'wrap', border: '1px solid var(--border-color)'}}>
           <span style={{fontWeight: 600, color: 'var(--text-muted)'}}>Aktives Deck:</span>
           <span style={{fontWeight: 700, fontSize: '1.1rem'}}>{selectedDeck.name}</span>
+
+          <span style={{fontWeight: 600, color: 'var(--text-muted)', marginLeft: '10px'}}>Format:</span>
+          <select
+            value={selectedFormat}
+            onChange={async (e) => {
+              const newFormat = e.target.value;
+              setSelectedFormat(newFormat);
+              if (selectedDeck) {
+                try {
+                  await fetch(`/api/decks/update`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ deck_id: selectedDeck.id, format: newFormat, benutzername: currentUser })
+                  });
+                  ladeDecks();
+                } catch (err) {
+                  console.error("Fehler beim Aktualisieren des Formats:", err);
+                }
+              }
+            }}
+            style={{padding: '6px 12px', fontSize: '0.9rem', width: 'auto', borderRadius: '8px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', cursor: 'pointer', color: 'var(--text-main)', fontWeight: 600}}
+          >
+            <option value="commander">Commander / EDH</option>
+            <option value="standard">Standard</option>
+            <option value="modern">Modern</option>
+            <option value="pioneer">Pioneer</option>
+            <option value="legacy">Legacy</option>
+            <option value="vintage">Vintage</option>
+          </select>
+
+          <button
+            onClick={exportDeckText}
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.9rem',
+              borderRadius: '8px',
+              background: copyStatus ? 'rgba(48, 209, 88, 0.15)' : 'var(--bg-card)',
+              border: copyStatus ? '1px solid rgba(48, 209, 88, 0.4)' : '1px solid var(--border-color)',
+              color: copyStatus ? '#30D158' : 'var(--text-main)',
+              cursor: 'pointer',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s ease',
+              marginLeft: '10px'
+            }}
+          >
+            {copyStatus ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+            {copyStatus ? "Kopiert!" : "Arena-Format kopieren"}
+          </button>
           
           <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap'}}>
             <span style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>Deck wechseln:</span>
@@ -464,14 +739,26 @@ function DecksView({ currentUser, userRole }) {
         <>
           <div className="content-card" style={{marginBottom: '50px', padding: '30px'}}>
             <h4 style={{marginBottom: '15px'}}>Neues Deck erstellen</h4>
-            <div style={{display: 'flex', gap: '15px', marginBottom: '15px'}}>
+            <div style={{display: 'flex', gap: '15px', marginBottom: '15px', flexWrap: 'wrap'}}>
               <input 
                 ref={createInputRef}
                 placeholder="Deckname..." 
                 value={newDeckName} 
                 onChange={e => setNewDeckName(e.target.value)} 
-                style={{background: 'var(--input-bg)'}} 
+                style={{flexGrow: 1, background: 'var(--input-bg)'}} 
               />
+              <select
+                value={newDeckFormat}
+                onChange={e => setNewDeckFormat(e.target.value)}
+                style={{padding: '10px 14px', borderRadius: '8px', background: 'var(--bg-main)', border: '1px solid var(--border-color)', color: 'var(--text-main)', width: 'auto'}}
+              >
+                <option value="commander">Commander / EDH</option>
+                <option value="standard">Standard</option>
+                <option value="modern">Modern</option>
+                <option value="pioneer">Pioneer</option>
+                <option value="legacy">Legacy</option>
+                <option value="vintage">Vintage</option>
+              </select>
             </div>
             <textarea placeholder="Optional: Kopiere hier direkt eine komplette Deckliste hinein..." value={importListe} onChange={e => setImportListe(e.target.value)} style={{height: '100px', background: 'var(--input-bg)', marginBottom: '15px'}} />
             <button className="primary-btn" onClick={erstelleDeck}>Deck anlegen</button>
@@ -479,7 +766,41 @@ function DecksView({ currentUser, userRole }) {
 
           <h3 style={{marginBottom: '20px', fontSize: '1.8rem'}}>Meine Decks</h3>
           {decks.length === 0 ? (
-            <p style={{color: 'var(--text-muted)'}}>Keine Decks gefunden. Erstelle dein erstes Deck oben!</p>
+            <div className="bento-grid" style={{ marginTop: '20px' }}>
+              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Neues Deck</h4>
+                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle ein leeres Deck und füge manuell oder per KI-Tuning Karten hinzu.</p>
+                </div>
+                <button className="primary-btn" onClick={() => createInputRef.current?.focus()} style={{ marginTop: '15px' }}>
+                  Jetzt erstellen
+                </button>
+              </div>
+
+              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>CSV / Text importieren</h4>
+                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Kopiere eine Kartenliste direkt aus anderen Tools oben in das Textfeld.</p>
+                </div>
+                <button className="secondary-btn" onClick={() => document.querySelector('textarea')?.focus()} style={{ marginTop: '15px' }}>
+                  Liste eintragen
+                </button>
+              </div>
+
+              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Godo Warlord Vorlage</h4>
+                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Klone das legendäre Mono-Red Burn & Combo Commander Deck Template.</p>
+                </div>
+                <button 
+                  className="secondary-btn" 
+                  onClick={() => kloneTemplateDeck("Godo Commander Starter", "1 Godo, Bandit Warlord\n1 Helm of the Host\n1 Sol Ring\n1 Commander's Sphere\n1 Command Tower\n35 Mountain")} 
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginTop: '15px' }}
+                >
+                  <Copy size={16} /> Vorlage klonen
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="gallery-grid" style={{gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))'}}>
               {(decks || []).map((d, idx) => {
@@ -519,12 +840,43 @@ function DecksView({ currentUser, userRole }) {
       {currentTab !== 'overview' && !selectedDeck && (
         <div className="content-card" style={{padding: '50px', textAlign: 'center'}}>
           <h3 style={{fontSize: '1.8rem', marginBottom: '15px'}}>Kein Deck ausgewählt</h3>
-          <p style={{color: 'var(--text-muted)', marginBottom: '40px'}}>Bitte wähle ein Deck aus dem Deck-Center aus oder wähle eins aus der Liste unten:</p>
+          <p style={{color: 'var(--text-muted)', marginBottom: '40px'}}>Bitte wähle ein Deck aus der Deck-Bibliothek aus oder wähle eins aus der Liste unten:</p>
           
           {decks.length === 0 ? (
-            <div>
-              <p style={{color: 'var(--text-muted)', marginBottom: '20px'}}>Du hast noch keine Decks erstellt.</p>
-              <button className="primary-btn" onClick={() => navigate('/decks?tab=overview')}>Neues Deck erstellen</button>
+            <div className="bento-grid" style={{ marginTop: '20px', textAlign: 'left' }}>
+              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Neues Deck</h4>
+                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle ein leeres Deck und füge manuell oder per KI-Tuning Karten hinzu.</p>
+                </div>
+                <button className="primary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
+                  Jetzt erstellen
+                </button>
+              </div>
+
+              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>CSV / Text importieren</h4>
+                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Importiere eine Kartenliste direkt aus anderen Tools oder CSV.</p>
+                </div>
+                <button className="secondary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
+                  Zur Importseite
+                </button>
+              </div>
+
+              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Godo Warlord Vorlage</h4>
+                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Klone das legendäre Mono-Red Burn & Combo Commander Deck Template.</p>
+                </div>
+                <button 
+                  className="secondary-btn" 
+                  onClick={() => kloneTemplateDeck("Godo Commander Starter", "1 Godo, Bandit Warlord\n1 Helm of the Host\n1 Sol Ring\n1 Commander's Sphere\n1 Command Tower\n35 Mountain")} 
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginTop: '15px' }}
+                >
+                  <Copy size={16} /> Vorlage klonen
+                </button>
+              </div>
             </div>
           ) : (
             <div className="gallery-grid" style={{gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))'}}>
@@ -635,7 +987,14 @@ function DecksView({ currentUser, userRole }) {
               {/* === MANAKURVE === */}
               {stats && stats.cmc && Object.keys(stats.cmc).length > 0 ? (
                 (() => {
-                  const maxCmcCount = Math.max(...Object.values(stats.cmc).map(v => parseInt(v) || 0), 1);
+                  const activeCmcDataset = cmcFilter === "creatures" 
+                    ? (stats.cmc_creatures || {}) 
+                    : cmcFilter === "noncreatures" 
+                      ? (stats.cmc_noncreatures || {}) 
+                      : (stats.cmc || {});
+                  const counts = Object.values(activeCmcDataset).map(v => parseInt(v) || 0);
+                  const maxCmcCount = counts.length > 0 ? Math.max(...counts, 1) : 1;
+                  
                   const colorNameMap = {
                     "W": {name: "Weiß", svg: "https://svgs.scryfall.io/card-symbols/W.svg"},
                     "U": {name: "Blau", svg: "https://svgs.scryfall.io/card-symbols/U.svg"},
@@ -651,12 +1010,37 @@ function DecksView({ currentUser, userRole }) {
                       
                       {/* MANAKURVE */}
                       <div style={{background: 'rgba(0, 0, 0, 0.15)', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '30px'}}>
-                        <h4 style={{color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 20px 0'}}>
-                          Manakurve
-                        </h4>
+                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '15px'}}>
+                          <h4 style={{color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0}}>
+                            Manakurve
+                          </h4>
+                          <div className="segmented-control" style={{margin: 0, padding: '4px', gap: '4px', display: 'flex', background: 'var(--bg-main)', border: '1px solid var(--border-color)', borderRadius: '10px'}}>
+                            <button 
+                              className={`segment-btn ${cmcFilter === 'all' ? 'active' : ''}`} 
+                              onClick={() => setCmcFilter('all')}
+                              style={{padding: '6px 12px', fontSize: '0.85rem', minHeight: 'auto'}}
+                            >
+                              Alle Zauber
+                            </button>
+                            <button 
+                              className={`segment-btn ${cmcFilter === 'creatures' ? 'active' : ''}`} 
+                              onClick={() => setCmcFilter('creatures')}
+                              style={{padding: '6px 12px', fontSize: '0.85rem', minHeight: 'auto'}}
+                            >
+                              Kreaturen
+                            </button>
+                            <button 
+                              className={`segment-btn ${cmcFilter === 'noncreatures' ? 'active' : ''}`} 
+                              onClick={() => setCmcFilter('noncreatures')}
+                              style={{padding: '6px 12px', fontSize: '0.85rem', minHeight: 'auto'}}
+                            >
+                              Nicht-Kreaturen
+                            </button>
+                          </div>
+                        </div>
                         <div style={{display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '200px', padding: '0 10px'}}>
                           {Object.keys(stats?.cmc || {}).sort((a,b) => parseInt(a)-parseInt(b)).map(cmc => {
-                             const val = stats.cmc[cmc] || 0;
+                             const val = activeCmcDataset[cmc] || 0;
                              const pct = (val / maxCmcCount) * 75;
                              const cmcNum = parseInt(cmc);
                              const manaSymbolUrl = cmcNum <= 20 ? `https://svgs.scryfall.io/card-symbols/${cmcNum}.svg` : null;
@@ -734,7 +1118,7 @@ function DecksView({ currentUser, userRole }) {
                   marginBottom: '50px'
                 }}>
                   <div style={{display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '20px'}}>
-                    <span style={{fontSize: '2rem'}}>{validation.legal ? "✅" : "⚠️"}</span>
+                    <span>{validation.legal ? <CheckCircle2 size={32} style={{ color: '#30D158' }} /> : <AlertTriangle size={32} style={{ color: '#FF453A' }} />}</span>
                     <div>
                       <h4 style={{margin: 0, fontSize: '1.4rem', color: 'var(--text-main)'}}>
                         {validation.legal ? "Deck ist Regelkonform (Legal)" : "Regelverstöße gefunden (Illegal)"}
@@ -770,6 +1154,7 @@ function DecksView({ currentUser, userRole }) {
                   analyse={analyse} 
                   deckWert={deckWert} 
                   userRole={userRole} 
+                  onShowPremiumModal={onShowPremiumModal}
                 />
               )}
 
@@ -790,38 +1175,434 @@ function DecksView({ currentUser, userRole }) {
         </div>
       )}
 
+      {selectedDeck && currentTab === "tuning" && (
+        <div className="content-card" style={{padding: '40px', position: 'relative', animation: 'fadeIn 0.6s ease'}}>
+          {userRole !== 'premium' && <PremiumOverlay onShowPremiumModal={onShowPremiumModal} />}
+          
+          <h3 style={{fontSize: '2.2rem', marginBottom: '10px'}}>Smart-Tuning: DeckTrim & Mana-Base</h3>
+          <p style={{color: 'var(--text-muted)', marginBottom: '40px'}}>Nimm direkte Optimierungen an deinem Deck vor. Vorschläge basieren auf Synergiewerten und deiner Manakurve.</p>
+          
+          {laedt ? (
+            <div style={{textAlign: 'center', padding: '60px'}}><div className="spinner"></div><p style={{marginTop: '20px'}}>Erstelle Optimierungsvorschläge...</p></div>
+          ) : (
+            <>
+              {/* Mana-Tune Section */}
+              <div style={{marginBottom: '50px'}}>
+                <h4 style={{fontSize: '1.4rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '20px'}}>ManaTune: Landempfehlungen</h4>
+                {stats && stats.colors ? (
+                  <div>
+                    <p style={{marginBottom: '20px'}}>Verteilung farbiger Symbole in deinen Nicht-Land-Karten und empfohlene Standardländer:</p>
+                    <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '20px'}}>
+                      {Object.entries(stats.colors).map(([color, count]) => {
+                        if (color === 'C' && count === 0) return null;
+                        const nameMap = { W: 'Ebene (Plains)', U: 'Insel (Island)', B: 'Sumpf (Swamp)', R: 'Gebirge (Mountain)', G: 'Wald (Forest)', C: 'Farblos (Colorless)' };
+                        const colorMapHex = { W: '#F9F6F0', U: '#0E68AB', B: '#1A1A1A', R: '#D32F2F', G: '#2E7D32', C: '#757575' };
+                        const totalSymbols = Object.values(stats.colors).reduce((a, b) => a + b, 0);
+                        const ratio = totalSymbols > 0 ? (count / totalSymbols) * 100 : 0;
+                        const recommendedLands = selectedFormat === 'commander' ? 37 : 24;
+                        const recommendedCount = Math.round((ratio / 100) * recommendedLands);
+
+                        return (
+                          <div key={color} style={{background: 'var(--btn-secondary)', padding: '20px', borderRadius: '14px', border: '1px solid var(--border-color)', textAlign: 'center'}}>
+                            <div style={{display: 'inline-block', width: '24px', height: '24px', borderRadius: '50%', background: colorMapHex[color], border: '1px solid #ccc', marginBottom: '10px'}} />
+                            <strong style={{display: 'block', fontSize: '1.05rem', marginBottom: '5px'}}>{nameMap[color]}</strong>
+                            <div style={{fontSize: '0.9rem', color: 'var(--text-muted)'}}>Symbole: {count} ({ratio.toFixed(0)}%)</div>
+                            <div style={{marginTop: '10px', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)'}}>Empfohlen: ~{recommendedCount}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{color: 'var(--text-muted)'}}>Keine Farbstrukturdaten vorhanden.</p>
+                )}
+              </div>
+
+              {/* DeckTrim Section (Cuts & Adds) */}
+              <div>
+                <h4 style={{fontSize: '1.4rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '20px'}}>DeckTrim: Karten hinzufügen / entfernen</h4>
+                {analyse && analyse.verbesserungen && analyse.verbesserungen.length > 0 ? (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                        <th style={{ padding: '12px 15px', color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase' }}>Hinzufügen (+ Rein)</th>
+                        <th style={{ padding: '12px 15px', color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase' }}>Entfernen (- Raus)</th>
+                        <th style={{ padding: '12px 15px', color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase' }}>Grund / Synergie</th>
+                        <th style={{ padding: '12px 15px', color: 'var(--text-muted)', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'right' }}>Aktion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analyse.verbesserungen.map((verb, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '15px' }}>
+                            <span 
+                              onMouseEnter={(e) => { setHoveredCard({name: verb.rein}); handleMouseMove(e); }}
+                              onMouseMove={handleMouseMove}
+                              onMouseLeave={() => setHoveredCard(null)}
+                              style={{fontWeight: 600, color: '#30D158', cursor: 'pointer', textDecoration: 'underline dotted'}}
+                            >
+                              {verb.rein}
+                            </span>
+                          </td>
+                          <td style={{ padding: '15px' }}>
+                            {verb.raus ? (
+                              <span 
+                                onMouseEnter={(e) => { setHoveredCard({name: verb.raus}); handleMouseMove(e); }}
+                                onMouseMove={handleMouseMove}
+                                onMouseLeave={() => setHoveredCard(null)}
+                                style={{fontWeight: 600, color: 'var(--danger-color)', cursor: 'pointer', textDecoration: 'underline dotted'}}
+                              >
+                                {verb.raus}
+                              </span>
+                            ) : (
+                              <span style={{color: 'var(--text-muted)', fontStyle: 'italic'}}>Beliebige Karte</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '15px', color: 'var(--text-muted)', fontSize: '0.95rem', maxWidth: '350px' }}>
+                            {verb.grund}
+                          </td>
+                          <td style={{ padding: '15px', textAlign: 'right' }}>
+                            <div style={{display: 'flex', gap: '8px', justifyContent: 'flex-end'}}>
+                              <button 
+                                className="primary-btn" 
+                                style={{padding: '8px 14px', fontSize: '0.85rem', background: '#30D158', color: 'white'}}
+                                onClick={() => addCardFromTuning(verb.rein)}
+                              >
+                                + Rein
+                              </button>
+                              {verb.raus && (
+                                <button 
+                                  className="secondary-btn" 
+                                  style={{padding: '8px 14px', fontSize: '0.85rem', background: 'var(--danger-bg)', color: 'var(--danger-color)'}}
+                                  onClick={() => removeCardFromTuning(verb.raus)}
+                                >
+                                  - Raus
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p style={{color: 'var(--text-muted)'}}>Keine Tuning-Empfehlungen vorhanden. Klicke im Reiter "Analyse & Stats" auf Auswerten.</p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {selectedDeck && currentTab === "compare" && (
+        <div className="content-card" style={{padding: '40px', animation: 'fadeIn 0.6s ease'}}>
+          <h3 style={{fontSize: '2.2rem', marginBottom: '10px'}}>Deck-Vergleich (Diff)</h3>
+          <p style={{color: 'var(--text-muted)', marginBottom: '30px'}}>Vergleiche dein aktives Deck direkt mit einem deiner anderen Decks, um Unterschiede in CMC, Farben und Kartenliste zu sehen.</p>
+          
+          <div style={{display: 'flex', alignItems: 'center', gap: '15px', background: 'var(--btn-secondary)', padding: '20px 25px', borderRadius: '16px', marginBottom: '40px', border: '1px solid var(--border-color)'}}>
+            <span style={{fontWeight: 600, color: 'var(--text-muted)'}}>Vergleichen mit:</span>
+            <select
+              value={compareDeckId}
+              onChange={e => setCompareDeckId(e.target.value)}
+              style={{padding: '10px 18px', borderRadius: '10px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', width: 'auto', cursor: 'pointer', fontWeight: 600, color: 'var(--text-main)'}}
+            >
+              <option value="">-- Deck auswählen --</option>
+              {decks.filter(d => String(d.id) !== String(selectedDeck.id)).map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {(() => {
+            const compDeck = decks.find(d => String(d.id) === String(compareDeckId));
+            if (!compDeck) return <p style={{textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0'}}>Wähle oben ein Deck aus, um den Vergleich zu starten.</p>;
+            
+            const parseDecklistLocal = (liste) => {
+              const res = {};
+              if (!liste) return res;
+              liste.split('\n').forEach(line => {
+                const clean = line.trim();
+                if (!clean) return;
+                const m = clean.match(/^(\d+)[xX]?\s+(.+)$/);
+                if (m) {
+                  const count = parseInt(m[1]);
+                  const name = m[2].trim();
+                  res[name] = (res[name] || 0) + count;
+                } else {
+                  res[clean] = (res[clean] || 0) + 1;
+                }
+              });
+              return res;
+            };
+
+            const mapA = parseDecklistLocal(selectedDeck.liste);
+            const mapB = parseDecklistLocal(compDeck.liste);
+
+            const diffA = [];
+            const diffB = [];
+            const shared = [];
+
+            Object.keys(mapA).forEach(card => {
+              const countA = mapA[card];
+              const countB = mapB[card] || 0;
+              if (countB === 0) {
+                diffA.push({ name: card, count: countA });
+              } else if (countA > countB) {
+                diffA.push({ name: card, count: countA - countB });
+                shared.push({ name: card, count: countB });
+              } else {
+                shared.push({ name: card, count: countA });
+              }
+            });
+
+            Object.keys(mapB).forEach(card => {
+              const countB = mapB[card];
+              const countA = mapA[card] || 0;
+              if (countA === 0) {
+                diffB.push({ name: card, count: countB });
+              } else if (countB > countA) {
+                diffB.push({ name: card, count: countB - countA });
+              }
+            });
+
+            return (
+              <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px'}}>
+                <div style={{background: 'rgba(255, 69, 58, 0.05)', border: '1px solid rgba(255, 69, 58, 0.2)', padding: '30px', borderRadius: '18px'}}>
+                  <h4 style={{fontSize: '1.25rem', color: 'var(--danger-color)', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', borderBottom: '1px solid rgba(255, 69, 58, 0.1)', paddingBottom: '10px'}}>
+                    <span>- Nur in "{selectedDeck.name}" ({diffA.reduce((sum, item) => sum + item.count, 0)})</span>
+                  </h4>
+                  {diffA.length === 0 ? <p style={{color: 'var(--text-muted)', fontStyle: 'italic'}}>Keine abweichenden Karten.</p> : (
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                      {diffA.map((item, idx) => (
+                        <div key={idx} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                          <span 
+                            onMouseEnter={(e) => { setHoveredCard({name: item.name}); handleMouseMove(e); }}
+                            onMouseMove={handleMouseMove}
+                            onMouseLeave={() => setHoveredCard(null)}
+                            style={{fontWeight: 600, cursor: 'pointer', textDecoration: 'underline dotted'}}
+                          >
+                            {item.name}
+                          </span>
+                          <strong style={{color: 'var(--danger-color)'}}>{item.count}x</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{background: 'rgba(48, 209, 88, 0.05)', border: '1px solid rgba(48, 209, 88, 0.2)', padding: '30px', borderRadius: '18px'}}>
+                  <h4 style={{fontSize: '1.25rem', color: '#30D158', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', borderBottom: '1px solid rgba(48, 209, 88, 0.1)', paddingBottom: '10px'}}>
+                    <span>+ Nur in "{compDeck.name}" ({diffB.reduce((sum, item) => sum + item.count, 0)})</span>
+                  </h4>
+                  {diffB.length === 0 ? <p style={{color: 'var(--text-muted)', fontStyle: 'italic'}}>Keine abweichenden Karten.</p> : (
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                      {diffB.map((item, idx) => (
+                        <div key={idx} style={{display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)'}}>
+                          <span 
+                            onMouseEnter={(e) => { setHoveredCard({name: item.name}); handleMouseMove(e); }}
+                            onMouseMove={handleMouseMove}
+                            onMouseLeave={() => setHoveredCard(null)}
+                            style={{fontWeight: 600, cursor: 'pointer', textDecoration: 'underline dotted'}}
+                          >
+                            {item.name}
+                          </span>
+                          <strong style={{color: '#30D158'}}>+{item.count}x</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {selectedDeck && currentTab === "roast" && (
+        <div className="content-card" style={{padding: '40px', position: 'relative', animation: 'fadeIn 0.6s ease'}}>
+          {userRole !== 'premium' && <PremiumOverlay onShowPremiumModal={onShowPremiumModal} />}
+          
+          <div style={{textAlign: 'center', maxWidth: '650px', margin: '0 auto'}}>
+            <div style={{color: '#C4923E', display: 'flex', justifyContent: 'center', marginBottom: '15px'}}><Flame size={64} /></div>
+            <h3 style={{fontSize: '2.5rem', marginBottom: '10px'}}>Deck-Roast & Kritik</h3>
+            <p style={{color: 'var(--text-muted)', marginBottom: '35px'}}>Lass dein Deck von unserem Stresstest-Algorithmus analysieren. Nichts für schwache Nerven!</p>
+
+            {roastLoading ? (
+              <div style={{padding: '40px 0'}}>
+                <div className="spinner"></div>
+                <p style={{marginTop: '20px', color: 'var(--text-muted)', fontStyle: 'italic'}}>Analysiere Deck-Schwächen und typische Spielfehler...</p>
+              </div>
+            ) : roastData ? (
+              <div style={{textAlign: 'left'}}>
+                <div style={{
+                  background: 'linear-gradient(135deg, rgba(255, 149, 0, 0.08) 0%, rgba(255, 59, 48, 0.08) 100%)',
+                  border: '2px solid #FF9500',
+                  borderRadius: '24px',
+                  padding: '35px',
+                  marginBottom: '35px',
+                  boxShadow: '0 8px 30px var(--shadow-color)',
+                  position: 'relative'
+                }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: '-15px',
+                    left: '25px',
+                    background: 'linear-gradient(135deg, #FF9500, #FF3B30)',
+                    color: 'white',
+                    fontSize: '0.8rem',
+                    fontWeight: 700,
+                    padding: '4px 14px',
+                    borderRadius: '12px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}>
+                    Urteil: {roastData.verdict || "Autsch."}
+                  </div>
+                  
+                  <p style={{
+                    fontSize: '1.1rem',
+                    color: 'var(--text-main)',
+                    lineHeight: '1.6',
+                    fontStyle: 'italic',
+                    whiteSpace: 'pre-line',
+                    margin: 0
+                  }}>
+                    "{roastData.roast}"
+                  </p>
+                </div>
+
+                <div style={{
+                  background: 'var(--btn-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  marginBottom: '40px'
+                }}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
+                    <strong style={{color: 'var(--text-main)'}}>Salzigkeits-Faktor (Salt Score)</strong>
+                    <strong style={{color: '#FF3B30', fontSize: '1.25rem'}}>{roastData.salt_score || 50}%</strong>
+                  </div>
+                  <div style={{width: '100%', height: '12px', background: 'var(--border-color)', borderRadius: '6px', overflow: 'hidden'}}>
+                    <div style={{
+                      width: `${roastData.salt_score || 50}%`,
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #FF9500, #FF3B30)',
+                      borderRadius: '6px',
+                      transition: 'width 1s cubic-bezier(0.1, 0.8, 0.2, 1)'
+                    }} />
+                  </div>
+                  <p style={{fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '8px', margin: '8px 0 0 0'}}>
+                    Je höher dieser Wert, desto genervter reagieren deine Gegner auf deine Kartenwahlen.
+                  </p>
+                </div>
+
+                <div style={{textAlign: 'center'}}>
+                  <button 
+                    className="primary-btn" 
+                    onClick={holeRoast}
+                    style={{
+                      background: 'linear-gradient(135deg, #C4923E 0%, #9E7127 100%)',
+                      color: 'white',
+                      border: 'none',
+                      boxShadow: '0 8px 24px rgba(196, 146, 62, 0.2)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <RefreshCw size={18} /> Deck-Roast wiederholen
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <button 
+                  className="primary-btn" 
+                  onClick={holeRoast}
+                  style={{
+                    background: 'linear-gradient(135deg, #C4923E 0%, #9E7127 100%)',
+                    color: 'white',
+                    border: 'none',
+                    padding: '16px 36px',
+                    fontSize: '1.1rem',
+                    fontWeight: 700,
+                    borderRadius: '980px',
+                    boxShadow: '0 8px 24px rgba(196, 146, 62, 0.2)',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  <Flame size={18} /> Deck-Roast starten
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {selectedDeck && currentTab === "proxy" && (
         <div className="content-card" style={{padding: '40px'}}>
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px'}}>
-             <div>
-               <h3 style={{fontSize: '2rem', margin: 0}}>Proxy-Druck (PDF)</h3>
-               <p style={{margin: '5px 0 0 0', color: 'var(--text-muted)'}}>Drucke diese Seite im A4-Format (ohne Ränder). Die Karten haben exakte Turnier-Maße (63x88mm).</p>
-             </div>
-             {visualDeck && visualDeck.length > 0 && (
-                  <button className="primary-btn" onClick={() => window.print()}><Icons.ExternalLink /> Jetzt Drucken</button>
-             )}
-          </div>
-          
-          {laedt ? <div className="spinner"></div> : (
-            (!visualDeck || visualDeck.length === 0) ? (
-               <p style={{textAlign: 'center', color: 'var(--text-muted)'}}>Keine Karten zum Drucken gefunden. Füge zuerst Karten in den Editor ein.</p>
-            ) : (
-                <div className="proxy-print-area">
-                  <div className="proxy-preview-grid">
-                      {holeAlleProxyKarten().map((k, i) => (
-                        <img 
-                          key={i} 
-                          src={k?.image || getFallbackCardImage(k?.name, k?.type)} 
-                          alt={k?.name} 
-                          className="proxy-print-img" 
-                          style={{width: '100%', borderRadius: '4.75% / 3.5%'}} 
-                          loading="lazy"
-                          onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k?.name, k?.type); }}
-                        />
-                      ))}
-                  </div>
-                </div>
-            )
+          {userRole !== 'premium' ? (
+            <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <div style={{ color: 'var(--text-muted)', marginBottom: '20px', display: 'flex', justifyContent: 'center' }}><Printer size={48} /></div>
+              <h3 style={{ fontSize: '1.8rem', marginBottom: '10px' }}>Proxy-Druck ist ein Pro-Feature</h3>
+              <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '0 auto 25px auto', fontSize: '1.05rem' }}>
+                Schalte Grana Pro frei, um deine Decks im exakten Turnier-A4-Format (63x88mm) zum Testen auszudrucken.
+              </p>
+              <button 
+                className="primary-btn" 
+                onClick={onShowPremiumModal} 
+                style={{ 
+                  background: 'linear-gradient(135deg, #0071E3 0%, #0077ED 100%)', 
+                  color: 'white', 
+                  border: 'none',
+                  borderRadius: '980px',
+                  padding: '12px 28px',
+                  fontSize: '1rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Jetzt Grana Pro freischalten
+              </button>
+            </div>
+          ) : (
+            <>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px'}}>
+                 <div>
+                   <h3 style={{fontSize: '2rem', margin: 0}}>Proxy-Druck (PDF)</h3>
+                   <p style={{margin: '5px 0 0 0', color: 'var(--text-muted)'}}>Drucke diese Seite im A4-Format (ohne Ränder). Die Karten haben exakte Turnier-Maße (63x88mm).</p>
+                 </div>
+                 {visualDeck && visualDeck.length > 0 && (
+                      <button className="primary-btn" onClick={() => window.print()}><Icons.ExternalLink /> Jetzt Drucken</button>
+                 )}
+              </div>
+              
+              {laedt ? <div className="spinner"></div> : (
+                (!visualDeck || visualDeck.length === 0) ? (
+                   <p style={{textAlign: 'center', color: 'var(--text-muted)'}}>Keine Karten zum Drucken gefunden. Füge zuerst Karten in den Editor ein.</p>
+                ) : (
+                    <div className="proxy-print-area">
+                      <div className="proxy-preview-grid">
+                          {holeAlleProxyKarten().map((k, i) => (
+                            <img 
+                              key={i} 
+                              src={k?.image || getFallbackCardImage(k?.name, k?.type)} 
+                              alt={k?.name} 
+                              className={`proxy-print-img fade-in-img ${loadedImages[k?.image] ? 'loaded' : ''}`} 
+                              onLoad={() => setLoadedImages(prev => ({ ...prev, [k?.image]: true }))}
+                              style={{width: '100%', borderRadius: '4.75% / 3.5%'}} 
+                              loading="lazy"
+                              onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k?.name, k?.type); }}
+                            />
+                          ))}
+                      </div>
+                    </div>
+                )
+              )}
+            </>
           )}
         </div>
       )}
@@ -843,7 +1624,8 @@ function DecksView({ currentUser, userRole }) {
                   key={i} 
                   src={k?.image || getFallbackCardImage(k?.name, k?.type)} 
                   alt={k?.name || "Unbekannt"} 
-                  className="playtest-card" 
+                  className={`playtest-card fade-in-img ${loadedImages[k?.image] ? 'loaded' : ''}`} 
+                  onLoad={() => setLoadedImages(prev => ({ ...prev, [k?.image]: true }))}
                   style={{zIndex: i}} 
                   loading="lazy"
                   onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k?.name, k?.type); }}
@@ -880,6 +1662,8 @@ function DecksView({ currentUser, userRole }) {
           <img 
             src={hoveredCard.image || getFallbackCardImage(hoveredCard.name, hoveredCard.type)} 
             alt={hoveredCard.name}
+            className={`fade-in-img ${loadedImages[hoveredCard.image] ? 'loaded' : ''}`}
+            onLoad={() => setLoadedImages(prev => ({ ...prev, [hoveredCard.image]: true }))}
             style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }}
             onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(hoveredCard.name, hoveredCard.type); }}
           />

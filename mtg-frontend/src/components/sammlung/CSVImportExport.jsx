@@ -5,7 +5,7 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState(null);
   const [previewRows, setPreviewRows] = useState([]);
-  const [albumName, setAlbumName] = useState("Importiertes Album");
+  const [albumName, setAlbumName] = useState("Importierter Ordner");
   const [importStatus, setImportStatus] = useState("idle"); // "idle" | "importing" | "success" | "error"
   const [progress, setProgress] = useState(0);
   const [importResult, setImportResult] = useState(null);
@@ -67,7 +67,7 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
   const handleImport = async () => {
     if (!file) return alert("Bitte wähle zuerst eine Datei aus.");
     setImportStatus("importing");
-    setProgress(20);
+    setProgress(10);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -75,26 +75,51 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
     formData.append("album_name", albumName);
 
     try {
-      setProgress(50);
+      setProgress(30);
       const res = await fetch("/api/sammlung/import-csv", {
         method: "POST",
         body: formData
       });
-      setProgress(80);
       const data = await res.json();
-      setProgress(100);
 
-      if (data && data.erfolg) {
-        setImportStatus("success");
-        setImportResult({
-          imported: data.imported,
-          failed: data.failed,
-          errors: data.errors || []
-        });
-        ladeSammlung();
+      if (data && data.erfolg && data.job_id) {
+        setProgress(50);
+        const jobId = data.job_id;
+        let attempts = 0;
+        
+        const checkStatus = async () => {
+          try {
+            attempts++;
+            const statusRes = await fetch(`/api/sammlung/import-status/${jobId}`);
+            const statusData = await statusRes.json();
+            
+            if (statusData.status === "completed") {
+              setProgress(100);
+              setImportStatus("success");
+              setImportResult({
+                imported: statusData.result?.imported || 0,
+                failed: statusData.result?.failed || 0,
+                errors: statusData.result?.errors || []
+              });
+              ladeSammlung();
+            } else if (statusData.status === "failed") {
+              setImportStatus("error");
+              alert(statusData.error || "Fehler beim Importieren der CSV.");
+            } else {
+              // Still processing, schedule next poll
+              setProgress(Math.min(50 + attempts * 5, 95));
+              setTimeout(checkStatus, 1500);
+            }
+          } catch (e) {
+            setImportStatus("error");
+            alert("Fehler beim Abrufen des Import-Status.");
+          }
+        };
+        
+        setTimeout(checkStatus, 1500);
       } else {
         setImportStatus("error");
-        alert(data.error || "Fehler beim Importieren der CSV.");
+        alert(data.error || "Fehler beim Starten des CSV-Imports.");
       }
     } catch (e) {
       setImportStatus("error");
@@ -180,13 +205,13 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
 
                 {/* Album select/text */}
                 <div style={{ marginBottom: '20px' }}>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '8px' }}>Standardalbum für importierte Karten</label>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '8px' }}>Standardordner für importierte Karten</label>
                   <input
                     type="text"
                     value={albumName}
                     onChange={e => setAlbumName(e.target.value)}
                     style={{ background: 'var(--bg-main)' }}
-                    placeholder="z.B. Importiertes Album"
+                    placeholder="z.B. Importierter Ordner"
                   />
                 </div>
 

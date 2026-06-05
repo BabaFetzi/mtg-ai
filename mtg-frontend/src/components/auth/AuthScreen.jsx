@@ -25,8 +25,8 @@ function AuthScreen({ onLoginSuccess }) {
   return (
     <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-main)'}}>
       <div className="content-card" style={{maxWidth: '450px', width: '100%', textAlign: 'center', padding: '60px'}}>
-        <h2 style={{fontSize: '2.5rem'}}>MTG Pro</h2>
-        <p style={{marginBottom: '40px'}}>{isRegister ? "Erstelle dein Konto." : "Melde dich bei MTG Pro an."}</p>
+        <h2 style={{fontSize: '2.5rem'}}>Grana</h2>
+        <p style={{marginBottom: '40px'}}>{isRegister ? "Erstelle dein Konto." : "Melde dich bei Grana an."}</p>
         {message && <p style={{color: '#FF3B30'}}>{message}</p>}
         <form onSubmit={handleSubmit} style={{display: 'flex', flexDirection: 'column', gap: '20px'}}>
           <input type="text" placeholder="Benutzername" value={username} onChange={(e) => setUsername(e.target.value)} />

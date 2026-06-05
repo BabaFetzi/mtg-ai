@@ -8,7 +8,7 @@ from main import app
 client = TestClient(app)
 
 @pytest.mark.asyncio
-@patch('main.fetch_card_details_cached')
+@patch('routers.collection.fetch_card_details_cached')
 async def test_sammlung_filter(mock_fetch):
     # Mock Scryfall cache response
     mock_fetch.return_value = {
@@ -28,7 +28,7 @@ async def test_sammlung_filter(mock_fetch):
 
     # Patch the sqlite database connection inside endpoint
     # Since we can mock the aiosqlite return values
-    with patch('main.get_db_session') as mock_get_db:
+    with patch('routers.collection.get_db_session') as mock_get_db:
         mock_session = AsyncMock()
         mock_result = MagicMock()
         
@@ -54,7 +54,7 @@ async def test_sammlung_filter(mock_fetch):
         assert data["karten"][0]["name"] == "Sol Ring"
 
 @pytest.mark.asyncio
-@patch('main.fetch_card_details_cached')
+@patch('routers.collection.fetch_card_details_cached')
 async def test_sammlung_editions(mock_fetch):
     mock_fetch.return_value = {
         "sol ring": {
@@ -63,7 +63,7 @@ async def test_sammlung_editions(mock_fetch):
         }
     }
 
-    with patch('main.get_db_session') as mock_get_db:
+    with patch('routers.collection.get_db_session') as mock_get_db:
         mock_session = AsyncMock()
         mock_result = MagicMock()
         
@@ -79,12 +79,13 @@ async def test_sammlung_editions(mock_fetch):
         assert len(data["editions"]) == 1
         assert data["editions"][0]["set_code"] == "c21"
 
-def test_csv_import_template():
+@pytest.mark.asyncio
+async def test_csv_import_template():
     # Helper to check file uploads mock
     csv_data = "Kartenname,Anzahl,Edition,Album\nSol Ring,1,C21,Standard\n"
     
-    with patch('main.fetch_card_details_cached') as mock_fetch, \
-         patch('main.get_db_session') as mock_get_db:
+    with patch('routers.collection.fetch_card_details_cached') as mock_fetch, \
+         patch('routers.collection.get_db_session') as mock_get_db:
         
         mock_fetch.return_value = {
             "sol ring": {
@@ -104,5 +105,49 @@ def test_csv_import_template():
         assert response.status_code == 200
         data = response.json()
         assert data["erfolg"] is True
-        assert data["imported"] == 1
-        assert data["failed"] == 0
+        assert "job_id" in data
+        
+        from routers.collection import run_csv_import_task
+        await run_csv_import_task(data["job_id"], csv_data, "testuser", "Standard")
+        
+        assert mock_session.execute.call_count >= 2
+
+
+@pytest.mark.asyncio
+@patch('routers.collection.check_user_premium')
+@patch('routers.collection.fetch_card_details_cached')
+async def test_refresh_sammlung_prices(mock_fetch, mock_check_premium):
+    mock_check_premium.return_value = True
+    mock_fetch.return_value = {
+        "sol ring": {
+            "name": "Sol Ring",
+            "price": "2.00"
+        }
+    }
+    with patch('routers.collection.get_db_session') as mock_get_db, \
+         patch('services.cache.scryfall_cache.delete') as mock_cache_delete:
+        
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        
+        rows = [{"karten_name": "Sol Ring"}]
+        mock_result.mappings.return_value.all.return_value = rows
+        mock_session.execute.return_value = mock_result
+        mock_get_db.return_value.__aenter__.return_value = mock_session
+        
+        response = client.post("/api/sammlung/testuser/refresh-prices")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["erfolg"] is True
+        assert mock_cache_delete.call_count >= 1
+
+
+@pytest.mark.asyncio
+@patch('routers.collection.check_user_premium')
+async def test_refresh_sammlung_prices_free_denied(mock_check_premium):
+    mock_check_premium.return_value = False
+    response = client.post("/api/sammlung/testuser/refresh-prices")
+    assert response.status_code == 403
+    assert response.json()["erfolg"] is False
+    assert "Paywall" in response.json()["error"]
+

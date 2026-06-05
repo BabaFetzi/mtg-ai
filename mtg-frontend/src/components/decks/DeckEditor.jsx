@@ -53,7 +53,7 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
     setSearching(true);
     try {
       // Scryfall search directly
-      const res = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`https://api.scryfall.com/cards/search?q=lang:any+name:%22${encodeURIComponent(q)}%22`);
       if (res.ok) {
         const data = await res.json();
         if (data && Array.isArray(data.data)) {
@@ -192,7 +192,7 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
       {/* Main split containers */}
       {activeView === "text" ? (
         /* RAW TEXT AREA VIEW */
-        <div className="split-editor-container" style={{ gridTemplateColumns: '1.2fr 0.8fr' }}>
+        <div className="split-editor-text">
           <div>
             <textarea
               className="deck-textarea"
@@ -225,7 +225,7 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
         </div>
       ) : (
         /* VISUAL DRAG & DROP VIEW */
-        <div className="split-editor-container" style={{ gridTemplateColumns: '400px 1fr', gap: '30px' }}>
+        <div className="split-editor-visual">
           
           {/* LEFT: CARD SEARCH PANEL */}
           <div className="content-card" style={{ margin: 0, padding: '25px', display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '750px', overflowY: 'auto' }}>
@@ -274,10 +274,16 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                       src={item.image_uris?.small || getFallbackCardImage(item.name, item.type_line)}
                       alt={item.name}
                       style={{ width: '40px', borderRadius: '2px' }}
+                      draggable="false"
                       onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(item.name, item.type_line); }}
                     />
                     <div style={{ flexGrow: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.name}>{item.name}</div>
+                      <div
+                        style={{ fontWeight: 600, fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        title={item.printed_name && item.printed_name !== item.name ? `${item.printed_name} (${item.name})` : item.name}
+                      >
+                        {item.printed_name && item.printed_name !== item.name ? `${item.printed_name} (${item.name})` : item.name}
+                      </div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.type_line}</div>
                     </div>
                     <button

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import Icons from '../../utils/Icons';
 import PremiumOverlay from './PremiumOverlay';
 
-function JudgeWidget({ open, setOpen, currentUser, userRole }) {
+function JudgeWidget({ open, setOpen, currentUser, userRole, onShowPremiumModal }) {
   const [question, setQuestion] = useState("");
   const [chat, setChat] = useState([{role: "judge", text: "Hallo. Ich bin der MTG Judge. Hast du eine Regelfrage zu einer Interaktion?"}]);
   const [loading, setLoading] = useState(false);
@@ -32,9 +32,9 @@ function JudgeWidget({ open, setOpen, currentUser, userRole }) {
       </button>
       {open && (
         <div className="judge-chat-window" style={{position: 'relative'}}>
-          {userRole !== 'premium' && <PremiumOverlay />}
+          {userRole !== 'premium' && <PremiumOverlay onShowPremiumModal={onShowPremiumModal} />}
           <div className="judge-header">
-            <span>KI-Judge</span>
+            <span>Rules Judge</span>
             <button onClick={() => setOpen(false)} style={{background: 'none', border: 'none', color: 'var(--accent-text)', cursor: 'pointer', fontSize: '1.2rem'}}>✕</button>
           </div>
           <div className="judge-body">

@@ -7,6 +7,55 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
   const [currentPage, setCurrentPage] = useState(1);
   const cardsPerPage = 24;
 
+  const renderPriceTrend = (k) => {
+    const pOriginal = parseFloat(String(k.originalPrice || k.preis || "0").replace(',', '.')) || 0;
+    const pLive = parseFloat(String(k.price || k.livePreis || k.preis || "0").replace(',', '.')) || 0;
+    
+    if (pOriginal <= 0) return null;
+    
+    const diff = pLive - pOriginal;
+    const diffPct = (diff / pOriginal) * 100;
+    
+    if (diff > 0.005) {
+      return (
+        <span style={{ 
+          color: '#4cd964', 
+          fontWeight: 600, 
+          fontSize: '0.82rem', 
+          display: 'inline-flex', 
+          alignItems: 'center', 
+          gap: '3px',
+          background: 'rgba(76, 217, 100, 0.08)',
+          padding: '2px 8px',
+          borderRadius: '8px',
+          marginLeft: '8px',
+          verticalAlign: 'middle'
+        }}>
+          ▲ +{diff.toFixed(2)} € (+{diffPct.toFixed(1)}%)
+        </span>
+      );
+    } else if (diff < -0.005) {
+      return (
+        <span style={{ 
+          color: '#ff453a', 
+          fontWeight: 600, 
+          fontSize: '0.82rem', 
+          display: 'inline-flex', 
+          alignItems: 'center', 
+          gap: '3px',
+          background: 'rgba(255, 69, 58, 0.08)',
+          padding: '2px 8px',
+          borderRadius: '8px',
+          marginLeft: '8px',
+          verticalAlign: 'middle'
+        }}>
+          ▼ {diff.toFixed(2)} € ({diffPct.toFixed(1)}%)
+        </span>
+      );
+    }
+    return null;
+  };
+
   const getPriceVal = (k) => {
     if (!k) return 0;
     return parseFloat(String(k.livePreis || k.preis || "0").replace(',', '.')) || 0;
@@ -195,10 +244,11 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
                   {karte.set ? `[${karte.set.toUpperCase()}]` : ""} {karte.type || "Karte"}
                 </span>
               </div>
-              <div style={{ marginTop: '10px' }}>
+              <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
                 <span className="gallery-price-tag" style={{ margin: 0 }}>
                   {karte.price || "0.00"} €
                 </span>
+                {renderPriceTrend(karte)}
               </div>
             </div>
           ))}
@@ -248,6 +298,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
                   </td>
                   <td style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--price-color)' }}>
                     {karte.price || "0.00"} €
+                    {renderPriceTrend(karte)}
                   </td>
                   <td style={{ padding: '12px 20px', textAlign: 'center' }}>
                     <button

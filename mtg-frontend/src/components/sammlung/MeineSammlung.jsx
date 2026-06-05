@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
+import { FolderPlus, FileSpreadsheet, Heart, RefreshCw } from 'lucide-react';
 import CollectionFilters from './CollectionFilters';
 import CollectionGrid from './CollectionGrid';
 import CSVImportExport from './CSVImportExport';
 
-function MeineSammlung({ currentUser, userRole, setUserRole }) {
+function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal }) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentTab = new URLSearchParams(location.search).get('tab') || 'alben';
@@ -21,7 +22,27 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
   const [filteredKarten, setFilteredKarten] = useState([]);
   const [loadingFilters, setLoadingFilters] = useState(false);
   const [activeFilters, setActiveFilters] = useState({});
+  
+  // Selected album: null means "Alle Alben" overview grid
   const [selectedAlbum, setSelectedAlbum] = useState(null);
+  // Track which album context menu is open
+  const [openMenuAlbum, setOpenMenuAlbum] = useState(null);
+  // Track which album is selected for destruction modal
+  const [albumToDelete, setAlbumToDelete] = useState(null);
+
+  // Redirect legacy /export tab to consolidated /import (In- und Export)
+  useEffect(() => {
+    if (currentTab === 'export') {
+      navigate('/sammlung?tab=import', { replace: true });
+    }
+  }, [currentTab, navigate]);
+
+  // Click-away listener for context menus
+  useEffect(() => {
+    const closeMenus = () => setOpenMenuAlbum(null);
+    window.addEventListener('click', closeMenus);
+    return () => window.removeEventListener('click', closeMenus);
+  }, []);
 
   const ladeSammlung = async () => {
     try {
@@ -41,7 +62,9 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
           setAlben(cleanedAlben);
         }
       }
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   const ladeGefilterteSammlung = async (filters, albumFilter = selectedAlbum) => {
@@ -70,20 +93,56 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
     setLoadingFilters(false);
   };
 
+  const handleRefreshPrices = async () => {
+    if (userRole !== 'premium') {
+      if (onShowPremiumModal) onShowPremiumModal();
+      else alert("Dieses Feature steht nur Premium-Mitgliedern zur Verfügung. Bitte upgrade deine Rolle!");
+      return;
+    }
+    setUpdatingPrices(true);
+    try {
+      const res = await fetch(`/api/sammlung/${currentUser}/refresh-prices`, {
+        method: "POST"
+      });
+      if (res.ok) {
+        await ladeSammlung();
+        await ladeGefilterteSammlung(activeFilters, selectedAlbum);
+        alert("Preise wurden erfolgreich aktualisiert!");
+      } else {
+        alert("Fehler beim Aktualisieren der Preise.");
+      }
+    } catch (e) {
+      console.error("Error refreshing prices:", e);
+      alert("Fehler beim Aktualisieren der Preise.");
+    } finally {
+      setUpdatingPrices(false);
+    }
+  };
+
   const erstelleLeeresAlbum = async () => {
     if(!newAlbumName.trim()) return;
     const albumName = newAlbumName.trim();
     try {
-      await fetch(`/api/sammlung/hinzufuegen`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ benutzername: currentUser, karten_name: "__PLACEHOLDER__", album_name: albumName, bild_url: "", preis: "0.00" }) });
+      await fetch(`/api/sammlung/hinzufuegen`, { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ benutzername: currentUser, karten_name: "__PLACEHOLDER__", album_name: albumName, bild_url: "", preis: "0.00" }) 
+      });
       setNewAlbumName("");
       setSelectedAlbum(albumName);
       ladeSammlung();
       ladeGefilterteSammlung(activeFilters, albumName);
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   const loescheKarte = async (karten_id) => {
-    await fetch(`/api/sammlung/loeschen`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ karten_id }) });
+    await fetch(`/api/sammlung/loeschen`, { 
+      method: "POST", 
+      headers: { "Content-Type": "application/json" }, 
+      body: JSON.stringify({ karten_id }) 
+    });
     ladeSammlung();
     ladeGefilterteSammlung(activeFilters, selectedAlbum);
   }
@@ -100,7 +159,9 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
       }
       ladeSammlung();
       ladeGefilterteSammlung(activeFilters, selectedAlbum === albumName ? null : selectedAlbum);
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   useEffect(() => {
@@ -155,7 +216,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
     if(!wishlistSearch) return;
     setIsWishlistAdding(true);
     try {
-        const res = await fetch(`/api/suche/${wishlistSearch}?benutzername=${currentUser}`);
+        const res = await fetch(`/api/suche/${encodeURIComponent(wishlistSearch)}?benutzername=${currentUser}`);
         const data = await res.json();
         if(data && data.error) {
             alert("Karte nicht gefunden. Bitte Namen prüfen.");
@@ -181,139 +242,384 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
 
   return (
     <div className="apple-main-container">
-      <h2>Portfolio & Alben.</h2>
-      <p style={{marginBottom: '40px', fontSize: '1.2rem'}}>Verwalte deine Sammlung, Werte und Einkaufslisten.</p>
+      <h2>Sammlung & Inventar.</h2>
+      <p style={{marginBottom: '40px', fontSize: '1.2rem'}}>Verwalte deine Magic: The Gathering Ordner, Finanzen und Exporte.</p>
 
       <div className="segmented-control">
-        <button className={`segment-btn ${currentTab === 'alben' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=alben')}>Alben & Verwaltung</button>
+        <button className={`segment-btn ${currentTab === 'alben' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=alben')}>Ordner & Verwaltung</button>
         <button className={`segment-btn ${currentTab === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=dashboard')}>Finanz-Dashboard</button>
         <button className={`segment-btn ${currentTab === 'wishlist' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=wishlist')}>Wunschliste</button>
-        <button className={`segment-btn ${currentTab === 'import' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=import')}>Massen-Import</button>
-        <button className={`segment-btn ${currentTab === 'export' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=export')}>Export</button>
+        <button className={`segment-btn ${currentTab === 'import' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=import')}>In- und Export</button>
       </div>
       
       {currentTab === 'alben' && (
         <>
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '35px',
-            gap: '20px',
-            flexWrap: 'wrap'
-          }}>
-            <div style={{display: 'flex', gap: '15px', maxWidth: '500px', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexGrow: 1}}>
-              <input placeholder="Neues Albumname..." value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} style={{background: 'var(--input-bg)', border: 'none', padding: '10px 14px'}} />
-              <button className="primary-btn" onClick={erstelleLeeresAlbum} style={{padding: '10px 20px'}}>Erstellen</button>
-            </div>
-            
-            <div style={{background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', textAlign: 'right'}}>
-              <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em'}}>Gesamtwert</span>
-              <span style={{color: 'var(--price-color)', fontWeight: 600, fontSize: '1.6rem'}}>{totalPortfolioWert} €</span>
-            </div>
-          </div>
+          {/* Overview Controls when selectedAlbum is null */}
+          {selectedAlbum === null ? (
+            <>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '35px',
+                gap: '20px',
+                flexWrap: 'wrap'
+              }}>
+                <div style={{display: 'flex', gap: '15px', maxWidth: '500px', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexGrow: 1}}>
+                  <input id="new-album-input" placeholder="Neuer Ordnername..." value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} style={{background: 'var(--input-bg)', border: 'none', padding: '10px 14px', flexGrow: 1, borderRadius: '8px', color: 'white'}} />
+                  <button className="primary-btn" onClick={erstelleLeeresAlbum} style={{padding: '10px 20px'}}>Erstellen</button>
+                </div>
+                
+                <div style={{display: 'flex', gap: '20px', alignItems: 'center', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexWrap: 'wrap'}}>
+                  <div style={{textAlign: 'right'}}>
+                    <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em', display: 'block'}}>Zentraler Gesamtwert</span>
+                    <span style={{color: '#4cd964', fontWeight: 700, fontSize: '1.6rem'}}>{totalPortfolioWert} €</span>
+                  </div>
+                  <button 
+                    className="secondary-btn" 
+                    onClick={handleRefreshPrices} 
+                    disabled={updatingPrices}
+                    style={{
+                      padding: '10px 15px', 
+                      borderRadius: '10px', 
+                      fontSize: '0.82rem', 
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      color: 'var(--text-main)',
+                      border: '1px solid var(--border-color)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {updatingPrices ? <div className="spinner" style={{width: '12px', height: '12px', borderWidth: '2px', margin: 0}}></div> : <RefreshCw size={12} />}
+                    Preise aktualisieren
+                  </button>
+                </div>
+              </div>
 
-          {/* Album-Selector */}
-          <div style={{
-            display: 'flex',
-            gap: '12px',
-            marginBottom: '30px',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            background: 'var(--bg-card)',
-            padding: '15px 25px',
-            borderRadius: '16px',
-            border: '1px solid var(--border-color)',
-            boxShadow: '0 4px 15px var(--shadow-color)'
-          }}>
-            <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)', fontWeight: 600 }}>Album:</span>
-            <button 
-              type="button"
-              className={`segment-btn ${selectedAlbum === null ? 'active' : ''}`}
-              onClick={() => setSelectedAlbum(null)}
-              style={{
-                borderRadius: '20px',
-                padding: '8px 18px',
-                fontSize: '0.88rem',
-                border: '1px solid var(--border-color)',
-                background: selectedAlbum === null ? 'var(--accent-color)' : 'transparent',
-                color: selectedAlbum === null ? 'white' : 'var(--text-main)',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-                fontWeight: 500
-              }}
-            >
-              Alle Alben
-            </button>
-            {Object.keys(portfolioAlben).map(name => (
-              <button 
-                key={name}
-                type="button"
-                className={`segment-btn ${selectedAlbum === name ? 'active' : ''}`}
-                onClick={() => setSelectedAlbum(name)}
-                style={{
-                  borderRadius: '20px',
-                  padding: '8px 18px',
-                  fontSize: '0.88rem',
-                  border: '1px solid var(--border-color)',
-                  background: selectedAlbum === name ? 'var(--accent-color)' : 'transparent',
-                  color: selectedAlbum === name ? 'white' : 'var(--text-main)',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  fontWeight: 500
-                }}
-              >
-                {name}
-                <span
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if(confirm(`Möchtest du das Album "${name}" und alle darin enthaltenen Karten wirklich löschen?`)) {
-                      deleteAlbum(name);
-                    }
-                  }}
+              {/* Album Cards Grid */}
+              <h3 style={{ fontSize: '1.5rem', marginBottom: '20px', fontWeight: 600 }}>Meine Ordner</h3>
+              
+              {Object.keys(portfolioAlben).length === 0 ? (
+                <div className="bento-grid" style={{ marginTop: '20px', marginBottom: '40px' }}>
+                  <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', textAlign: 'left' }}>
+                    <div>
+                      <h4 style={{ fontSize: '1.25rem', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <FolderPlus size={20} style={{ color: 'var(--text-muted)' }} /> Ordner erstellen
+                      </h4>
+                      <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle einen leeren Ordner, um deine physischen Karten zu katalogisieren.</p>
+                    </div>
+                    <button className="primary-btn" onClick={() => document.getElementById('new-album-input')?.focus()} style={{ marginTop: '15px' }}>
+                      Ordner benennen
+                    </button>
+                  </div>
+
+                  <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', textAlign: 'left' }}>
+                    <div>
+                      <h4 style={{ fontSize: '1.25rem', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <FileSpreadsheet size={20} style={{ color: 'var(--text-muted)' }} /> Sammlung importieren
+                      </h4>
+                      <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Importiere deine bestehende Sammlung direkt per CSV-Datei oder einfachem Text.</p>
+                    </div>
+                    <button className="secondary-btn" onClick={() => navigate('/sammlung?tab=import')} style={{ marginTop: '15px' }}>
+                      Import-Center öffnen
+                    </button>
+                  </div>
+
+                  <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', textAlign: 'left' }}>
+                    <div>
+                      <h4 style={{ fontSize: '1.25rem', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Heart size={20} style={{ color: 'var(--text-muted)' }} /> Wunschliste füllen
+                      </h4>
+                      <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Füge Karten hinzu, nach denen du suchst, um dein benötigtes Budget zu berechnen.</p>
+                    </div>
+                    <button className="secondary-btn" onClick={() => navigate('/sammlung?tab=wishlist')} style={{ marginTop: '15px' }}>
+                      Zur Wunschliste
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                  gap: '25px',
+                  marginBottom: '40px'
+                }}>
+                  {Object.entries(portfolioAlben).map(([name, karten]) => {
+                    const cardCount = karten.length;
+                    const albumWert = berechneAlbumWert(karten);
+                    const coverImg = karten[0]?.bild_url || getFallbackCardImage(null, "Cover");
+                    const isMenuOpen = openMenuAlbum === name;
+                    
+                    return (
+                      <div 
+                        key={name}
+                        onClick={() => setSelectedAlbum(name)}
+                        className="album-card"
+                        style={{
+                          background: 'var(--bg-card)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '24px',
+                          padding: '20px',
+                          boxShadow: '0 8px 30px var(--shadow-color)',
+                          cursor: 'pointer',
+                          transition: 'transform 0.2s, box-shadow 0.2s',
+                          position: 'relative',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          minHeight: '260px',
+                          overflow: 'visible'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-4px)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}
+                      >
+                        {/* Context menu toggle button */}
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuAlbum(isMenuOpen ? null : name);
+                          }}
+                          style={{
+                            position: 'absolute',
+                            top: '15px',
+                            right: '15px',
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '50%',
+                            background: 'rgba(0,0,0,0.5)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--text-main)',
+                            fontSize: '1.2rem',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            zIndex: 10
+                          }}
+                        >
+                          ⋮
+                        </div>
+                        
+                        {/* Popover list */}
+                        {isMenuOpen && (
+                          <div 
+                            style={{
+                              position: 'absolute',
+                              top: '55px',
+                              right: '15px',
+                              background: 'var(--bg-card)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '12px',
+                              boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                              width: '130px',
+                              zIndex: 20,
+                              overflow: 'hidden'
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button 
+                              onClick={() => { setSelectedAlbum(name); setOpenMenuAlbum(null); }}
+                              style={{
+                                width: '100%',
+                                padding: '10px 15px',
+                                background: 'none',
+                                border: 'none',
+                                color: 'var(--text-main)',
+                                textAlign: 'left',
+                                cursor: 'pointer',
+                                fontSize: '0.88rem'
+                              }}
+                            >
+                              Öffnen
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setAlbumToDelete(name);
+                                setOpenMenuAlbum(null);
+                              }}
+                              style={{
+                                width: '100%',
+                                padding: '10px 15px',
+                                background: 'none',
+                                border: 'none',
+                                color: '#ff453a',
+                                textAlign: 'left',
+                                cursor: 'pointer',
+                                fontSize: '0.88rem',
+                                borderTop: '1px solid var(--border-color)'
+                              }}
+                            >
+                              Löschen
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Card Cover Image */}
+                        <div style={{
+                          width: '100%',
+                          height: '140px',
+                          borderRadius: '14px',
+                          overflow: 'hidden',
+                          marginBottom: '15px',
+                          position: 'relative',
+                          background: 'var(--btn-secondary)'
+                        }}>
+                          <img 
+                            src={coverImg} 
+                            alt={name}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              opacity: karten.length > 0 ? 0.8 : 0.15
+                            }}
+                            onError={(e) => { e.target.style.opacity = 0.15; }}
+                          />
+                          <div style={{
+                            position: 'absolute',
+                            bottom: '10px',
+                            left: '10px',
+                            background: 'rgba(0,0,0,0.7)',
+                            padding: '4px 10px',
+                            borderRadius: '8px',
+                            fontSize: '0.8rem',
+                            color: 'white',
+                            fontWeight: 600
+                          }}>
+                            {cardCount} {cardCount === 1 ? 'Karte' : 'Karten'}
+                          </div>
+                        </div>
+
+                        {/* Card text */}
+                        <div style={{ textAlign: 'left' }}>
+                          <h4 style={{ margin: '0 0 5px 0', fontSize: '1.15rem', color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</h4>
+                          <span style={{ fontSize: '1.25rem', color: 'var(--price-color)', fontWeight: 600 }}>{albumWert} €</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            /* Selected album detail view */
+            <>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '15px',
+                marginBottom: '30px',
+                flexWrap: 'wrap'
+              }}>
+                <button 
+                  onClick={() => setSelectedAlbum(null)}
+                  className="secondary-btn"
                   style={{
-                    background: selectedAlbum === name ? 'rgba(255,255,255,0.2)' : 'rgba(255,59,48,0.1)',
-                    color: selectedAlbum === name ? 'white' : 'var(--danger-color)',
+                    borderRadius: '20px',
+                    padding: '8px 18px',
+                    fontSize: '0.88rem',
+                    border: '1px solid var(--border-color)',
                     cursor: 'pointer',
-                    fontSize: '0.8rem',
-                    width: '18px',
-                    height: '18px',
-                    borderRadius: '50%',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 'bold',
-                    transition: 'all 0.2s'
+                    gap: '8px',
+                    fontWeight: 500,
+                    width: 'auto'
                   }}
-                  title="Album löschen"
                 >
-                  ✕
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Collection Filters Panel */}
-          <CollectionFilters currentUser={currentUser} onFilterChange={handleFilterChange} />
-
-          {/* Collection Grid / List Display */}
-          <div className="content-card" style={{ padding: '30px' }}>
-            {loadingFilters ? (
-              <div style={{ textAlign: 'center', padding: '40px' }}>
-                <div className="spinner"></div>
-                <p style={{ marginTop: '15px', color: 'var(--text-muted)' }}>Sammlung wird gefiltert...</p>
+                  ← Alle Ordner
+                </button>
+                <h3 style={{ margin: 0, fontSize: '1.8rem' }}>Ordner: {selectedAlbum}</h3>
+                
+                {/* Options button for active album */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenuAlbum(openMenuAlbum === selectedAlbum ? null : selectedAlbum);
+                    }}
+                    style={{
+                      background: 'var(--btn-secondary)',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '36px',
+                      height: '36px',
+                      cursor: 'pointer',
+                      color: 'var(--text-main)',
+                      fontSize: '1.1rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    ⋮
+                  </button>
+                  {openMenuAlbum === selectedAlbum && (
+                    <div 
+                      style={{
+                        position: 'absolute',
+                        top: '42px',
+                        left: 0,
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '12px',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                        width: '130px',
+                        zIndex: 20,
+                        overflow: 'hidden'
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button 
+                        onClick={() => {
+                          setAlbumToDelete(selectedAlbum);
+                          setOpenMenuAlbum(null);
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '10px 15px',
+                          background: 'none',
+                          border: 'none',
+                          color: '#ff453a',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          fontSize: '0.88rem'
+                        }}
+                      >
+                        Ordner löschen
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            ) : (
-              <CollectionGrid
-                karten={filteredKarten}
-                updatingPrices={updatingPrices}
-                loescheKarte={loescheKarte}
+
+              {/* Collection Filters Panel */}
+              <CollectionFilters 
+                currentUser={currentUser} 
+                selectedAlbum={selectedAlbum} 
+                onFilterChange={handleFilterChange} 
               />
-            )}
-          </div>
+
+              {/* Collection Grid */}
+              <div className="content-card" style={{ padding: '30px' }}>
+                {loadingFilters ? (
+                  <div style={{ textAlign: 'center', padding: '40px' }}>
+                    <div className="spinner"></div>
+                    <p style={{ marginTop: '15px', color: 'var(--text-muted)' }}>Sammlung wird gefiltert...</p>
+                  </div>
+                ) : (
+                  <CollectionGrid
+                    karten={filteredKarten}
+                    updatingPrices={updatingPrices}
+                    loescheKarte={loescheKarte}
+                  />
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -321,56 +627,79 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
         <div className="dashboard-grid">
            <div>
               <div className="content-card" style={{padding: '40px'}}>
-                <h3 style={{fontSize: '1.2rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px'}}>Gesamter Marktwert (Ohne Wunschliste)</h3>
-                <h1 style={{fontSize: '4.5rem', margin: '0 0 30px 0', color: 'var(--text-main)', letterSpacing: '-0.04em'}}>{totalPortfolioWert} €</h1>
-                
-                <h4 style={{marginBottom: '15px', color: 'var(--text-muted)'}}>Wertverteilung nach Alben</h4>
-                {Object.entries(portfolioAlben).map(([name, karten]) => {
-                   const val = parseFloat(berechneAlbumWert(karten));
-                   if(val === 0) return null;
-                   const total = parseFloat(totalPortfolioWert) || 1; 
-                   const pct = Math.round((val / total) * 100) || 0;
-                   return (
-                     <div key={name} style={{marginBottom: '15px'}}>
-                        <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '5px', fontSize: '0.95rem'}}>
-                          <span style={{fontWeight: 600}}>{name}</span>
-                          <span>{val.toFixed(2)} € ({pct}%)</span>
-                        </div>
-                        <div style={{width: '100%', height: '8px', background: 'var(--btn-secondary)', borderRadius: '4px', overflow: 'hidden'}}>
-                          <div style={{width: `${pct}%`, height: '100%', background: 'var(--accent-color)'}}></div>
-                        </div>
-                     </div>
-                   )
-                })}
+                 <h3 style={{fontSize: '1.2rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px'}}>Gesamter Marktwert (Ohne Wunschliste)</h3>
+                 <div style={{display: 'flex', alignItems: 'baseline', gap: '30px', flexWrap: 'wrap', marginBottom: '30px'}}>
+                   <h1 style={{fontSize: '4.5rem', margin: 0, color: 'var(--text-main)', letterSpacing: '-0.04em'}}>{totalPortfolioWert} €</h1>
+                   <button 
+                     className="secondary-btn" 
+                     onClick={handleRefreshPrices} 
+                     disabled={updatingPrices}
+                     style={{
+                       padding: '10px 18px', 
+                       borderRadius: '12px', 
+                       fontSize: '0.88rem', 
+                       fontWeight: 600,
+                       display: 'flex',
+                       alignItems: 'center',
+                       gap: '8px',
+                       background: 'var(--btn-secondary)',
+                       color: 'var(--text-main)',
+                       border: '1px solid var(--border-color)',
+                       cursor: 'pointer'
+                     }}
+                   >
+                     {updatingPrices ? <div className="spinner" style={{width: '14px', height: '14px', borderWidth: '2px', margin: 0}}></div> : <RefreshCw size={14} />}
+                     Preise aktualisieren
+                   </button>
+                 </div>
+                 
+                 <h4 style={{marginBottom: '15px', color: 'var(--text-muted)'}}>Wertverteilung nach Ordnern</h4>
+                 {Object.entries(portfolioAlben).map(([name, karten]) => {
+                    const val = parseFloat(berechneAlbumWert(karten));
+                    if(val === 0) return null;
+                    const total = parseFloat(totalPortfolioWert) || 1; 
+                    const pct = Math.round((val / total) * 100) || 0;
+                    return (
+                      <div key={name} style={{marginBottom: '15px'}}>
+                         <div style={{display: 'flex', justifycontent: 'space-between', marginBottom: '5px', fontSize: '0.95rem'}}>
+                           <span style={{fontWeight: 600}}>{name}</span>
+                           <span>{val.toFixed(2)} € ({pct}%)</span>
+                         </div>
+                         <div style={{width: '100%', height: '8px', background: 'var(--btn-secondary)', borderRadius: '4px', overflow: 'hidden'}}>
+                           <div style={{width: `${pct}%`, height: '100%', background: 'var(--accent-color)'}}></div>
+                         </div>
+                      </div>
+                    )
+                 })}
               </div>
            </div>
 
            <div>
               <div className="content-card" style={{padding: '30px'}}>
-                <h3 style={{marginBottom: '20px', fontSize: '1.5rem'}}>Top 10 Wertvollste Karten</h3>
-                <div style={{display: 'flex', flexDirection: 'column'}}>
-                  {getAllCardsFlat()
-                    .sort((a,b) => getPriceVal(b) - getPriceVal(a))
-                    .slice(0, 10)
-                    .map((k, i) => (
-                    <div key={i} className="top-card-item">
-                      <span style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-muted)', width: '30px' }}>#{i+1}</span>
-                      <img 
-                        src={k?.bild_url || getFallbackCardImage(k?.name, "Portfolio")} 
-                        alt={k?.name || "Unbekannt"} 
-                        className="top-card-img" 
-                        loading="lazy"
-                        onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k?.name, "Portfolio"); }}
-                      />
-                      <div style={{ flexGrow: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: '1.05rem', color: 'var(--text-main)' }}>{k?.name}</div>
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>In: {k?.albumName}</div>
-                      </div>
-                      <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--price-color)' }}>{k?.livePreis || k?.preis || "0.00"} €</div>
-                    </div>
-                  ))}
-                  {getAllCardsFlat().length === 0 && <p>Keine Karten im Portfolio.</p>}
-                </div>
+                 <h3 style={{marginBottom: '20px', fontSize: '1.5rem'}}>Top 10 Wertvollste Karten</h3>
+                 <div style={{display: 'flex', flexDirection: 'column'}}>
+                   {getAllCardsFlat()
+                     .sort((a,b) => getPriceVal(b) - getPriceVal(a))
+                     .slice(0, 10)
+                     .map((k, i) => (
+                     <div key={i} className="top-card-item">
+                       <span style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-muted)', width: '30px' }}># {i+1}</span>
+                       <img 
+                         src={k?.bild_url || getFallbackCardImage(k?.name, "Portfolio")} 
+                         alt={k?.name || "Unbekannt"} 
+                         className="top-card-img" 
+                         loading="lazy"
+                         onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k?.name, "Portfolio"); }}
+                       />
+                       <div style={{ flexGrow: 1 }}>
+                         <div style={{ fontWeight: 600, fontSize: '1.05rem', color: 'var(--text-main)' }}>{k?.name}</div>
+                         <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>In: {k?.albumName}</div>
+                       </div>
+                       <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--price-color)' }}>{k?.livePreis || k?.preis || "0.00"} €</div>
+                     </div>
+                   ))}
+                   {getAllCardsFlat().length === 0 && <p>Keine Karten im Portfolio.</p>}
+                 </div>
               </div>
            </div>
         </div>
@@ -378,7 +707,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
 
       {currentTab === 'wishlist' && (
         <div className="content-card" style={{padding: '40px'}}>
-           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '20px', marginBottom: '30px', flexWrap: 'wrap', gap: '20px'}}>
+           <div style={{display: 'flex', justifycontent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '20px', marginBottom: '30px', flexWrap: 'wrap', gap: '20px'}}>
               <div>
                  <h3 style={{margin: 0, fontSize: '2rem'}}>Meine Wunschliste</h3>
                  <p style={{margin: '5px 0 0 0'}}>Diese Karten sind von deinem Finanz-Dashboard ausgeschlossen.</p>
@@ -425,8 +754,74 @@ function MeineSammlung({ currentUser, userRole, setUserRole }) {
         </div>
       )}
 
-      {(currentTab === 'import' || currentTab === 'export') && (
+      {currentTab === 'import' && (
         <CSVImportExport currentUser={currentUser} ladeSammlung={ladeSammlung} />
+      )}
+
+      {/* Premium Glassmorphic Confirmation Modal */}
+      {albumToDelete && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          animation: 'fade-in 0.2s'
+        }}>
+          <div style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '24px',
+            padding: '30px',
+            maxWidth: '450px',
+            width: '90%',
+            textAlign: 'center',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.5)'
+          }}>
+            <div style={{ fontSize: '3rem', marginBottom: '15px' }}>⚠️</div>
+            <h4 style={{ margin: '0 0 10px 0', fontSize: '1.4rem', color: 'var(--text-main)', fontWeight: 600 }}>Ordner löschen?</h4>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: '1.6', marginBottom: '25px' }}>
+              Möchtest du den Ordner <strong>"{albumToDelete}"</strong> und alle darin enthaltenen Karten wirklich unwiderruflich löschen? Diese Aktion kann nicht rückgängig gemacht werden.
+            </p>
+            
+            <div style={{ display: 'flex', gap: '15px' }}>
+              <button 
+                onClick={() => setAlbumToDelete(null)}
+                className="secondary-btn"
+                style={{ flex: 1, padding: '12px 20px', borderRadius: '12px', fontSize: '0.95rem', cursor: 'pointer' }}
+              >
+                Abbrechen
+              </button>
+              <button 
+                onClick={async () => {
+                  const toDelete = albumToDelete;
+                  setAlbumToDelete(null);
+                  await deleteAlbum(toDelete);
+                }}
+                style={{ 
+                  flex: 1, 
+                  padding: '12px 20px', 
+                  borderRadius: '12px', 
+                  fontSize: '0.95rem',
+                  background: 'rgba(255, 69, 58, 0.15)',
+                  color: '#ff453a',
+                  border: '1px solid rgba(255, 69, 58, 0.3)',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Ordner löschen
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

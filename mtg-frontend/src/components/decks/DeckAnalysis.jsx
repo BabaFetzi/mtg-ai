@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import PremiumOverlay from '../layout/PremiumOverlay';
 import { getScryfallImage } from '../../utils/scryfallHelpers';
+import { Infinity } from 'lucide-react';
 
-function DeckAnalysis({ analyse, deckWert, userRole }) {
+function DeckAnalysis({ analyse, deckWert, userRole, onShowPremiumModal }) {
   const [hoveredCard, setHoveredCard] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
@@ -16,7 +17,7 @@ function DeckAnalysis({ analyse, deckWert, userRole }) {
     { key: 'removal', label: 'Removal' },
     { key: 'ramp', label: 'Ramp' },
     { key: 'protection', label: 'Protection' },
-    { key: 'winconditions', label: 'Win Conditions' }
+    { key: 'winconditions', label: 'Siegbedingungen' }
   ];
 
   const center = 150;
@@ -85,7 +86,7 @@ function DeckAnalysis({ analyse, deckWert, userRole }) {
 
   return (
     <div style={{ position: 'relative', marginTop: '20px' }}>
-      {userRole !== 'premium' && <PremiumOverlay />}
+      {userRole !== 'premium' && <PremiumOverlay onShowPremiumModal={onShowPremiumModal} />}
 
       {/* Main Grid: Radar Chart + Power Level Gauge */}
       <div style={{
@@ -227,7 +228,7 @@ function DeckAnalysis({ analyse, deckWert, userRole }) {
       {/* Categories Explanations & Strategy */}
       <div className="content-card" style={{ padding: '35px', marginBottom: '30px' }}>
         <h4 style={{ fontSize: '1.4rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '20px' }}>
-          Auswertung & KI-Empfehlungen
+          Strategische Auswertung
         </h4>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {categories.map(cat => {
@@ -259,7 +260,7 @@ function DeckAnalysis({ analyse, deckWert, userRole }) {
 
       {/* Detected Combos & Infinites */}
       {analyse.combos && analyse.combos.length > 0 && (
-        <div className="content-card" style={{ padding: '35px', marginBottom: '30px' }}>
+        <div id="analysis-combos" className="content-card" style={{ padding: '35px', marginBottom: '30px' }}>
           <h4 style={{ fontSize: '1.4rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '20px' }}>
             Combo-Finder
           </h4>
@@ -284,6 +285,9 @@ function DeckAnalysis({ analyse, deckWert, userRole }) {
                 </div>
                 {combo.typ && (
                   <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
                     background: 'var(--accent-color)',
                     color: 'var(--accent-text)',
                     padding: '4px 12px',
@@ -292,7 +296,7 @@ function DeckAnalysis({ analyse, deckWert, userRole }) {
                     fontWeight: 700,
                     textTransform: 'uppercase'
                   }}>
-                    ♾️ {combo.typ}
+                    <Infinity size={14} /> {combo.typ}
                   </span>
                 )}
               </div>

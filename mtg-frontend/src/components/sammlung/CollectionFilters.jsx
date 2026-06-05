@@ -9,7 +9,7 @@ const colorSymbols = {
   "C": "https://svgs.scryfall.io/card-symbols/C.svg"
 };
 
-function CollectionFilters({ currentUser, onFilterChange }) {
+function CollectionFilters({ currentUser, selectedAlbum, onFilterChange }) {
   const [editions, setEditions] = useState([]);
   const [search, setSearch] = useState("");
   const [selectedColor, setSelectedColor] = useState("");
@@ -22,7 +22,10 @@ function CollectionFilters({ currentUser, onFilterChange }) {
   useEffect(() => {
     // Fetch editions for selection
     if (currentUser) {
-      fetch(`/api/sammlung/${currentUser}/editions`)
+      const url = selectedAlbum
+        ? `/api/sammlung/${currentUser}/editions?album=${encodeURIComponent(selectedAlbum)}`
+        : `/api/sammlung/${currentUser}/editions`;
+      fetch(url)
         .then(res => res.json())
         .then(data => {
           if (data && data.erfolg && data.editions) {
@@ -31,7 +34,7 @@ function CollectionFilters({ currentUser, onFilterChange }) {
         })
         .catch(err => console.error("Error loading editions:", err));
     }
-  }, [currentUser]);
+  }, [currentUser, selectedAlbum]);
 
   // Propagate filters up
   useEffect(() => {
@@ -159,13 +162,13 @@ function CollectionFilters({ currentUser, onFilterChange }) {
 
         {/* Edition / Set select */}
         <div>
-          <span style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>Edition</span>
+          <span style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '6px' }}>Set (Edition)</span>
           <select
             value={edition}
             onChange={e => setEdition(e.target.value)}
             style={{ padding: '12px 15px', borderRadius: '10px', background: 'var(--bg-main)' }}
           >
-            <option value="">Alle Editionen</option>
+            <option value="">Alle Sets / Editionen</option>
             {editions.map(ed => (
               <option key={ed.set_code} value={ed.set_code}>
                 [{ed.set_code.toUpperCase()}] {ed.set_name}
@@ -206,7 +209,7 @@ function CollectionFilters({ currentUser, onFilterChange }) {
       }}>
         {/* CMC range */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flex: '1 1 auto' }}>
-          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 600 }}>Manakosten (CMC):</span>
+          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 600 }}>Manawert (CMC):</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexGrow: 1, maxWidth: '350px' }}>
             <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{minCmc}</span>
             <input

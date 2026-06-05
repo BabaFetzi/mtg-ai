@@ -1,12 +1,14 @@
+import os
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch, MagicMock
 from main import app
 
+os.environ["DEV_MODE"] = "True"
 client = TestClient(app)
 
 @pytest.mark.asyncio
-@patch('main.get_db_session')
+@patch('routers.payments.get_db_session')
 async def test_stripe_webhook_checkout_session_completed(mock_get_db):
     mock_db = AsyncMock()
     mock_get_db.return_value.__aenter__.return_value = mock_db
@@ -36,7 +38,7 @@ async def test_stripe_webhook_checkout_session_completed(mock_get_db):
     assert params_arg["name"] == "premium_user"
 
 @pytest.mark.asyncio
-@patch('main.get_db_session')
+@patch('routers.payments.get_db_session')
 async def test_stripe_webhook_subscription_deleted(mock_get_db):
     mock_db = AsyncMock()
     mock_get_db.return_value.__aenter__.return_value = mock_db
@@ -61,7 +63,7 @@ async def test_stripe_webhook_subscription_deleted(mock_get_db):
     assert params_arg["cust_id"] == "cus_test_12345"
 
 @pytest.mark.asyncio
-@patch('main.get_db_session')
+@patch('routers.payments.get_db_session')
 async def test_stripe_webhook_invoice_payment_failed(mock_get_db):
     mock_db = AsyncMock()
     mock_get_db.return_value.__aenter__.return_value = mock_db

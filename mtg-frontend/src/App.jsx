@@ -9,6 +9,8 @@ import MeineSammlung from './components/sammlung/MeineSammlung'
 import DecksView from './components/decks/DecksView'
 import PremiumPage from './components/premium/PremiumPage'
 import JudgeWidget from './components/layout/JudgeWidget'
+import PremiumUpgradeModal from './components/premium/PremiumUpgradeModal'
+import LandingPage from './components/layout/LandingPage'
 
 const globalStyles = `
 /* --- THEME VARIABLES (Harmonisiert & Pro) --- */
@@ -52,6 +54,83 @@ const globalStyles = `
   --price-color: #30B058;
   --danger-color: #E05252;
   --danger-bg: rgba(224, 82, 82, 0.12);
+}
+
+/* --- WUBRG THEMES (Mana-zentriert) --- */
+.theme-plains {
+  --bg-main: #FAF8F5;
+  --bg-card: #FFFFFF;
+  --text-main: #2C2B29;
+  --text-muted: #8E8A82;
+  --border-color: #E6E4DF;
+  --nav-bg: rgba(250, 248, 245, 0.8);
+  --input-bg: #FFFFFF;
+  --btn-secondary: #F3EFEA;
+  --btn-secondary-hover: #E8E2D7;
+  --shadow-color: rgba(196, 146, 62, 0.05);
+  --accent-color: #C4923E;
+  --accent-text: #FFFFFF;
+  --accent-hover: #A87B2E;
+}
+.theme-island {
+  --bg-main: #070F18;
+  --bg-card: #0E1E2F;
+  --text-main: #E2ECF5;
+  --text-muted: #8AA4C0;
+  --border-color: #1A3047;
+  --nav-bg: rgba(7, 15, 24, 0.8);
+  --input-bg: #0E1E2F;
+  --btn-secondary: #14283D;
+  --btn-secondary-hover: #1C3854;
+  --shadow-color: rgba(0, 113, 227, 0.15);
+  --accent-color: #0071E3;
+  --accent-text: #FFFFFF;
+  --accent-hover: #1D82EC;
+}
+.theme-swamp {
+  --bg-main: #060608;
+  --bg-card: #121216;
+  --text-main: #E2DCE8;
+  --text-muted: #928B9B;
+  --border-color: #24242C;
+  --nav-bg: rgba(6, 6, 8, 0.8);
+  --input-bg: #121216;
+  --btn-secondary: #1C1C24;
+  --btn-secondary-hover: #262630;
+  --shadow-color: rgba(155, 93, 229, 0.15);
+  --accent-color: #9B5DE5;
+  --accent-text: #FFFFFF;
+  --accent-hover: #AF7AEB;
+}
+.theme-mountain {
+  --bg-main: #0E0707;
+  --bg-card: #1C0F0F;
+  --text-main: #F5E2E2;
+  --text-muted: #B88E8E;
+  --border-color: #381E1E;
+  --nav-bg: rgba(14, 7, 7, 0.8);
+  --input-bg: #1C0F0F;
+  --btn-secondary: #2C1818;
+  --btn-secondary-hover: #3D2222;
+  --shadow-color: rgba(255, 77, 77, 0.15);
+  --accent-color: #FF4D4D;
+  --accent-text: #FFFFFF;
+  --accent-hover: #FF6666;
+}
+.theme-forest {
+  --bg-main: #050A06;
+  --bg-card: #101F13;
+  --text-main: #E2EFE4;
+  --text-muted: #8AA890;
+  --border-color: #1F3D26;
+  --nav-bg: rgba(5, 10, 6, 0.8);
+  --input-bg: #101F13;
+  --btn-secondary: #18301E;
+  --btn-secondary-hover: #22452B;
+  --shadow-color: rgba(76, 175, 80, 0.15);
+  --accent-color: #4CAF50;
+  --accent-text: #FFFFFF;
+  --accent-hover: #66BB6A;
 }
 
 #root { max-width: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; text-align: left !important; }
@@ -118,6 +197,9 @@ p { color: var(--text-muted); line-height: 1.5; margin: 0 0 16px 0; }
 /* --- CONTAINERS & CARDS --- */
 .apple-main-container { max-width: 1600px; margin: 0 auto; padding: 50px 4%; }
 .content-card { background: var(--bg-card); border-radius: 24px; padding: 40px; box-shadow: 0 8px 30px var(--shadow-color); text-align: left; margin-bottom: 24px; border: 1px solid var(--border-color); transition: background-color 0.3s, border-color 0.3s; }
+.pricing-card { transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.3s cubic-bezier(0.25, 1, 0.5, 1), border-color 0.3s; }
+.pricing-card:hover { transform: translateY(-8px); box-shadow: 0 20px 40px var(--shadow-color); }
+.pricing-card.highlighted:hover { border-color: #30D158 !important; }
 
 input, textarea, select {
   width: 100%; background: var(--input-bg); border: 1px solid var(--border-color); color: var(--text-main);
@@ -226,7 +308,11 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
 
 /* --- DECK BUILDER & VISUALIZER --- */
 .split-editor-container { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 30px; }
-@media (max-width: 1100px) { .split-editor-container { grid-template-columns: 1fr; } }
+.split-editor-text { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 30px; }
+.split-editor-visual { display: grid; grid-template-columns: 400px 1fr; gap: 30px; }
+@media (max-width: 1100px) {
+  .split-editor-container, .split-editor-text, .split-editor-visual { grid-template-columns: 1fr !important; }
+}
 .deck-textarea { height: 500px; background: var(--input-bg); border: 1px solid var(--border-color); font-family: "SF Mono", Consolas, monospace; font-size: 1.05rem; line-height: 1.6; }
 .deck-group-title { border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-top: 30px; margin-bottom: 20px; font-size: 1.4rem;}
 
@@ -290,6 +376,55 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
 .close-btn:hover { background: var(--btn-secondary-hover); }
 .spinner { border: 3px solid var(--border-color); border-top: 3px solid var(--accent-color); border-radius: 50%; width: 32px; height: 32px; animation: spin 1s linear infinite; margin: 0 auto; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+/* --- BENTO DASHBOARD --- */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-top: 20px;
+}
+@media (max-width: 1024px) {
+  .bento-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 768px) {
+  .bento-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.bento-item {
+  background: var(--bg-card);
+  border-radius: 24px;
+  padding: 30px;
+  box-shadow: 0 8px 30px var(--shadow-color);
+  border: 1px solid var(--border-color);
+  transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.3s;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.bento-item:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px var(--shadow-color);
+}
+.bento-col-2 {
+  grid-column: span 2;
+}
+@media (max-width: 768px) {
+  .bento-col-2 {
+    grid-column: span 1;
+  }
+}
+
+.fade-in-img {
+  opacity: 0;
+  transition: opacity 0.4s ease-in-out;
+}
+.fade-in-img.loaded {
+  opacity: 1;
+}
 `;
 
 function App() {
@@ -297,6 +432,8 @@ function App() {
   const [userRole, setUserRole] = useState("free");
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isJudgeOpen, setIsJudgeOpen] = useState(false); 
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [activeTheme, setActiveTheme] = useState(() => localStorage.getItem("active-theme") || "default");
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -318,6 +455,15 @@ function App() {
     if (isDarkMode) document.body.classList.add('dark-mode');
     else document.body.classList.remove('dark-mode');
   }, [isDarkMode]);
+
+  useEffect(() => {
+    localStorage.setItem("active-theme", activeTheme);
+    const themes = ["theme-plains", "theme-island", "theme-swamp", "theme-mountain", "theme-forest"];
+    themes.forEach(t => document.body.classList.remove(t));
+    if (activeTheme !== "default") {
+      document.body.classList.add(`theme-${activeTheme}`);
+    }
+  }, [activeTheme]);
 
   // Load user role when current user changes
   useEffect(() => {
@@ -372,23 +518,41 @@ function App() {
           });
       }
     }
-  }, [location, currentUser, navigate]);
-
-  if (!currentUser) return <><style>{globalStyles}</style><AuthScreen onLoginSuccess={handleLoginSuccess} /></>;
+  }, [location, currentUser, navigate]);  if (!currentUser) {
+    return (
+      <>
+        <style>{globalStyles}</style>
+        <LandingPage 
+          onLoginSuccess={handleLoginSuccess} 
+          activeTheme={activeTheme} 
+          setActiveTheme={setActiveTheme} 
+        />
+      </>
+    );
+  }
   
   return (
     <>
       <style>{globalStyles}</style>
-      <AppleHeader currentUser={currentUser} setCurrentUser={handleLogout} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} setIsJudgeOpen={setIsJudgeOpen} />
+      <AppleHeader 
+        currentUser={currentUser} 
+        setCurrentUser={handleLogout} 
+        isDarkMode={isDarkMode} 
+        setIsDarkMode={setIsDarkMode} 
+        setIsJudgeOpen={setIsJudgeOpen} 
+        activeTheme={activeTheme}
+        setActiveTheme={setActiveTheme}
+      />
       <main>
         <Routes>
-          <Route path="/" element={<EntdeckenHub currentUser={currentUser} userRole={userRole} />} />
-          <Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} />} />
-          <Route path="/decks" element={<DecksView currentUser={currentUser} userRole={userRole} />} />
+          <Route path="/" element={<EntdeckenHub currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
+          <Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
+          <Route path="/decks" element={<DecksView currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/premium" element={<PremiumPage currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} />} />
         </Routes>
       </main>
-      <JudgeWidget open={isJudgeOpen} setOpen={setIsJudgeOpen} currentUser={currentUser} userRole={userRole} />
+      <JudgeWidget open={isJudgeOpen} setOpen={setIsJudgeOpen} currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />
+      <PremiumUpgradeModal isOpen={showPremiumModal} onClose={() => setShowPremiumModal(false)} />
     </>
   );
 }

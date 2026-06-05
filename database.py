@@ -1,7 +1,7 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy import Column, String, Integer, Text, Numeric, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, String, Integer, Text, Numeric, DateTime, ForeignKey, Boolean, Index, text
 from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///mtg_app.db")
@@ -39,9 +39,14 @@ class User(Base):
     erstellt_am = Column(DateTime, default=datetime.utcnow)
     letzter_login = Column(DateTime, nullable=True)
     stripe_customer_id = Column(String(255), nullable=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
 
 class Collection(Base):
     __tablename__ = 'sammlung_alben'
+    __table_args__ = (
+        Index('idx_sammlung_user_album', 'benutzername', 'album_name'),
+        Index('idx_sammlung_karten_name', 'karten_name'),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     benutzername = Column(String(50), index=True)
     karten_name = Column(String(255), nullable=False)
@@ -80,10 +85,29 @@ class UserSession(Base):
     laeuft_ab = Column(DateTime, nullable=False)
     erstellt_am = Column(DateTime, default=datetime.utcnow)
 
+class SynergyJob(Base):
+    __tablename__ = 'synergy_jobs'
+    job_id = Column(String(36), primary_key=True)
+    status = Column(String(20), default='processing') # 'processing', 'completed', 'failed'
+    result = Column(Text, nullable=True) # JSON-serialized combos/recommendations
+    erstellt_am = Column(DateTime, default=datetime.utcnow)
+
+class ImportJob(Base):
+    __tablename__ = 'import_jobs'
+    job_id = Column(String(36), primary_key=True)
+    status = Column(String(20), default='processing') # 'processing', 'completed', 'failed'
+    result = Column(Text, nullable=True) # JSON-serialized result: {"imported": X, "failed": Y, "errors": [...]}
+    error = Column(Text, nullable=True)
+    erstellt_am = Column(DateTime, default=datetime.utcnow)
+
 async def init_db():
     async with engine.begin() as conn:
         # Create tables if they do not exist
         await conn.run_sync(Base.metadata.create_all)
+        # Explicitly create indexes for existing databases
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sammlung_user_album ON sammlung_alben (benutzername, album_name)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sammlung_karten_name ON sammlung_alben (karten_name)"))
+        await conn.execute(text("CREATE TABLE IF NOT EXISTS import_jobs (job_id TEXT PRIMARY KEY, status TEXT, result TEXT, error TEXT, erstellt_am TIMESTAMP)"))
 
 async def get_db():
     async with async_session() as session:
@@ -91,3 +115,41 @@ async def get_db():
             yield session
         finally:
             await session.close()
+
+
+import contextlib
+
+@contextlib.asynccontextmanager
+async def get_db_session():
+    """
+    Async Context Manager für DB-Sessions mit Auto-Commit/Rollback.
+
+    Verwendung:
+        async with get_db_session() as session:
+            await session.execute(...)
+    """
+    async with async_session() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def check_user_premium(benutzername: str) -> bool:
+    """Prüft ob ein Benutzer die Premium-Rolle hat."""
+    if not benutzername:
+        return False
+    try:
+        async with get_db_session() as session:
+            res = await session.execute(
+                text("SELECT rolle FROM nutzer WHERE benutzername = :name"),
+                {"name": benutzername}
+            )
+            row = res.mappings().first()
+            if row:
+                return (row["rolle"] or "free") == "premium"
+    except Exception as e:
+        print(f"Error checking user role: {e}")
+    return False

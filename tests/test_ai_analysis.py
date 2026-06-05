@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import json
 from main import app
 import main
+import routers.decks
 
 client = TestClient(app)
 
@@ -35,7 +36,7 @@ def mock_gemini_response():
     return response_data
 
 @pytest.mark.asyncio
-@patch('main.check_user_premium')
+@patch('routers.decks.check_user_premium')
 async def test_deck_analyse_paywall(mock_premium):
     mock_premium.return_value = False
     
@@ -51,7 +52,7 @@ async def test_deck_analyse_paywall(mock_premium):
     assert data["error"] == "paywall"
 
 @pytest.mark.asyncio
-@patch('main.check_user_premium')
+@patch('routers.decks.check_user_premium')
 async def test_deck_analyse_success(mock_premium, mock_gemini_response):
     mock_premium.return_value = True
     
@@ -62,19 +63,20 @@ async def test_deck_analyse_success(mock_premium, mock_gemini_response):
     mock_model.generate_content.return_value = mock_response
     
     # Temporarily set main.model to mock_model
-    original_model = main.model
-    main.model = mock_model
+    original_model = routers.decks.model
+    routers.decks.model = mock_model
     
     try:
-        response = client.post("/api/deck/analyse", json={
-            "deck_liste": "1 Krenko, Mob Boss\n1 Goblin Chieftain",
-            "benutzername": "testuser",
-            "format": "commander"
-        })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["strategie"] == "Aggro-Tribal mit Goblin-Synergie"
+        with patch('routers.decks.scryfall_cache.get', return_value=None):
+            response = client.post("/api/deck/analyse", json={
+                "deck_liste": "1 Krenko, Mob Boss\n1 Goblin Chieftain",
+                "benutzername": "testuser",
+                "format": "commander"
+            })
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert data["strategie"] == "Aggro-Tribal mit Goblin-Synergie"
         assert data["power_level"] == 7
         assert data["commander"] == "Krenko, Mob Boss"
         assert len(data["staerken"]) == 2
@@ -86,10 +88,10 @@ async def test_deck_analyse_success(mock_premium, mock_gemini_response):
         assert "commander" in prompt_arg
         assert "Krenko, Mob Boss" in prompt_arg
     finally:
-        main.model = original_model
+        routers.decks.model = original_model
 
 @pytest.mark.asyncio
-@patch('main.check_user_premium')
+@patch('routers.decks.check_user_premium')
 async def test_deck_analyse_fallback_on_exception(mock_premium):
     mock_premium.return_value = True
     
@@ -97,20 +99,21 @@ async def test_deck_analyse_fallback_on_exception(mock_premium):
     mock_model = MagicMock()
     mock_model.generate_content.side_effect = Exception("API Timeout")
     
-    original_model = main.model
-    main.model = mock_model
+    original_model = routers.decks.model
+    routers.decks.model = mock_model
     
     try:
-        response = client.post("/api/deck/analyse", json={
-            "deck_liste": "1 Krenko, Mob Boss",
-            "benutzername": "testuser",
-            "format": "commander"
-        })
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "error" not in data
-        assert data["strategie"] == "Konnte durch die KI aktuell nicht ausgewertet werden."
+        with patch('routers.decks.scryfall_cache.get', return_value=None):
+            response = client.post("/api/deck/analyse", json={
+                "deck_liste": "1 Krenko, Mob Boss",
+                "benutzername": "testuser",
+                "format": "commander"
+            })
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert "error" not in data
+            assert data["strategie"] == "Konnte durch die KI aktuell nicht ausgewertet werden."
         assert data["power_level"] == 5
     finally:
-        main.model = original_model
+        routers.decks.model = original_model
