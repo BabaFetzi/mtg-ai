@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from database import init_db
-from routers import cards, auth, collection, decks, ai, payments
+from routers import cards, auth, collection, decks, ai, payments, vision
 
 # ======================================================================
 # Lifespan Events (Datenbank-Initialisierung beim Startup)
@@ -68,6 +68,7 @@ app.include_router(collection.router)
 app.include_router(decks.router)
 app.include_router(ai.router)
 app.include_router(payments.router)
+app.include_router(vision.router)
 
 # ======================================================================
 # Server-Status Endpoint

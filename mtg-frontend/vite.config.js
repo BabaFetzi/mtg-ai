@@ -5,13 +5,18 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    allowedHosts: [
-      'feminism-dirtiness-blissful.ngrok-free.dev'
-    ],
+    port: 5175,
+    allowedHosts: true,
     // HIER IST DIE MAGIE: Leitet alle /api Anfragen ans Backend weiter!
     proxy: {
+      '/api/vision/stream': {
+        target: 'ws://127.0.0.1:8001',
+        changeOrigin: true,
+        ws: true,
+        secure: false,
+      },
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: 'http://127.0.0.1:8001',
         changeOrigin: true,
         secure: false,
       }

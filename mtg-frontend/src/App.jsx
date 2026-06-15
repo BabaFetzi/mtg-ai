@@ -11,6 +11,8 @@ import PremiumPage from './components/premium/PremiumPage'
 import JudgeWidget from './components/layout/JudgeWidget'
 import PremiumUpgradeModal from './components/premium/PremiumUpgradeModal'
 import LandingPage from './components/layout/LandingPage'
+import MobileCamera from './components/playfield/MobileCamera'
+import PlayfieldView from './components/playfield/PlayfieldView'
 
 const globalStyles = `
 /* --- THEME VARIABLES (Harmonisiert & Pro) --- */
@@ -518,7 +520,11 @@ function App() {
           });
       }
     }
-  }, [location, currentUser, navigate]);  if (!currentUser) {
+  }, [location, currentUser, navigate]);
+
+  const isCameraView = location.pathname.startsWith('/playfield/camera/');
+
+  if (!currentUser && !isCameraView) {
     return (
       <>
         <style>{globalStyles}</style>
@@ -534,25 +540,33 @@ function App() {
   return (
     <>
       <style>{globalStyles}</style>
-      <AppleHeader 
-        currentUser={currentUser} 
-        setCurrentUser={handleLogout} 
-        isDarkMode={isDarkMode} 
-        setIsDarkMode={setIsDarkMode} 
-        setIsJudgeOpen={setIsJudgeOpen} 
-        activeTheme={activeTheme}
-        setActiveTheme={setActiveTheme}
-      />
+      {!isCameraView && (
+        <AppleHeader 
+          currentUser={currentUser} 
+          setCurrentUser={handleLogout} 
+          isDarkMode={isDarkMode} 
+          setIsDarkMode={setIsDarkMode} 
+          setIsJudgeOpen={setIsJudgeOpen} 
+          activeTheme={activeTheme}
+          setActiveTheme={setActiveTheme}
+        />
+      )}
       <main>
         <Routes>
           <Route path="/" element={<EntdeckenHub currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/decks" element={<DecksView currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/premium" element={<PremiumPage currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} />} />
+          <Route path="/playfield" element={<PlayfieldView currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
+          <Route path="/playfield/camera/:sessionId" element={<MobileCamera />} />
         </Routes>
       </main>
-      <JudgeWidget open={isJudgeOpen} setOpen={setIsJudgeOpen} currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />
-      <PremiumUpgradeModal isOpen={showPremiumModal} onClose={() => setShowPremiumModal(false)} />
+      {!isCameraView && (
+        <>
+          <JudgeWidget open={isJudgeOpen} setOpen={setIsJudgeOpen} currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />
+          <PremiumUpgradeModal isOpen={showPremiumModal} onClose={() => setShowPremiumModal(false)} />
+        </>
+      )}
     </>
   );
 }

@@ -149,6 +149,7 @@ function AppleHeader({ currentUser, setCurrentUser, isDarkMode, setIsDarkMode, s
                     <h4>Analyse & Tools</h4>
                     <a onClick={() => {navigate('/decks?tab=visual'); setIsMenuOpen(false); setHoveredNav(null);}}>Deckliste & Starthand</a>
                     <a onClick={() => {navigate('/decks?tab=stats'); setIsMenuOpen(false); setHoveredNav(null);}}>Stats & Analyse</a>
+                    <a onClick={() => {navigate('/playfield'); setIsMenuOpen(false); setHoveredNav(null);}}>Spielfeld (Live Playfield)</a>
                 </div>
                 <div className="dropdown-column">
                     <h4>Export</h4>
