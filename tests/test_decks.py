@@ -1,7 +1,13 @@
+from contextlib import asynccontextmanager
+
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.pool import StaticPool
 from unittest.mock import AsyncMock, MagicMock, patch
 from main import app
+from database import Base
 
 client = TestClient(app)
 
@@ -156,4 +162,66 @@ async def test_deck_stats_success(mock_fetch):
     assert "2" not in data["cmc_noncreatures"]
     assert data["colors"]["G"] == 2
     assert data["colors"]["C"] == 1
+
+
+# ============================================================================
+# Regression test: routers/decks.py must use the real `decks` table columns
+# (`name`, `liste`) rather than the non-existent `deck_name`/`deck_liste`.
+# Runs against a real (in-memory) SQLite schema created from database.py's
+# models, so a column-name mismatch fails loudly instead of being hidden by
+# a mocked session.
+# ============================================================================
+@pytest_asyncio.fixture
+async def real_db_session_factory():
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    yield session_maker
+    await engine.dispose()
+
+
+def _real_get_db_session(session_maker):
+    @asynccontextmanager
+    async def _get_db_session():
+        async with session_maker() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    return _get_db_session
+
+
+@pytest.mark.asyncio
+@patch('routers.decks.check_user_premium')
+async def test_deck_save_and_load_roundtrip_against_real_schema(mock_check_premium, real_db_session_factory):
+    """Proves the deck-save bug is fixed: create a deck via the real API,
+    then load it back via the real API, against the actual `decks` table
+    schema (columns `name`/`liste`) -- not a mock."""
+    mock_check_premium.return_value = True
+
+    with patch('routers.decks.get_db_session', _real_get_db_session(real_db_session_factory)):
+        create_payload = {
+            "benutzername": "roundtrip_user",
+            "deck_name": "Meine Testliste",
+            "deck_liste": "1 Sol Ring\n1 Command Tower",
+            "format": "commander",
+        }
+        create_resp = client.post("/api/decks/erstellen", json=create_payload)
+        assert create_resp.status_code == 200
+        assert create_resp.json()["erfolg"] is True
+
+        load_resp = client.get("/api/decks/roundtrip_user")
+        assert load_resp.status_code == 200
+        decks = load_resp.json()
+        assert len(decks) == 1
+        assert decks[0]["name"] == "Meine Testliste"
+        assert decks[0]["liste"] == "1 Sol Ring\n1 Command Tower"
+        assert decks[0]["format"] == "commander"
 

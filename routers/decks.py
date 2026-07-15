@@ -78,7 +78,7 @@ async def get_decks(benutzername: str):
             {"name": benutzername}
         )
         rows = res.mappings().all()
-        return [{"id": r["id"], "name": r["deck_name"], "liste": r["deck_liste"], "format": r.get("format") or "commander"} for r in rows]
+        return [{"id": r["id"], "name": r["name"], "liste": r["liste"], "format": r.get("format") or "commander"} for r in rows]
 
 # ======================================================================
 # POST /api/decks/erstellen – Deck erstellen
@@ -103,7 +103,7 @@ async def create_deck(data: DeckErstellenReq):
                 )
         
         await session.execute(
-            text("INSERT INTO decks (benutzername, deck_name, deck_liste, format) VALUES (:user, :name, :list, :format)"),
+            text("INSERT INTO decks (benutzername, name, liste, format) VALUES (:user, :name, :list, :format)"),
             {"user": data.benutzername, "name": data.deck_name, "list": data.deck_liste, "format": data.format or "commander"}
         )
     return {"erfolg": True}
@@ -120,10 +120,10 @@ async def update_deck(data: DeckUpdateReq):
         update_parts = []
         params = {"id": data.deck_id}
         if data.deck_liste is not None:
-            update_parts.append("deck_liste = :list")
+            update_parts.append("liste = :list")
             params["list"] = data.deck_liste
         if data.deck_name is not None:
-            update_parts.append("deck_name = :name")
+            update_parts.append("name = :name")
             params["name"] = data.deck_name
         if data.format is not None:
             update_parts.append("format = :format")
@@ -420,14 +420,14 @@ async def add_card_to_deck(req: DeckAddCardReq):
     try:
         async with get_db_session() as session:
             res = await session.execute(
-                text("SELECT deck_liste FROM decks WHERE id = :id"),
+                text("SELECT liste FROM decks WHERE id = :id"),
                 {"id": req.deck_id}
             )
             row = res.mappings().first()
             if not row:
                 return {"erfolg": False, "error": "Deck nicht gefunden."}
 
-            current_liste = row["deck_liste"] or ""
+            current_liste = row["liste"] or ""
             lines = current_liste.split('\n')
             updated = False
             updated_lines = []
@@ -458,7 +458,7 @@ async def add_card_to_deck(req: DeckAddCardReq):
 
             new_liste = '\n'.join(updated_lines)
             await session.execute(
-                text("UPDATE decks SET deck_liste = :list WHERE id = :id"),
+                text("UPDATE decks SET liste = :list WHERE id = :id"),
                 {"list": new_liste, "id": req.deck_id}
             )
 
@@ -485,7 +485,7 @@ async def remove_card_from_deck(req: DeckRemoveCardReq):
             if not deck:
                 return {"erfolg": False, "error": "Deck nicht gefunden."}
 
-            deck_liste = deck["deck_liste"] or ""
+            deck_liste = deck["liste"] or ""
             lines = deck_liste.strip().split('\n') if deck_liste.strip() else []
 
             card_found = False
@@ -517,7 +517,7 @@ async def remove_card_from_deck(req: DeckRemoveCardReq):
 
             new_liste = '\n'.join(updated_lines)
             await session.execute(
-                text("UPDATE decks SET deck_liste = :list WHERE id = :id"),
+                text("UPDATE decks SET liste = :list WHERE id = :id"),
                 {"list": new_liste, "id": req.deck_id}
             )
 
@@ -541,19 +541,19 @@ async def get_shared_deck(id: int):
         async with get_db_session() as session:
             # Nur die für das Deck-Layout relevanten Spalten laden, um Daten-Leaks zu verhindern
             res = await session.execute(
-                text("SELECT id, benutzername, deck_name, deck_liste, format FROM decks WHERE id = :id"),
+                text("SELECT id, benutzername, name, liste, format FROM decks WHERE id = :id"),
                 {"id": id}
             )
             row = res.mappings().first()
-            
+
         if not row:
             raise HTTPException(status_code=404, detail="Deck nicht gefunden oder existiert nicht.")
-            
+
         return {
             "id": row["id"],
             "besitzer": row["benutzername"],
-            "name": row["deck_name"],
-            "liste": row["deck_liste"],
+            "name": row["name"],
+            "liste": row["liste"],
             "format": row.get("format") or "commander"
         }
     except HTTPException:

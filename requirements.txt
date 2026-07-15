@@ -16,3 +16,7 @@ slowapi
 stripe
 opencv-python-headless
 numpy
+
+# test-only
+pytest
+pytest-asyncio

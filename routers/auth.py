@@ -5,7 +5,7 @@ Endpoints:
     POST /api/register                    – Neuen Benutzer registrieren (mit bcrypt-Hashing)
     POST /api/login                       – Login mit Rate-Limiting und Hash-Migration (SHA-256 → bcrypt)
     GET  /api/user/role/{benutzername}    – Aktuelle Rolle eines Benutzers abfragen
-    POST /api/user/update-role            – Benutzerrolle aktualisieren (z. B. nach Stripe-Checkout)
+    POST /api/user/update-role            – Eigene Rolle ändern oder (als Admin) fremde Rolle setzen; Premium ist per Self-Service gesperrt
     GET  /api/auth/google/login           – Google OAuth-Login Weiterleitung
     GET  /api/auth/google/callback        – Google OAuth-Callback zur Benutzeranlage/Login
     GET  /api/auth/discord/login          – Discord OAuth-Login Weiterleitung
@@ -25,7 +25,7 @@ import hashlib
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Request, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Request, HTTPException, status, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy import text
 
@@ -36,7 +36,8 @@ from auth import (
     create_access_token,
     create_refresh_token,
     check_login_rate_limit,
-    record_login_attempt
+    record_login_attempt,
+    get_current_user
 )
 from schemas.models import LoginData, UpdateRoleReq
 
@@ -182,11 +183,34 @@ async def get_user_role(benutzername: str):
 # ======================================================================
 # POST /api/user/update-role – Rolle manuell setzen
 # ======================================================================
+def _is_admin(username: str) -> bool:
+    """Liest ADMIN_USERNAMES bei jedem Aufruf neu (kommagetrennte Liste), damit
+    Admin-Rechte ohne Neustart des Prozesses vergeben/entzogen werden können."""
+    admin_usernames = {
+        u.strip() for u in os.getenv("ADMIN_USERNAMES", "").split(",") if u.strip()
+    }
+    return username in admin_usernames
+
 @router.post(
     "/user/update-role",
     summary="Benutzerrolle aktualisieren",
 )
-async def update_user_role(req: UpdateRoleReq):
+async def update_user_role(req: UpdateRoleReq, current_user: str = Depends(get_current_user)):
+    is_admin = _is_admin(current_user)
+    is_self = current_user == req.benutzername
+
+    if not is_admin and not is_self:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Du darfst nur deine eigene Rolle ändern."
+        )
+
+    if not is_admin and req.rolle == "premium":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Premium kann nicht selbst zugewiesen werden. Das Upgrade erfolgt automatisch nach erfolgreicher Zahlung."
+        )
+
     async with get_db_session() as session:
         await session.execute(
             text("UPDATE nutzer SET rolle = :role WHERE benutzername = :name"),
