@@ -10,7 +10,6 @@ Abhängigkeiten:
     - schemas.models  → CheckoutReq
 """
 
-import json
 import os
 import urllib.parse
 from typing import Optional
@@ -86,36 +85,37 @@ async def create_checkout_session(req: CheckoutReq):
 # Gemeinsamer Webhook Event Processor
 # ======================================================================
 async def handle_stripe_webhook_logic(request: Request):
+    """
+    Verifiziert JEDE eingehende Webhook-Anfrage gegen die Stripe-Signatur --
+    es gibt absichtlich keinen Bypass mehr (auch nicht über eine DEV_MODE-
+    Env-Var), da ein falsch gesetztes Flag in Produktion sonst gefälschte
+    Events (z.B. ein erfundenes "checkout.session.completed") akzeptieren
+    und kostenloses Premium vergeben würde. Lokal/Dev-Tests laufen über
+    echte, mit dem Stripe-Testsecret signierte Payloads (z.B. via
+    `stripe listen` oder eine im Test erzeugte Signatur), nicht über
+    unsignierte JSON-Bodies.
+    """
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
     stripe_key = os.getenv("STRIPE_API_KEY")
-    
+
     if stripe_key:
         stripe.api_key = stripe_key
-        
-    event = None
+
+    if not webhook_secret or not sig_header:
+        raise HTTPException(status_code=400, detail="Missing webhook secret or stripe signature header")
+
     try:
-        if os.getenv("DEV_MODE") == "True":
-            if webhook_secret and sig_header:
-                event = stripe.Webhook.construct_event(
-                    payload, sig_header, webhook_secret
-                )
-            else:
-                data = json.loads(payload)
-                event = stripe.Event.construct_from(data, stripe.api_key)
-        else:
-            if not webhook_secret or not sig_header:
-                raise HTTPException(status_code=400, detail="Missing webhook secret or stripe signature header in production mode")
-            event = stripe.Webhook.construct_event(
-                payload, sig_header, webhook_secret
-            )
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, webhook_secret
+        )
     except HTTPException:
         raise
     except Exception as e:
         print(f"GLOBALER FEHLER in Webhook construct: {e}")
         return JSONResponse(status_code=400, content={"error": str(e)})
-        
+
     if event:
         event_type = get_stripe_val(event, "type")
         event_data = get_stripe_val(event, "data", {})
