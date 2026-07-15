@@ -1,0 +1,22 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+aiosqlite
+asyncpg
+python-jose[cryptography]
+bcrypt
+python-dotenv
+pydantic
+python-multipart
+httpx
+requests
+google-generativeai
+redis
+slowapi
+stripe
+opencv-python-headless
+numpy
+
+# test-only
+pytest
+pytest-asyncio

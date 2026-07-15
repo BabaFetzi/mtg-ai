@@ -1,4 +1,5 @@
 import os
+import secrets
 import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Tuple
@@ -10,7 +11,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "b3ac2efc754d925e0a0d0d463e2c3491f2cde99252ef0e85")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_hex(32)
+    print(
+        "WARNUNG: JWT_SECRET_KEY ist nicht gesetzt! Es wird ein zufälliger, "
+        "flüchtiger Schlüssel für diesen Prozess verwendet – bestehende Tokens "
+        "werden bei jedem Neustart ungültig und Tokens sind zwischen mehreren "
+        "Workern nicht kompatibel. Setze JWT_SECRET_KEY in der Produktionsumgebung!"
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 30
