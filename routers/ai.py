@@ -20,7 +20,7 @@ import re
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -28,6 +28,7 @@ from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.ai_service import model
 from services.combos import detect_local_combos
+from services.limiter import limiter
 from services.scryfall import parse_decklist
 
 # ======================================================================
@@ -57,7 +58,8 @@ router = APIRouter(
     "/judge",
     summary="KI Judge Regelfrage stellen",
 )
-async def judge_endpoint(req: JudgeRequest):
+@limiter.limit("10/minute")
+async def judge_endpoint(req: JudgeRequest, request: Request):
     is_premium = await check_user_premium(req.benutzername)
     if not is_premium:
         return {
@@ -116,7 +118,8 @@ async def get_combos(
     "/scan_combos",
     summary="Deckliste auf Kombos scannen",
 )
-async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks):
+@limiter.limit("5/minute")
+async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, request: Request):
     is_premium = await check_user_premium(req.benutzername)
     if not is_premium:
         return {

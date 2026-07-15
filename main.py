@@ -10,8 +10,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from database import init_db
+from services.limiter import limiter
 from routers import cards, auth, collection, decks, ai, payments, vision
 
 # ======================================================================
@@ -36,6 +40,13 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# ======================================================================
+# Rate Limiting (slowapi, Redis-backed über services/limiter.py)
+# ======================================================================
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # ======================================================================
 # CORS Middleware
