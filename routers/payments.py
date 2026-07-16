@@ -2,6 +2,7 @@
 routers/payments.py – Stripe-Zahlungsabwicklung & Premium-Abonnements
 
 Endpoints:
+    GET  /api/checkout/price          – Aktuellen Abo-Preis live von Stripe abfragen
     POST /api/checkout/create-session – Erstellt eine Stripe Checkout-Session (mit simulated Fallback)
     POST /api/checkout/webhook        – Stripe Webhook-Handler für Statusänderungen
 
@@ -44,6 +45,41 @@ def get_stripe_val(obj, key, default=None):
         return getattr(obj, key, default)
 
 # ======================================================================
+# GET /api/checkout/price – Aktuellen Preis live von Stripe abfragen
+# ======================================================================
+@router.get(
+    "/checkout/price",
+    summary="Aktuellen Abo-Preis abfragen",
+)
+async def get_checkout_price():
+    """
+    Liefert den tatsächlich in Stripe hinterlegten Preis (Betrag, Währung,
+    Abrechnungsintervall) für STRIPE_PRICE_ID. Damit das Frontend nie einen
+    veralteten, fest einprogrammierten Preis anzeigt -- ändert sich der Preis
+    in Stripe, ändert sich automatisch auch die Anzeige, ohne Deploy.
+    """
+    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    price_id = os.getenv("STRIPE_PRICE_ID")
+    if not stripe_key or not price_id:
+        return {"konfiguriert": False}
+
+    try:
+        stripe.api_key = stripe_key
+        price = stripe.Price.retrieve(price_id)
+        betrag = (price.unit_amount or 0) / 100
+        waehrung = (price.currency or "").upper()
+        intervall = price.recurring.interval if price.recurring else "month"
+        return {
+            "konfiguriert": True,
+            "betrag": betrag,
+            "waehrung": waehrung,
+            "intervall": intervall,
+        }
+    except Exception as e:
+        print(f"Error fetching Stripe price: {e}")
+        return {"konfiguriert": False, "error": str(e)}
+
+# ======================================================================
 # POST /api/checkout/create-session – Checkout Session erstellen
 # ======================================================================
 @router.post(
@@ -53,20 +89,22 @@ def get_stripe_val(obj, key, default=None):
 async def create_checkout_session(req: CheckoutReq):
     if not req.benutzername:
         return {"erfolg": False, "error": "Benutzername erforderlich"}
-    
-    stripe_key = os.getenv("STRIPE_API_KEY")
-    if not stripe_key:
-        # Fallback simulated checkout url (Simuliert den Upgrade-Flow für lokale Entwicklung)
+
+    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    price_id = os.getenv("STRIPE_PRICE_ID")
+    if not stripe_key or not price_id:
+        # Fallback simulated checkout url (Simuliert den Upgrade-Flow für lokale Entwicklung,
+        # nur wenn Stripe wirklich nicht konfiguriert ist -- kein Dummy-Preis-Versuch mehr)
         mock_success_url = f"{req.host_url}/premium?status=success&mock_upgrade=true&user={urllib.parse.quote(req.benutzername)}"
         return {"erfolg": True, "url": mock_success_url, "simulated": True}
-        
+
     try:
         stripe.api_key = stripe_key
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[
                 {
-                    'price': os.getenv("STRIPE_PRICE_ID", "price_dummy_123"),
+                    'price': price_id,
                     'quantity': 1,
                 },
             ],
@@ -98,7 +136,7 @@ async def handle_stripe_webhook_logic(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
-    stripe_key = os.getenv("STRIPE_API_KEY")
+    stripe_key = os.getenv("STRIPE_SECRET_KEY")
 
     if stripe_key:
         stripe.api_key = stripe_key

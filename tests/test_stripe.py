@@ -5,7 +5,7 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from main import app
 
 client = TestClient(app)
@@ -157,3 +157,99 @@ async def test_webhook_rejects_forged_signature_even_with_dev_mode_true(mock_get
 
     assert response.status_code == 400
     mock_db.execute.assert_not_called()
+
+
+# ============================================================================
+# Regressionstests: create_checkout_session las vorher os.getenv("STRIPE_API_KEY"),
+# obwohl die Env-Var überall sonst (und in der .env) STRIPE_SECRET_KEY heisst --
+# dadurch griff IMMER der simulierte Fallback, selbst mit korrekt gesetztem
+# Secret Key. Diese Tests beweisen, dass der richtige Name jetzt gelesen wird
+# und eine echte Checkout-Session entsteht, statt der Simulation.
+# ============================================================================
+@pytest.mark.asyncio
+async def test_create_checkout_session_uses_stripe_secret_key_env_var(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_dummy")
+
+    fake_session = MagicMock()
+    fake_session.url = "https://checkout.stripe.com/c/pay/cs_test_dummy"
+
+    with patch('stripe.checkout.Session.create', return_value=fake_session) as mock_create:
+        response = client.post(
+            "/api/checkout/create-session",
+            json={"benutzername": "testuser", "host_url": "http://localhost:5175"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["erfolg"] is True
+    assert data["simulated"] is False
+    assert data["url"] == "https://checkout.stripe.com/c/pay/cs_test_dummy"
+    mock_create.assert_called_once()
+    assert mock_create.call_args.kwargs["line_items"][0]["price"] == "price_dummy"
+
+
+@pytest.mark.asyncio
+async def test_create_checkout_session_falls_back_to_simulated_without_price_id(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+
+    with patch('stripe.checkout.Session.create') as mock_create:
+        response = client.post(
+            "/api/checkout/create-session",
+            json={"benutzername": "testuser", "host_url": "http://localhost:5175"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["simulated"] is True
+    mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_checkout_session_falls_back_to_simulated_without_key(monkeypatch):
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_dummy")
+
+    response = client.post(
+        "/api/checkout/create-session",
+        json={"benutzername": "testuser", "host_url": "http://localhost:5175"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["simulated"] is True
+
+
+# ============================================================================
+# GET /api/checkout/price -- ersetzt den fest einprogrammierten Frontend-Preis.
+# ============================================================================
+@pytest.mark.asyncio
+async def test_checkout_price_returns_live_stripe_price(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_dummy")
+
+    fake_price = MagicMock()
+    fake_price.unit_amount = 390
+    fake_price.currency = "chf"
+    fake_price.recurring.interval = "month"
+
+    with patch('stripe.Price.retrieve', return_value=fake_price):
+        response = client.get("/api/checkout/price")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["konfiguriert"] is True
+    assert data["betrag"] == 3.90
+    assert data["waehrung"] == "CHF"
+    assert data["intervall"] == "month"
+
+
+@pytest.mark.asyncio
+async def test_checkout_price_not_configured_without_price_id(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+
+    response = client.get("/api/checkout/price")
+
+    assert response.status_code == 200
+    assert response.json() == {"konfiguriert": False}
