@@ -35,7 +35,8 @@ from sqlalchemy import text
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist
-from services.ai_service import model
+from services.ai_service import model, model_lite
+from services.usage_limiter import check_and_increment_ai_usage
 from format_engine import FormatValidator
 from schemas.models import (
     DeckErstellenReq,
@@ -284,7 +285,7 @@ async def deck_analyse(req: DeckAnalyseReq):
     if cached:
         return cached
 
-    if model:
+    if model and check_and_increment_ai_usage(req.benutzername):
         try:
             prompt = (
                 f"Analysiere dieses Magic the Gathering Deck auf Deutsch unter Berücksichtigung des Formats: '{req.format}'.\n"
@@ -358,7 +359,7 @@ async def deck_roast(req: DeckAnalyseReq):
     if cached:
         return cached
 
-    if model:
+    if model_lite and check_and_increment_ai_usage(req.benutzername):
         try:
             prompt = (
                 f"Roaste dieses Magic the Gathering Deck auf Deutsch unter Berücksichtigung des Formats: '{req.format}'.\n"
@@ -370,12 +371,12 @@ async def deck_roast(req: DeckAnalyseReq):
                 f"- 'verdict' (string, eine kurze, witzige Zusammenfassung / Urteil, z.B. 'Der wandelnde Salzstreuer')\n\n"
                 f"Deckliste:\n{req.deck_liste}"
             )
-            response = model.generate_content(prompt)
+            response = model_lite.generate_content(prompt)
             text_resp = response.text
             match = re.search(r'\{.*\}', text_resp, re.DOTALL)
             if match:
                 text_resp = match.group(0)
-            
+
             result = json.loads(text_resp)
             scryfall_cache.set(cache_key, result)
             return result

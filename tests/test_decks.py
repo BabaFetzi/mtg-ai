@@ -102,7 +102,7 @@ async def test_deck_roast_free_paywall(mock_check_premium):
 
 @pytest.mark.asyncio
 @patch('routers.decks.check_user_premium')
-@patch('routers.decks.model')
+@patch('routers.decks.model_lite')
 async def test_deck_roast_premium_success(mock_model, mock_check_premium):
     mock_check_premium.return_value = True
     

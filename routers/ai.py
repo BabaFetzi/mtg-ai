@@ -9,8 +9,9 @@ Endpoints:
 
 Abhängigkeiten:
     - database                  → get_db_session(), check_user_premium()
-    - services.ai_service        → model
+    - services.ai_service        → model_lite
     - services.cache             → scryfall_cache (HybridCache-Singleton)
+    - services.usage_limiter     → check_and_increment_ai_usage()
 """
 
 import asyncio
@@ -26,10 +27,11 @@ from sqlalchemy import text
 
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
-from services.ai_service import model
+from services.ai_service import model_lite
 from services.combos import detect_local_combos
 from services.limiter import limiter
 from services.scryfall import parse_decklist
+from services.usage_limiter import check_and_increment_ai_usage
 
 # ======================================================================
 # Lokale Request Models (zur API-Kompatibilität)
@@ -65,14 +67,19 @@ async def judge_endpoint(req: JudgeRequest, request: Request):
         return {
             "antwort": "PAYWALL: Der KI-Judge steht nur Premium-Mitgliedern zur Verfügung. Bitte upgrade deine Rolle im Premium-Tab!"
         }
-        
-    if model:
+
+    if not check_and_increment_ai_usage(req.benutzername):
+        return {
+            "antwort": "Du hast dein monatliches KI-Anfragen-Limit erreicht. Es setzt sich zu Beginn des nächsten Monats zurück."
+        }
+
+    if model_lite:
         try:
-            response = model.generate_content(f"Beantworte diese Magic The Gathering Regelfrage kurz auf Deutsch: {req.frage}")
+            response = model_lite.generate_content(f"Beantworte diese Magic The Gathering Regelfrage kurz auf Deutsch: {req.frage}")
             return {"antwort": response.text}
         except Exception as e:
             print(f"Error calling judge model: {e}")
-            
+
     return {"antwort": "Der KI-Judge ist momentan beschäftigt oder nicht eingerichtet. Bitte überprüfe deinen API Key."}
 
 # ======================================================================
@@ -108,7 +115,7 @@ async def get_combos(
             {"job_id": job_id}
         )
         
-    background_tasks.add_task(run_combos_bg, job_id, card_name, format, cache_key)
+    background_tasks.add_task(run_combos_bg, job_id, card_name, format, cache_key, benutzername)
     return {"status": "processing", "job_id": job_id}
 
 # ======================================================================
@@ -252,8 +259,8 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 merged_combos.append(c)
                 seen_names.add(c_name.lower().strip())
 
-        # 4. Fallback zu Gemini AI falls keine Combos gefunden wurden oder API fehlschlug
-        if not merged_combos and model:
+        # 4. Fallback zu Gemini AI falls keine Combos gefunden wurden oder API fehlschlug (run_scan_combos_bg)
+        if not merged_combos and model_lite and check_and_increment_ai_usage(benutzername):
             prompt = (
                 "Du bist ein präziser Magic: The Gathering Schiedsrichter und Combo-Datenbank-Experte.\n"
                 f"Analysiere diese Liste von Karten und finde NUR echte, spielentscheidende Combos (z.B. Infinite Mana, Infinite Damage, Instant Win) im Format '{format_name}'.\n\n"
@@ -267,7 +274,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
             )
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, lambda: model.generate_content(prompt))
+                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt))
                 text_resp = response.text
                 match = re.search(r'\{.*\}', text_resp, re.DOTALL)
                 if match:
@@ -307,7 +314,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
         print(f"DB Error updating synergy job {job_id}: {db_err}")
 
 
-async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key: str):
+async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key: str, benutzername: str = ""):
     import httpx
     try:
         # Translate card_name to official English name
@@ -350,7 +357,7 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
             print(f"Error calling Spellbook API in run_combos_bg: {e}")
 
         # Fallback zu Gemini AI falls Spellbook keine Ergebnisse liefert
-        if not spellbook_combos and model:
+        if not spellbook_combos and model_lite and check_and_increment_ai_usage(benutzername):
             prompt = (
                 "Du bist ein präziser Magic: The Gathering Schiedsrichter und Combo-Datenbank-Experte.\n"
                 f"Finde bekannte Magic The Gathering Kombinationen (Combos) für die Karte '{card_name}' im Format '{format_name}'.\n\n"
@@ -362,7 +369,7 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
             )
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, lambda: model.generate_content(prompt))
+                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt))
                 text_resp = response.text
                 match = re.search(r'\{.*\}', text_resp, re.DOTALL)
                 if match:
