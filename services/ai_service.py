@@ -23,13 +23,23 @@ except ImportError:
     KI_VERFUEGBAR = False
 
 # --- API Client initialisieren ---
+# Zwei Modell-Stufen (Kosten-Tiering, siehe KI-Kosten-Audit):
+# - model       (gemini-2.5-flash)      -> nur für Deck-Analyse, die einzige Aufgabe
+#                                          mit komplexem 8-Felder-JSON-Schema und
+#                                          expliziter Anti-Halluzinations-Anforderung.
+# - model_lite  (gemini-2.5-flash-lite) -> Standard für alles andere (Judge,
+#                                          Kartenübersetzung, Deck-Roast, Combo-Fallbacks,
+#                                          Vision) -- kurze/einfache Aufgaben, hohe
+#                                          Aufruffrequenz, ~6-7x günstiger.
 model = None
+model_lite = None
 api_key = os.getenv("GEMINI_API_KEY")
 
 if KI_VERFUEGBAR and api_key:
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.5-flash')
-        print("INFO: Gemini KI-Modell erfolgreich initialisiert.")
+        model_lite = genai.GenerativeModel('gemini-2.5-flash-lite')
+        print("INFO: Gemini KI-Modelle (flash, flash-lite) erfolgreich initialisiert.")
     except Exception as e:
         print(f"FEHLER beim Initialisieren der KI: {e}")

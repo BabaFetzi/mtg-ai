@@ -31,15 +31,15 @@ async def test_detect_cards_from_image():
     mock_response.text = '{"cards": [{"name": "Sol Ring", "zone": "battlefield", "tapped": false, "x": 10, "y": 20}]}'
     mock_model.generate_content.return_value = mock_response
     
-    original_model = routers.vision.model
-    routers.vision.model = mock_model
+    original_model = routers.vision.model_lite
+    routers.vision.model_lite = mock_model
     try:
         res = await routers.vision.detect_cards_from_image(b"dummy")
         assert "cards" in res
         assert len(res["cards"]) == 1
         assert res["cards"][0]["name"] == "Sol Ring"
     finally:
-        routers.vision.model = original_model
+        routers.vision.model_lite = original_model
 
 @pytest.mark.asyncio
 async def test_generate_board_advice():
@@ -49,13 +49,13 @@ async def test_generate_board_advice():
     mock_response.text = "Sol Ring allows fast ramping."
     mock_model.generate_content.return_value = mock_response
     
-    original_model = routers.vision.model
-    routers.vision.model = mock_model
+    original_model = routers.vision.model_lite
+    routers.vision.model_lite = mock_model
     try:
         advice = await routers.vision.generate_board_advice([{"name": "Sol Ring"}])
         assert "ramping" in advice.lower()
     finally:
-        routers.vision.model = original_model
+        routers.vision.model_lite = original_model
 
 def test_detect_card_bounds_and_warp_untapped():
     # Create a black image
@@ -102,36 +102,36 @@ async def test_identify_single_card():
     mock_response.text = '"Sol Ring"'
     mock_model.generate_content.return_value = mock_response
     
-    original_model = routers.vision.model
-    routers.vision.model = mock_model
+    original_model = routers.vision.model_lite
+    routers.vision.model_lite = mock_model
     try:
         res = await routers.vision.identify_single_card(b"dummy_bytes")
         assert res == "Sol Ring"
     finally:
-        routers.vision.model = original_model
+        routers.vision.model_lite = original_model
 
 @pytest.mark.asyncio
 async def test_identify_single_card_error():
     mock_model = MagicMock()
     mock_model.generate_content.side_effect = Exception("API error")
     
-    original_model = routers.vision.model
-    routers.vision.model = mock_model
+    original_model = routers.vision.model_lite
+    routers.vision.model_lite = mock_model
     try:
         res = await routers.vision.identify_single_card(b"dummy_bytes")
         assert res == "Unknown Card"
     finally:
-        routers.vision.model = original_model
+        routers.vision.model_lite = original_model
 
 @pytest.mark.asyncio
 async def test_identify_single_card_no_model():
-    original_model = routers.vision.model
-    routers.vision.model = None
+    original_model = routers.vision.model_lite
+    routers.vision.model_lite = None
     try:
         res = await routers.vision.identify_single_card(b"dummy_bytes")
         assert res == "Unknown Card"
     finally:
-        routers.vision.model = original_model
+        routers.vision.model_lite = original_model
 
 def test_overlap_and_stacking_logic():
     enriched_cards = [
@@ -206,3 +206,84 @@ def test_overlap_and_stacking_logic():
     assert enriched_cards[1]["stacked_on"] == "card-0"
     assert enriched_cards[1]["is_stacked"] is True
     assert enriched_cards[0]["stacked_on"] is None
+
+
+# ============================================================================
+# Regressionstests: /api/vision/ws hat vorher pro Sekunde bis zu 2 Gemini-Calls
+# gemacht (Bild-Erkennung + Advice), komplett ungedrosselt -- siehe
+# KI-Kosten-Audit (~CHF 2.80/Stunde). Diese Tests beweisen, dass die 12.5s-
+# Drossel und das monatliche Vision-Minuten-Limit jetzt greifen.
+# ============================================================================
+@pytest.mark.asyncio
+async def test_ws_vision_throttles_gemini_calls_within_window(monkeypatch):
+    call_count = {"detect": 0}
+
+    async def fake_detect(jpeg_bytes):
+        call_count["detect"] += 1
+        return {"cards": [{"name": f"Card-{call_count['detect']}"}]}
+
+    async def fake_advice(cards):
+        return "advice"
+
+    monkeypatch.setattr(routers.vision, "detect_cards_from_image", fake_detect)
+    monkeypatch.setattr(routers.vision, "generate_board_advice", fake_advice)
+    monkeypatch.setattr(routers.vision, "check_user_premium", AsyncMock(return_value=True))
+    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", MagicMock(return_value=True))
+    # Große Schwelle -> der zweite Frame landet garantiert noch im selben Drossel-Fenster.
+    monkeypatch.setattr(routers.vision, "VISION_WS_MIN_GEMINI_INTERVAL_SECONDS", 60.0)
+
+    with client.websocket_connect("/api/vision/ws?benutzername=tester") as ws:
+        ws.send_bytes(b"frame1")
+        r1 = ws.receive_json()
+        assert r1["cards"][0]["name"] == "Card-1"
+
+        ws.send_bytes(b"frame2")
+        r2 = ws.receive_json()
+        # Noch innerhalb der Drossel -> kein zweiter Gemini-Call, letzter Stand wird erneut gesendet.
+        assert r2["cards"][0]["name"] == "Card-1"
+
+    assert call_count["detect"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ws_vision_calls_gemini_again_after_throttle_window_passes(monkeypatch):
+    call_count = {"detect": 0}
+
+    async def fake_detect(jpeg_bytes):
+        call_count["detect"] += 1
+        return {"cards": [{"name": f"Card-{call_count['detect']}"}]}
+
+    async def fake_advice(cards):
+        return "advice"
+
+    monkeypatch.setattr(routers.vision, "detect_cards_from_image", fake_detect)
+    monkeypatch.setattr(routers.vision, "generate_board_advice", fake_advice)
+    monkeypatch.setattr(routers.vision, "check_user_premium", AsyncMock(return_value=True))
+    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", MagicMock(return_value=True))
+    # Winzige Schwelle -> das asyncio.sleep(1) im Loop reicht, um sie zu überschreiten.
+    monkeypatch.setattr(routers.vision, "VISION_WS_MIN_GEMINI_INTERVAL_SECONDS", 0.01)
+
+    with client.websocket_connect("/api/vision/ws?benutzername=tester") as ws:
+        ws.send_bytes(b"frame1")
+        ws.receive_json()
+        ws.send_bytes(b"frame2")
+        ws.receive_json()
+
+    assert call_count["detect"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ws_vision_blocked_when_monthly_minutes_limit_reached(monkeypatch):
+    async def fake_detect_should_not_run(jpeg_bytes):
+        raise AssertionError("Gemini darf nicht aufgerufen werden, wenn das Monatslimit erreicht ist")
+
+    monkeypatch.setattr(routers.vision, "detect_cards_from_image", fake_detect_should_not_run)
+    monkeypatch.setattr(routers.vision, "check_user_premium", AsyncMock(return_value=True))
+    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", MagicMock(return_value=False))
+
+    with client.websocket_connect("/api/vision/ws?benutzername=tester") as ws:
+        ws.send_bytes(b"frame1")
+        r1 = ws.receive_json()
+
+    assert "Limit" in r1["advice"]
+    assert r1["cards"] == []

@@ -7,14 +7,23 @@ Endpoints:
 
 import asyncio
 import json
+import time
 import cv2
 import numpy as np
 from typing import Dict, List, Any, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from database import check_user_premium
-from services.ai_service import model
+from services.ai_service import model_lite
 from services.local_matcher import sync_deck_locally, load_and_compute_descriptors, match_card_crop
+from services.usage_limiter import check_and_increment_vision_minutes
+
+# Mindestabstand zwischen zwei Gemini-Aufrufen auf /ws (Sekunden). Ohne diese
+# Drossel macht der Endpoint bis zu 2 Gemini-Calls/Sekunde (Bild-Erkennung +
+# Advice) -- siehe KI-Kosten-Audit: das kostet ~CHF 2.80/Stunde und kann ein
+# ganzes Monatsabo in unter einer Stunde aufbrauchen. 12.5s entspricht der
+# bereits im /stream-Endpoint etablierten Drossel (siehe vision_detection_loop).
+VISION_WS_MIN_GEMINI_INTERVAL_SECONDS = 12.5
 
 router = APIRouter(
     prefix="/api/vision",
@@ -26,7 +35,7 @@ gemini_quota_exhausted = False
 
 async def detect_cards_from_image(jpeg_bytes: bytes) -> Dict[str, Any]:
     global gemini_quota_exhausted
-    if not model or gemini_quota_exhausted:
+    if not model_lite or gemini_quota_exhausted:
         return {"cards": []}
     try:
         prompt = (
@@ -35,7 +44,7 @@ async def detect_cards_from_image(jpeg_bytes: bytes) -> Dict[str, Any]:
             "Return JSON in this format: {\"cards\": [{\"name\": \"Card Name\", \"zone\": \"battlefield\", \"tapped\": false, \"x\": 50, \"y\": 50}]}"
         )
         response = await asyncio.to_thread(
-            model.generate_content,
+            model_lite.generate_content,
             [{"mime_type": "image/jpeg", "data": jpeg_bytes}, prompt],
             generation_config={"response_mime_type": "application/json"}
         )
@@ -60,14 +69,14 @@ async def generate_board_advice(cards: List[Dict[str, Any]]) -> str:
             "Das System läuft im Demonstrations-Modus und simuliert Karten auf deinen erkannten Spielfeld-Positionen, "
             "damit du die Echtzeit-Erfassung und 3D-Overlays testen kannst."
         )
-    if not model:
+    if not model_lite:
         return "Grana AI: No advice available."
     try:
         prompt = (
             f"Analyze the following Magic: The Gathering battlefield cards: {json.dumps(cards)}. "
             "Provide tactical advice, check for synergies, infinite combos, and suggest your next moves."
         )
-        response = await asyncio.to_thread(model.generate_content, prompt)
+        response = await asyncio.to_thread(model_lite.generate_content, prompt)
         return response.text
     except Exception as e:
         err_msg = str(e)
@@ -368,7 +377,7 @@ async def identify_single_card(warped_bytes: bytes) -> str:
     Sends the cropped card image to Gemini to identify the card name.
     """
     global gemini_quota_exhausted
-    if not model or gemini_quota_exhausted:
+    if not model_lite or gemini_quota_exhausted:
         return "Unknown Card"
     try:
         prompt = (
@@ -376,7 +385,7 @@ async def identify_single_card(warped_bytes: bytes) -> str:
             "Return ONLY the card name, nothing else."
         )
         response = await asyncio.to_thread(
-            model.generate_content,
+            model_lite.generate_content,
             [{"mime_type": "image/jpeg", "data": warped_bytes}, prompt]
         )
         name = response.text.strip()
@@ -392,19 +401,33 @@ async def identify_single_card(warped_bytes: bytes) -> str:
 @router.websocket("/ws")
 async def ws_vision_endpoint(websocket: WebSocket, benutzername: str):
     await websocket.accept()
+    # Letzter tatsächlich ausgeführter Gemini-Aufruf dieser Verbindung, plus die
+    # zuletzt bekannten Ergebnisse -- so friert die Anzeige zwischen zwei
+    # gedrosselten Intervallen nicht auf "keine Karten" ein.
+    last_gemini_time = 0.0
+    last_cards: List[Dict[str, Any]] = []
+    last_advice = ""
     try:
         while True:
             data = await websocket.receive_bytes()
             is_premium = await check_user_premium(benutzername)
-            
-            detection = await detect_cards_from_image(data)
-            cards = detection.get("cards", [])
-            
-            advice = await generate_board_advice(cards)
-            
+
+            now = time.time()
+            if now - last_gemini_time >= VISION_WS_MIN_GEMINI_INTERVAL_SECONDS:
+                if check_and_increment_vision_minutes(benutzername, VISION_WS_MIN_GEMINI_INTERVAL_SECONDS / 60):
+                    last_gemini_time = now
+                    detection = await detect_cards_from_image(data)
+                    last_cards = detection.get("cards", [])
+                    last_advice = await generate_board_advice(last_cards)
+                else:
+                    last_advice = (
+                        "⚠️ Grana AI Hinweis: Dein monatliches Live-Vision-Limit ist erreicht. "
+                        "Es setzt sich zu Beginn des nächsten Monats zurück."
+                    )
+
             await websocket.send_json({
-                "cards": cards,
-                "advice": advice
+                "cards": last_cards,
+                "advice": last_advice
             })
             await asyncio.sleep(1)
     except WebSocketDisconnect:

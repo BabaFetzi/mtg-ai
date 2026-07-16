@@ -8,7 +8,8 @@ Verantwortlich für:
 Abhängigkeiten:
 - services.cache       → scryfall_cache (HybridCache-Singleton)
 - services.scryfall    → fetch_card_details_cached()
-- services.ai_service  → model, KI_VERFUEGBAR
+- services.ai_service  → model_lite, KI_VERFUEGBAR
+- services.usage_limiter → check_and_increment_ai_usage()
 - database             → get_db_session(), check_user_premium()
 """
 
@@ -22,7 +23,8 @@ from sqlalchemy import text
 
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached
-from services.ai_service import model, KI_VERFUEGBAR
+from services.ai_service import model_lite, KI_VERFUEGBAR
+from services.usage_limiter import check_and_increment_ai_usage
 from database import get_db_session, check_user_premium
 from schemas.models import CardSearchResult, TrendsResponse
 
@@ -88,7 +90,7 @@ async def suche_karte(
         oracle_text = _get_oracle_text(data)
 
         # --- Deutsche Übersetzung (Premium + KI) ---
-        text_de = _translate_oracle_text(oracle_text, is_premium)
+        text_de = _translate_oracle_text(oracle_text, is_premium, benutzername)
 
         # --- Alle Prints/Auflagen laden ---
         prints = await _fetch_prints(client, data, bild)
@@ -173,18 +175,18 @@ def _get_oracle_text(data: dict) -> str:
     return oracle_text
 
 
-def _translate_oracle_text(oracle_text: str, is_premium: bool) -> str:
+def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzername: str = "") -> str:
     """
     Übersetzt den Oracle-Text ins Deutsche.
 
-    - Premium + KI verfügbar → Gemini-Übersetzung
-    - Premium ohne KI → Englischer Originaltext
+    - Premium + KI verfügbar + Monatslimit nicht erreicht → Gemini-Übersetzung
+    - Premium ohne KI (oder Limit erreicht) → Englischer Originaltext
     - Free → Paywall-Hinweis + Originaltext
     """
     if not oracle_text:
         return "Keine Textbeschreibung vorhanden."
 
-    if is_premium and model:
+    if is_premium and model_lite and check_and_increment_ai_usage(benutzername):
         try:
             prompt = (
                 "Übersetze diesen Magic: The Gathering Kartentext möglichst akkurat "
@@ -192,7 +194,7 @@ def _translate_oracle_text(oracle_text: str, is_premium: bool) -> str:
                 "'Tappen', 'Verursacht Trampelschaden', 'Erzeuge', etc.). "
                 f"Antworte NUR mit dem übersetzten Text:\n{oracle_text}"
             )
-            response = model.generate_content(prompt)
+            response = model_lite.generate_content(prompt)
             return response.text.strip()
         except Exception:
             return f"Originaltext (Englisch):\n{oracle_text}"
