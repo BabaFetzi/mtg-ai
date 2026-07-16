@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import usePremiumPrice from './usePremiumPrice';
 
 const CheckIcon = ({ color = "#30D158", size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
@@ -15,6 +16,7 @@ const LockIcon = ({ color = "var(--text-muted)", size = 18 }) => (
 
 function PremiumPage({ currentUser, userRole, setUserRole }) {
   const navigate = useNavigate();
+  const { preisText, loading: preisLoading } = usePremiumPrice();
 
   return (
     <div className="apple-main-container" style={{ paddingTop: '20px' }}>
@@ -171,8 +173,12 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                 Voller Zugriff auf fortgeschrittene KI-Analysen, Combo-Scanner und Schiedsrichter.
               </p>
               <div style={{ marginBottom: '30px' }}>
-                <span style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--text-main)' }}>4,99 €</span>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}> / Monat</span>
+                <span style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                  {preisLoading ? '…' : (preisText || 'Preis nicht verfügbar')}
+                </span>
+                {(preisLoading || preisText) && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}> / Monat</span>
+                )}
               </div>
 
               {/* Divider */}

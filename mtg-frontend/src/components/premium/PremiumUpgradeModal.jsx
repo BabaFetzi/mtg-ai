@@ -1,8 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, Infinity, MessageSquare, Lock, X } from 'lucide-react';
+import usePremiumPrice from './usePremiumPrice';
 
 function PremiumUpgradeModal({ isOpen, onClose }) {
   const navigate = useNavigate();
+  const { preisText, loading: preisLoading } = usePremiumPrice();
 
   if (!isOpen) return null;
 
@@ -157,7 +159,11 @@ function PremiumUpgradeModal({ isOpen, onClose }) {
           onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
           onMouseLeave={(e) => e.currentTarget.style.filter = 'brightness(1)'}
         >
-          Pro-Mitgliedschaft abschließen (4,99 €/Monat)
+          {preisLoading
+            ? 'Pro-Mitgliedschaft abschließen …'
+            : preisText
+              ? `Pro-Mitgliedschaft abschließen (${preisText}/Monat)`
+              : 'Pro-Mitgliedschaft abschließen'}
         </button>
         
         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '12px' }}>
