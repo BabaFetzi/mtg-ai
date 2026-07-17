@@ -1,6 +1,9 @@
 import httpx
+import logging
 import time
 from typing import Dict, List, Set
+
+logger = logging.getLogger(__name__)
 
 # Simple in-memory cache with 24h TTL
 # Format: { format_name: (set_of_banned_cards, expiration_timestamp) }
@@ -39,8 +42,8 @@ async def fetch_banned_cards(format_name: str) -> Set[str]:
                             break
                     else:
                         break
-    except Exception as e:
-        print(f"Error fetching banned cards for format {format_name} from Scryfall: {e}")
+    except Exception:
+        logger.exception("Error fetching banned cards for format %s from Scryfall", format_name)
         # Fallback to empty if Scryfall offline, or keep old cache if available
         if format_name in banned_cache:
             return banned_cache[format_name][0]
@@ -67,8 +70,8 @@ async def fetch_restricted_cards(format_name: str) -> Set[str]:
                 data = response.json()
                 for card in data.get("data", []):
                     restricted_set.add(card["name"].lower())
-    except Exception as e:
-        print(f"Error fetching restricted cards for format {format_name}: {e}")
+    except Exception:
+        logger.exception("Error fetching restricted cards for format %s", format_name)
         if format_name in restricted_cache:
             return restricted_cache[format_name][0]
 

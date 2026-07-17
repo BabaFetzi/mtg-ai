@@ -1,8 +1,11 @@
+import logging
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy import Column, String, Integer, Text, Numeric, DateTime, ForeignKey, Boolean, Index, text
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///mtg_app.db")
 
@@ -150,6 +153,6 @@ async def check_user_premium(benutzername: str) -> bool:
             row = res.mappings().first()
             if row:
                 return (row["rolle"] or "free") == "premium"
-    except Exception as e:
-        print(f"Error checking user role: {e}")
+    except Exception:
+        logger.exception("Error checking user role for %s", benutzername)
     return False

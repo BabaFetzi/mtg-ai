@@ -7,9 +7,12 @@ automatisch auf eine SQLite-Tabelle gewechselt (Zero-Downtime).
 """
 
 import json
+import logging
 import time
 import sqlite3
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class HybridCache:
@@ -39,9 +42,9 @@ class HybridCache:
             self.redis_client = redis.from_url(redis_url, socket_timeout=1)
             self.redis_client.ping()
             self.use_redis = True
-            print("INFO: Redis-Cache erfolgreich verbunden!")
-        except Exception as e:
-            print(f"WARNUNG: Redis nicht verfügbar (Nutze SQLite Fallback): {e}")
+            logger.info("Redis-Cache erfolgreich verbunden!")
+        except Exception:
+            logger.warning("Redis nicht verfügbar (Nutze SQLite Fallback)", exc_info=True)
             self.use_redis = False
 
         # --- SQLite Fallback-Tabelle anlegen ---
@@ -68,8 +71,8 @@ class HybridCache:
             )
             conn.commit()
             conn.close()
-        except Exception as e:
-            print(f"FEHLER bei SQLite Cache-Initialisierung: {e}")
+        except Exception:
+            logger.exception("FEHLER bei SQLite Cache-Initialisierung")
 
     def _get_sqlite_conn(self) -> sqlite3.Connection:
         """Liefert eine frische SQLite-Connection (Thread-safe)."""
@@ -90,8 +93,8 @@ class HybridCache:
                 if val:
                     return json.loads(val.decode("utf-8"))
                 return None  # Key existiert nicht in Redis
-            except Exception as e:
-                print(f"WARNUNG: Redis Fehler bei get(): {e}")
+            except Exception:
+                logger.warning("Redis Fehler bei get()", exc_info=True)
                 self.use_redis = False
                 self._init_sqlite_cache()
 
@@ -116,8 +119,8 @@ class HybridCache:
                     cursor.execute("DELETE FROM scryfall_cache WHERE key = ?", (key,))
                     conn.commit()
                     conn.close()
-        except Exception as e:
-            print(f"FEHLER bei SQLite Cache-Get: {e}")
+        except Exception:
+            logger.exception("FEHLER bei SQLite Cache-Get")
 
         return None
 
@@ -130,8 +133,8 @@ class HybridCache:
             try:
                 self.redis_client.setex(key, self.ttl, value_str)
                 return
-            except Exception as e:
-                print(f"WARNUNG: Redis Fehler bei set(): {e}")
+            except Exception:
+                logger.warning("Redis Fehler bei set()", exc_info=True)
                 self.use_redis = False
                 self._init_sqlite_cache()
 
@@ -145,8 +148,8 @@ class HybridCache:
             )
             conn.commit()
             conn.close()
-        except Exception as e:
-            print(f"FEHLER bei SQLite Cache-Set: {e}")
+        except Exception:
+            logger.exception("FEHLER bei SQLite Cache-Set")
 
     def delete(self, key: str) -> None:
         """Löscht einen Eintrag aus dem Cache."""
@@ -163,8 +166,8 @@ class HybridCache:
             cursor.execute("DELETE FROM scryfall_cache WHERE key = ?", (key,))
             conn.commit()
             conn.close()
-        except Exception as e:
-            print(f"FEHLER bei SQLite Cache-Delete: {e}")
+        except Exception:
+            logger.exception("FEHLER bei SQLite Cache-Delete")
 
     def flush_expired(self) -> int:
         """Entfernt alle abgelaufenen Einträge. Gibt Anzahl gelöschter Zeilen zurück."""
@@ -177,8 +180,8 @@ class HybridCache:
             conn.commit()
             conn.close()
             return deleted
-        except Exception as e:
-            print(f"FEHLER bei flush_expired: {e}")
+        except Exception:
+            logger.exception("FEHLER bei flush_expired")
             return 0
 
 

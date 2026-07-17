@@ -6,8 +6,7 @@ __pycache__/
 .gitignore
 *.db
 node_modules/
-mtg-frontend/node_modules/
-mtg-frontend/dist/
+mtg-frontend/
 .venv/
 venv/
 .idea/
@@ -16,3 +15,13 @@ venv/
 data/card_images/
 tests/
 scratch/
+.claude/
+
+# Legacy/Dev-Skripte, nicht Teil des main.py-FastAPI-Backends (siehe main.py
+# Router-Imports) -- werden nicht ins Backend-Image kopiert.
+app.py
+magic_free_ai.py
+magic_test.py
+populate_test_data_direct.py
+
+README.md

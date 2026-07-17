@@ -6,6 +6,7 @@ globalen Exception-Handler, Lifespan-Events für die DB-Verbindung
 und inkludiert alle modularen API-Router.
 """
 
+import logging
 import os
 
 from fastapi import FastAPI, Request
@@ -19,6 +20,17 @@ from slowapi.middleware import SlowAPIMiddleware
 from database import init_db
 from services.limiter import limiter
 from routers import cards, auth, collection, decks, ai, payments, vision
+
+# ======================================================================
+# Logging: zentral hier konfiguriert (Entrypoint). Jedes Modul nutzt
+# `logging.getLogger(__name__)`; Level ist über LOG_LEVEL steuerbar
+# (z.B. "DEBUG" in der Entwicklung, Default "INFO").
+# ======================================================================
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # ======================================================================
 # CORS: erlaubte Origins
@@ -42,12 +54,12 @@ def get_allowed_origins() -> list[str]:
 # ======================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Starte Datenbankverbindung...")
+    logger.info("Starte Datenbankverbindung...")
     try:
         await init_db()
-        print("Datenbank erfolgreich initialisiert. Backend ist BEREIT!")
-    except Exception as e:
-        print(f"FEHLER bei der Datenbankinitialisierung: {e}")
+        logger.info("Datenbank erfolgreich initialisiert. Backend ist BEREIT!")
+    except Exception:
+        logger.exception("FEHLER bei der Datenbankinitialisierung")
     yield
 
 # ======================================================================
@@ -83,7 +95,7 @@ app.add_middleware(
 # ======================================================================
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    print(f"GLOBALER FEHLER: {exc}")
+    logger.error("GLOBALER FEHLER bei %s %s", request.method, request.url.path, exc_info=exc)
     return JSONResponse(
         status_code=500,
         content={"erfolg": False, "error": str(exc)}

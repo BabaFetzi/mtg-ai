@@ -20,6 +20,7 @@ Abhängigkeiten:
 import csv
 import io
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import Optional, List
@@ -31,6 +32,8 @@ from sqlalchemy import text
 
 from database import get_db_session, check_user_premium
 from services.scryfall import fetch_card_details_cached
+
+logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Lokale Request Models (zur Kompatibilität mit originalen Signaturen)
@@ -241,7 +244,7 @@ async def sammlung_filter(
 
         return {"erfolg": True, "karten": result}
     except Exception as e:
-        print(f"Fehler bei Sammlung-Filter: {e}")
+        logger.exception("Fehler bei Sammlung-Filter")
         return {"erfolg": False, "error": str(e)}
 
 # ======================================================================
@@ -284,7 +287,7 @@ async def sammlung_editions(benutzername: str, album: str = Query(default=None))
         editions.sort(key=lambda e: e["set_name"])
         return {"erfolg": True, "editions": editions}
     except Exception as e:
-        print(f"Fehler bei Editionen-Abfrage: {e}")
+        logger.exception("Fehler bei Editionen-Abfrage")
         return {"erfolg": False, "error": str(e)}
 
 # ======================================================================
@@ -376,7 +379,7 @@ async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, alb
             )
             
     except Exception as e:
-        print(f"Error in background CSV import: {e}")
+        logger.exception("Error in background CSV import")
         async with get_db_session() as session:
             await session.execute(
                 text("UPDATE import_jobs SET status = 'failed', error = :err WHERE job_id = :id"),
@@ -419,7 +422,7 @@ async def sammlung_import_csv(
         
         return {"erfolg": True, "job_id": job_id}
     except Exception as e:
-        print(f"Fehler beim Starten des CSV-Imports: {e}")
+        logger.exception("Fehler beim Starten des CSV-Imports")
         return {"erfolg": False, "error": str(e)}
 
 # ======================================================================
@@ -504,7 +507,7 @@ async def sammlung_export_csv(benutzername: str):
             }
         )
     except Exception as e:
-        print(f"Fehler beim CSV-Export: {e}")
+        logger.exception("Fehler beim CSV-Export")
         return JSONResponse(status_code=500, content={"erfolg": False, "error": str(e)})
 
 
@@ -549,6 +552,6 @@ async def refresh_sammlung_prices(benutzername: str):
         
         return {"erfolg": True}
     except Exception as e:
-        print(f"Fehler bei refresh_sammlung_prices: {e}")
+        logger.exception("Fehler bei refresh_sammlung_prices")
         return JSONResponse(status_code=500, content={"erfolg": False, "error": str(e)})
 

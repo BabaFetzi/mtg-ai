@@ -12,8 +12,11 @@ nicht konfiguriert/erreichbar, wird NICHT durchgesetzt (fail-open) --
 ein Redis-Ausfall soll das Produkt nicht für alle Nutzer lahmlegen.
 """
 
+import logging
 import os
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 MONTHLY_TEXT_LIMIT = 300
 MONTHLY_VISION_MINUTES_LIMIT = 90.0
@@ -39,8 +42,8 @@ def _get_redis():
         client = redis.from_url(redis_url, socket_timeout=1)
         client.ping()
         _redis_client = client
-    except Exception as e:
-        print(f"WARNUNG: Redis für KI-Nutzungslimit nicht verfügbar (Limit wird nicht durchgesetzt): {e}")
+    except Exception:
+        logger.warning("Redis für KI-Nutzungslimit nicht verfügbar (Limit wird nicht durchgesetzt)", exc_info=True)
         _redis_client = None
     return _redis_client
 
@@ -68,8 +71,8 @@ def check_and_increment_ai_usage(benutzername: str, limit: int = MONTHLY_TEXT_LI
         count = client.incr(key)
         client.expire(key, _USAGE_TTL_SECONDS)
         return count <= limit
-    except Exception as e:
-        print(f"WARNUNG: Fehler beim Prüfen des KI-Nutzungslimits: {e}")
+    except Exception:
+        logger.warning("Fehler beim Prüfen des KI-Nutzungslimits", exc_info=True)
         return True
 
 
@@ -95,6 +98,6 @@ def check_and_increment_vision_minutes(
         total = client.incrbyfloat(key, minutes)
         client.expire(key, _USAGE_TTL_SECONDS)
         return float(total) <= limit
-    except Exception as e:
-        print(f"WARNUNG: Fehler beim Prüfen des Vision-Nutzungslimits: {e}")
+    except Exception:
+        logger.warning("Fehler beim Prüfen des Vision-Nutzungslimits", exc_info=True)
         return True
