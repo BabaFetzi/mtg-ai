@@ -486,39 +486,86 @@ function App() {
   // Handle Stripe callback URL parameters
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get('status') === 'success') {
-      const user = params.get('user') || currentUser;
-      const isMock = params.get('mock_upgrade') === 'true';
-      
-      if (isMock && user) {
-        fetch('/api/user/update-role', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ benutzername: user, rolle: 'premium' })
-        })
+    if (params.get('status') !== 'success') {
+      return;
+    }
+
+    const user = params.get('user') || currentUser;
+    const isMock = params.get('mock_upgrade') === 'true';
+    const sessionId = params.get('session_id');
+    let cancelled = false;
+
+    if (isMock && user) {
+      fetch('/api/user/update-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ benutzername: user, rolle: 'premium' })
+      })
         .then(res => res.json())
         .then(data => {
+          if (cancelled) return;
           if (data && data.erfolg) {
             alert("Upgrade erfolgreich durchgeführt! (Simulation)");
             setUserRole("premium");
-            navigate('/premium');
           }
+          // Query-Parameter immer entfernen, auch bei Fehlschlag -- sonst
+          // bleibt die Seite in diesem URL-Zustand hängen.
+          navigate('/premium', { replace: true });
+        })
+        .catch(() => {
+          if (!cancelled) navigate('/premium', { replace: true });
         });
-      } else if (params.get('session_id') && user) {
+      return () => { cancelled = true; };
+    }
+
+    if (sessionId && user) {
+      // Stripe hat die Zahlung bestätigt, aber der Webhook, der rolle='premium'
+      // setzt, kommt asynchron und mit etwas Verzögerung an. Statt die ganze
+      // Seite per window.location.reload() neu zu laden (das setzt JEDEN
+      // Zähler zurück und führt bei einem fehlenden/verzögerten Webhook zu
+      // einer Endlosschleife aus Reloads -- genau das sichtbare "Flackern"),
+      // pollen wir den Rollen-Status im Hintergrund mit einer festen
+      // Obergrenze an Versuchen.
+      const MAX_ATTEMPTS = 8;
+      const POLL_INTERVAL_MS = 3000;
+      let attempt = 0;
+
+      const checkRole = () => {
         fetch(`/api/user/role/${user}`)
           .then(res => res.json())
           .then(data => {
+            if (cancelled) return;
             if (data && data.rolle === 'premium') {
               alert("Upgrade erfolgreich durchgeführt! Vielen Dank.");
               setUserRole("premium");
-              navigate('/premium');
-            } else {
-              setTimeout(() => {
-                window.location.reload();
-              }, 1500);
+              navigate('/premium', { replace: true });
+              return;
             }
+            attempt += 1;
+            if (attempt >= MAX_ATTEMPTS) {
+              alert(
+                "Deine Zahlung wurde von Stripe bestätigt, aber dein Premium-Status ist " +
+                "noch nicht angekommen. Das kann kurz dauern -- lade die Seite in ein bis " +
+                "zwei Minuten neu. Falls es weiterhin nicht klappt, kontaktiere den Support."
+              );
+              navigate('/premium', { replace: true });
+              return;
+            }
+            setTimeout(checkRole, POLL_INTERVAL_MS);
+          })
+          .catch(() => {
+            if (cancelled) return;
+            attempt += 1;
+            if (attempt >= MAX_ATTEMPTS) {
+              navigate('/premium', { replace: true });
+              return;
+            }
+            setTimeout(checkRole, POLL_INTERVAL_MS);
           });
-      }
+      };
+
+      checkRole();
+      return () => { cancelled = true; };
     }
   }, [location, currentUser, navigate]);
 

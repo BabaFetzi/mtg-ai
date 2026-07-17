@@ -219,7 +219,16 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                   <button 
                     className="secondary-btn" 
                     onClick={async () => {
-                      if (window.confirm("Möchtest du dein Test-Abonnement zu Testzwecken beenden? (Downgrade)")) {
+                      if (!window.confirm("Möchtest du dein Test-Abonnement zu Testzwecken beenden? (Downgrade)")) {
+                        return;
+                      }
+                      // benutzername wird zusätzlich zum Bearer-Token mitgeschickt, weil das
+                      // Backend beides verlangt: einen gültigen Login-Token (wird automatisch
+                      // vom globalen fetch-Interceptor in main.jsx angehängt) UND dass der
+                      // Token-Inhaber (current_user) mit dem Ziel-Account übereinstimmt --
+                      // ein Nutzer darf sich nur selbst zurückstufen, nie hoch- oder fremde
+                      // Accounts verändern.
+                      try {
                         const res = await fetch('/api/user/update-role', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
@@ -228,7 +237,15 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                         if (res.ok) {
                           alert("Abo beendet (Rolle zurückgesetzt auf 'free').");
                           setUserRole("free");
+                        } else if (res.status === 401) {
+                          alert("Deine Sitzung ist abgelaufen. Bitte logge dich erneut ein und versuche es noch einmal.");
+                        } else {
+                          const data = await res.json().catch(() => ({}));
+                          alert(data.detail || "Downgrade fehlgeschlagen. Bitte versuche es später erneut.");
                         }
+                      } catch (err) {
+                        console.error("Downgrade fehlgeschlagen:", err);
+                        alert("Downgrade fehlgeschlagen (Netzwerkfehler). Bitte versuche es später erneut.");
                       }
                     }}
                     style={{

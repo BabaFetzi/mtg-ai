@@ -1,9 +1,16 @@
+from contextlib import asynccontextmanager
+
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.pool import StaticPool
 from unittest.mock import AsyncMock, patch
 
 from main import app
 from auth import create_access_token
+from database import Base
 
 client = TestClient(app)
 
@@ -103,3 +110,69 @@ async def test_admin_can_grant_premium_to_another_user(mock_getenv, mock_get_db)
     assert response.status_code == 200
     assert response.json()["erfolg"] is True
     mock_session.execute.assert_called_once()
+
+
+# ============================================================================
+# End-to-End-Regressionstest: reproduziert genau den "Downgrade-Button
+# funktioniert nicht mehr"-Bugreport. Läuft gegen eine echte (in-memory)
+# SQLite-Datenbank statt einem Mock, damit bewiesen ist, dass ein eingeloggter
+# Premium-Nutzer sich selbst tatsächlich bis in die DB zurückstufen kann --
+# nicht nur, dass irgendein UPDATE-Statement aufgerufen wurde.
+# ============================================================================
+@pytest_asyncio.fixture
+async def real_db_session_factory():
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    yield session_maker
+    await engine.dispose()
+
+
+def _real_get_db_session(session_maker):
+    @asynccontextmanager
+    async def _get_db_session():
+        async with session_maker() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    return _get_db_session
+
+
+@pytest.mark.asyncio
+async def test_premium_user_can_downgrade_self_end_to_end(real_db_session_factory):
+    session_maker = real_db_session_factory
+
+    # Testnutzer als 'premium' anlegen -- exakt der Ausgangszustand des Bugreports.
+    async with session_maker() as session:
+        await session.execute(
+            text("INSERT INTO nutzer (benutzername, passwort_hash, rolle) VALUES (:name, 'x', 'premium')"),
+            {"name": "premium_downgrader"},
+        )
+        await session.commit()
+
+    with patch('routers.auth.get_db_session', _real_get_db_session(session_maker)):
+        response = client.post(
+            "/api/user/update-role",
+            json={"benutzername": "premium_downgrader", "rolle": "free"},
+            headers=_auth_headers("premium_downgrader"),
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"erfolg": True, "rolle": "free"}
+
+        # Beweis, dass es wirklich in der DB angekommen ist, nicht nur die
+        # HTTP-Antwort stimmt.
+        async with session_maker() as session:
+            res = await session.execute(
+                text("SELECT rolle FROM nutzer WHERE benutzername = :name"),
+                {"name": "premium_downgrader"},
+            )
+            assert res.mappings().first()["rolle"] == "free"
