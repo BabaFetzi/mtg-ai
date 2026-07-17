@@ -11,6 +11,7 @@ Abhängigkeiten:
     - schemas.models  → CheckoutReq
 """
 
+import logging
 import os
 import urllib.parse
 from typing import Optional
@@ -22,6 +23,8 @@ from sqlalchemy import text
 
 from database import get_db_session
 from schemas.models import CheckoutReq
+
+logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Router-Instanz
@@ -76,7 +79,7 @@ async def get_checkout_price():
             "intervall": intervall,
         }
     except Exception as e:
-        print(f"Error fetching Stripe price: {e}")
+        logger.exception("Error fetching Stripe price")
         return {"konfiguriert": False, "error": str(e)}
 
 # ======================================================================
@@ -151,7 +154,7 @@ async def handle_stripe_webhook_logic(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"GLOBALER FEHLER in Webhook construct: {e}")
+        logger.exception("GLOBALER FEHLER in Webhook construct")
         return JSONResponse(status_code=400, content={"error": str(e)})
 
     if event:
@@ -170,7 +173,10 @@ async def handle_stripe_webhook_logic(request: Request):
                         text("UPDATE nutzer SET rolle='premium', stripe_customer_id = :cust_id, stripe_subscription_id = :sub_id WHERE benutzername = :name"),
                         {"cust_id": customer_id, "sub_id": subscription_id, "name": benutzername}
                     )
-                print(f"User {benutzername} upgraded to premium via Stripe. Customer: {customer_id}, Subscription: {subscription_id}.")
+                logger.info(
+                    "User %s upgraded to premium via Stripe. Customer: %s, Subscription: %s.",
+                    benutzername, customer_id, subscription_id,
+                )
                 return {"status": "success", "message": f"User {benutzername} upgraded to premium"}
                 
         elif event_type == "customer.subscription.deleted":
@@ -181,7 +187,7 @@ async def handle_stripe_webhook_logic(request: Request):
                         text("UPDATE nutzer SET rolle='free', stripe_subscription_id = NULL WHERE stripe_customer_id = :cust_id"),
                         {"cust_id": customer_id}
                     )
-                print(f"Downgraded user with Stripe Customer ID {customer_id} to free.")
+                logger.info("Downgraded user with Stripe Customer ID %s to free.", customer_id)
                 return {"status": "success", "message": "User subscription cancelled"}
                 
         elif event_type == "invoice.payment_failed":
@@ -192,7 +198,7 @@ async def handle_stripe_webhook_logic(request: Request):
                         text("UPDATE nutzer SET rolle='free', stripe_subscription_id = NULL WHERE stripe_customer_id = :cust_id"),
                         {"cust_id": customer_id}
                     )
-                print(f"Downgraded user with Stripe Customer ID {customer_id} due to payment failure.")
+                logger.info("Downgraded user with Stripe Customer ID %s due to payment failure.", customer_id)
                 return {"status": "success", "message": "User subscription suspended"}
             
     return {"status": "ignored"}

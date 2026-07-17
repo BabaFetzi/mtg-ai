@@ -7,6 +7,7 @@ Kapselt alle Interaktionen mit der Scryfall API:
 - parse_decklist(): Parst Decklisten-Strings in strukturierte Daten
 """
 
+import logging
 import re
 import urllib.parse
 from typing import List, Dict, Any
@@ -14,6 +15,8 @@ from typing import List, Dict, Any
 import httpx
 
 from services.cache import scryfall_cache
+
+logger = logging.getLogger(__name__)
 
 
 # ======================================================================
@@ -216,8 +219,8 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
                             ):
                                 _cache_card_info(card_info, orig_n)
                                 scryfall_data[orig_n.lower().strip()] = card_info
-            except Exception as e:
-                print(f"Error in collection fetch: {e}")
+            except Exception:
+                logger.exception("Error in collection fetch")
 
             # --- Phase 3: Fallbacks für nicht aufgelöste Namen ---
             for identifier in chunk:

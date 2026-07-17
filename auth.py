@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import time
@@ -11,11 +12,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not SECRET_KEY:
     SECRET_KEY = secrets.token_hex(32)
-    print(
-        "WARNUNG: JWT_SECRET_KEY ist nicht gesetzt! Es wird ein zufälliger, "
+    logger.warning(
+        "JWT_SECRET_KEY ist nicht gesetzt! Es wird ein zufälliger, "
         "flüchtiger Schlüssel für diesen Prozess verwendet – bestehende Tokens "
         "werden bei jedem Neustart ungültig und Tokens sind zwischen mehreren "
         "Workern nicht kompatibel. Setze JWT_SECRET_KEY in der Produktionsumgebung!"

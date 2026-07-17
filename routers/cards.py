@@ -13,6 +13,7 @@ Abhängigkeiten:
 - database             → get_db_session(), check_user_premium()
 """
 
+import logging
 import urllib.parse
 from typing import Optional
 
@@ -27,6 +28,8 @@ from services.ai_service import model_lite, KI_VERFUEGBAR
 from services.usage_limiter import check_and_increment_ai_usage
 from database import get_db_session, check_user_premium
 from schemas.models import CardSearchResult, TrendsResponse
+
+logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Router-Instanz
@@ -255,8 +258,8 @@ async def _fetch_prints(
                         "bild_url": img_print,
                         "preis": price_eur,
                     })
-        except Exception as e:
-            print(f"Error fetching prints: {e}")
+        except Exception:
+            logger.exception("Error fetching prints")
 
     # Mindestens den aktuellen Print zurückgeben
     if not prints:
@@ -375,8 +378,8 @@ async def _newest_set_trends() -> dict:
                                 })
 
                             scryfall_cache.set(cache_key, pool)
-            except Exception as e:
-                print(f"Error fetching newest set fallback trends: {e}")
+            except Exception:
+                logger.exception("Error fetching newest set fallback trends")
 
     if pool:
         selected = random.sample(pool, min(len(pool), 5))
@@ -482,6 +485,9 @@ async def track_affiliate_click(req: AffiliateTrackReq):
     """
     Loggt den Klick auf den Cardmarket-Affiliate-Link im Serverlog.
     """
-    print(f"[AFFILIATE CLICK] Karte: {req.card_name}, Edition: {req.set_name or 'Unbekannt'}, Preis: {req.price or '0.00'} EUR")
+    logger.info(
+        "[AFFILIATE CLICK] Karte: %s, Edition: %s, Preis: %s EUR",
+        req.card_name, req.set_name or "Unbekannt", req.price or "0.00",
+    )
     return {"erfolg": True}
 

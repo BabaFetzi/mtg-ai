@@ -5,20 +5,23 @@ Kapselt die Initialisierung und den Zugriff auf das Gemini-Modell.
 Andere Module importieren `model` und `KI_VERFUEGBAR` von hier.
 """
 
+import logging
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # --- Sicherer KI-Import ---
 try:
     import google.generativeai as genai
     KI_VERFUEGBAR = True
 except ImportError:
-    print("\n" + "=" * 60)
-    print("WARNUNG: Das Modul 'google-generativeai' fehlt!")
-    print("Bitte führe im Terminal diesen Befehl aus: pip install google-generativeai")
-    print("=" * 60 + "\n")
+    logger.warning(
+        "Das Modul 'google-generativeai' fehlt! Bitte im Terminal ausführen: "
+        "pip install google-generativeai"
+    )
     genai = None
     KI_VERFUEGBAR = False
 
@@ -40,6 +43,6 @@ if KI_VERFUEGBAR and api_key:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.5-flash')
         model_lite = genai.GenerativeModel('gemini-2.5-flash-lite')
-        print("INFO: Gemini KI-Modelle (flash, flash-lite) erfolgreich initialisiert.")
-    except Exception as e:
-        print(f"FEHLER beim Initialisieren der KI: {e}")
+        logger.info("Gemini KI-Modelle (flash, flash-lite) erfolgreich initialisiert.")
+    except Exception:
+        logger.exception("FEHLER beim Initialisieren der KI")

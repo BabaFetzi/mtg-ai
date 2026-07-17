@@ -25,6 +25,7 @@ Abhängigkeiten:
 
 import hashlib
 import json
+import logging
 import re
 from typing import Optional, List, Dict, Any
 
@@ -45,6 +46,8 @@ from schemas.models import (
     DeckAnalyseReq,
     ValidateDeckReq
 )
+
+logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Lokale Request-Modelle für Add/Remove (zur API-Kompatibilität)
@@ -317,7 +320,7 @@ async def deck_analyse(req: DeckAnalyseReq):
             scryfall_cache.set(cache_key, result)
             return result
         except Exception as e:
-            print(f"Error generating deck analysis: {e}")
+            logger.exception("Error generating deck analysis")
             
     fallback_res = {
         "strategie": "Konnte durch die KI aktuell nicht ausgewertet werden.",
@@ -381,7 +384,7 @@ async def deck_roast(req: DeckAnalyseReq):
             scryfall_cache.set(cache_key, result)
             return result
         except Exception as e:
-            print(f"Error generating deck roast: {e}")
+            logger.exception("Error generating deck roast")
             
     fallback_res = {
         "roast": "Dein Deck ist so langweilig, dass selbst die KI eingeschlafen ist. Versuche es später noch einmal.",
@@ -402,7 +405,7 @@ async def validate_deck(req: ValidateDeckReq):
         result = await FormatValidator.validate_deck(req.deck_liste, req.format, fetch_card_details_cached)
         return result
     except Exception as e:
-        print(f"Error in validate_deck: {e}")
+        logger.exception("Error in validate_deck")
         return {
             "legal": False,
             "errors": [f"Fehler bei der Deck-Validierung: {str(e)}"],
@@ -465,7 +468,7 @@ async def add_card_to_deck(req: DeckAddCardReq):
 
         return {"erfolg": True, "deck_liste": new_liste}
     except Exception as e:
-        print(f"Fehler beim Hinzufügen der Karte zum Deck: {e}")
+        logger.exception("Fehler beim Hinzufügen der Karte zum Deck")
         return {"erfolg": False, "error": str(e)}
 
 # ======================================================================
@@ -524,7 +527,7 @@ async def remove_card_from_deck(req: DeckRemoveCardReq):
 
         return {"erfolg": True, "deck_liste": new_liste}
     except Exception as e:
-        print(f"Fehler beim Entfernen der Karte aus dem Deck: {e}")
+        logger.exception("Fehler beim Entfernen der Karte aus dem Deck")
         return {"erfolg": False, "error": str(e)}
 
 
@@ -560,7 +563,7 @@ async def get_shared_deck(id: int):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Fehler beim Laden des geteilten Decks: {e}")
+        logger.exception("Fehler beim Laden des geteilten Decks")
         raise HTTPException(status_code=500, detail="Interner Serverfehler.")
 
 
@@ -591,7 +594,7 @@ async def get_dashboard_stats():
                 "query_count": query_count
             }
     except Exception as e:
-        print(f"Fehler beim Laden der Dashboard-Statistiken: {e}")
+        logger.exception("Fehler beim Laden der Dashboard-Statistiken")
         return {
             "total_decks": 0,
             "total_collection_cards": 0,

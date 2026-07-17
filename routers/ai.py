@@ -17,6 +17,7 @@ Abhängigkeiten:
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import uuid
 from typing import Optional
@@ -32,6 +33,8 @@ from services.combos import detect_local_combos
 from services.limiter import limiter
 from services.scryfall import parse_decklist
 from services.usage_limiter import check_and_increment_ai_usage
+
+logger = logging.getLogger(__name__)
 
 # ======================================================================
 # Lokale Request Models (zur API-Kompatibilität)
@@ -77,8 +80,8 @@ async def judge_endpoint(req: JudgeRequest, request: Request):
         try:
             response = model_lite.generate_content(f"Beantworte diese Magic The Gathering Regelfrage kurz auf Deutsch: {req.frage}")
             return {"antwort": response.text}
-        except Exception as e:
-            print(f"Error calling judge model: {e}")
+        except Exception:
+            logger.exception("Error calling judge model")
 
     return {"antwort": "Der KI-Judge ist momentan beschäftigt oder nicht eingerichtet. Bitte überprüfe deinen API Key."}
 
@@ -246,8 +249,8 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                             "name": combo_name,
                             "grund": grund
                         })
-            except Exception as e:
-                print(f"Error calling Spellbook API in run_scan_combos_bg: {e}")
+            except Exception:
+                logger.exception("Error calling Spellbook API in run_scan_combos_bg")
 
         # 3. Merge combos (Duplikate vermeiden)
         merged_combos = list(local_combos)
@@ -289,8 +292,8 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                                 "grund": c.get("grund") or c.get("erklaerung") or "Keine Erklärung verfügbar."
                             })
                             seen_names.add(c_name.lower().strip())
-            except Exception as e:
-                print(f"Error calling Gemini in run_scan_combos_bg: {e}")
+            except Exception:
+                logger.exception("Error calling Gemini in run_scan_combos_bg")
 
         result_data = {"combos": merged_combos}
         status_val = "completed"
@@ -300,7 +303,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
         scryfall_cache.set(cache_key, result_data)
         
     except Exception as e:
-        print(f"Error in background combo scanner: {e}")
+        logger.exception("Error in background combo scanner")
         status_val = "failed"
         result_val = json.dumps({"error": str(e)})
 
@@ -310,8 +313,8 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 text("UPDATE synergy_jobs SET status = :status, result = :result WHERE job_id = :job_id"),
                 {"status": status_val, "result": result_val, "job_id": job_id}
             )
-    except Exception as db_err:
-        print(f"DB Error updating synergy job {job_id}: {db_err}")
+    except Exception:
+        logger.exception("DB Error updating synergy job %s", job_id)
 
 
 async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key: str, benutzername: str = ""):
@@ -353,8 +356,8 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
                         "name": combo_name,
                         "grund": grund
                     })
-        except Exception as e:
-            print(f"Error calling Spellbook API in run_combos_bg: {e}")
+        except Exception:
+            logger.exception("Error calling Spellbook API in run_combos_bg")
 
         # Fallback zu Gemini AI falls Spellbook keine Ergebnisse liefert
         if not spellbook_combos and model_lite and check_and_increment_ai_usage(benutzername):
@@ -377,8 +380,8 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
                 json_data = json.loads(text_resp)
                 if isinstance(json_data, dict) and "empfehlungen" in json_data and isinstance(json_data["empfehlungen"], list):
                     spellbook_combos = json_data["empfehlungen"]
-            except Exception as e:
-                print(f"Error calling Gemini in run_combos_bg: {e}")
+            except Exception:
+                logger.exception("Error calling Gemini in run_combos_bg")
 
         # Fallback 2: Lokale Dummy Combos falls alles fehlschlägt
         if not spellbook_combos:
@@ -393,7 +396,7 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
         scryfall_cache.set(cache_key, result_data)
 
     except Exception as e:
-        print(f"Error in background single combos fetcher: {e}")
+        logger.exception("Error in background single combos fetcher")
         status_val = "failed"
         result_val = json.dumps({"error": str(e)})
 
@@ -403,5 +406,5 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
                 text("UPDATE synergy_jobs SET status = :status, result = :result WHERE job_id = :job_id"),
                 {"status": status_val, "result": result_val, "job_id": job_id}
             )
-    except Exception as db_err:
-        print(f"DB Error updating single combo job {job_id}: {db_err}")
+    except Exception:
+        logger.exception("DB Error updating single combo job %s", job_id)

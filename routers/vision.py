@@ -7,6 +7,7 @@ Endpoints:
 
 import asyncio
 import json
+import logging
 import time
 import cv2
 import numpy as np
@@ -17,6 +18,8 @@ from database import check_user_premium
 from services.ai_service import model_lite
 from services.local_matcher import sync_deck_locally, load_and_compute_descriptors, match_card_crop
 from services.usage_limiter import check_and_increment_vision_minutes
+
+logger = logging.getLogger(__name__)
 
 # Mindestabstand zwischen zwei Gemini-Aufrufen auf /ws (Sekunden). Ohne diese
 # Drossel macht der Endpoint bis zu 2 Gemini-Calls/Sekunde (Bild-Erkennung +
@@ -56,7 +59,7 @@ async def detect_cards_from_image(jpeg_bytes: bytes) -> Dict[str, Any]:
         return json.loads(text.strip())
     except Exception as e:
         err_msg = str(e)
-        print(f"Error in detect_cards_from_image: {err_msg}")
+        logger.warning("Error in detect_cards_from_image: %s", err_msg)
         if "429" in err_msg or "quota" in err_msg.lower():
             gemini_quota_exhausted = True
         return {"cards": []}
@@ -80,7 +83,7 @@ async def generate_board_advice(cards: List[Dict[str, Any]]) -> str:
         return response.text
     except Exception as e:
         err_msg = str(e)
-        print(f"Error in generate_board_advice: {err_msg}")
+        logger.warning("Error in generate_board_advice: %s", err_msg)
         if "429" in err_msg or "quota" in err_msg.lower():
             gemini_quota_exhausted = True
             return (
@@ -393,7 +396,7 @@ async def identify_single_card(warped_bytes: bytes) -> str:
         return name
     except Exception as e:
         err_msg = str(e)
-        print(f"Error identifying card crop: {err_msg}")
+        logger.warning("Error identifying card crop: %s", err_msg)
         if "429" in err_msg or "quota" in err_msg.lower():
             gemini_quota_exhausted = True
         return "Unknown Card"
@@ -435,7 +438,7 @@ async def ws_vision_endpoint(websocket: WebSocket, benutzername: str):
     except Exception as e:
         if "Stop loop" in str(e):
             raise e
-        print(f"WS error: {e}")
+        logger.exception("WS error")
 
 # In-memory session store
 # session_id -> {
@@ -501,7 +504,7 @@ async def vision_detection_loop(session_id: str):
     import urllib.parse
     import time
     
-    print(f"Starting vision detection loop for session {session_id}")
+    logger.info("Starting vision detection loop for session %s", session_id)
     while session_id in active_sessions:
         session = active_sessions[session_id]
         
@@ -570,7 +573,7 @@ async def vision_detection_loop(session_id: str):
                                     "message": "Spielfeld-Rahmen (Playmat) nicht erkannt. Bitte Kamera-Abstand anpassen oder Weitwinkel-Linse (0.5x) wählen."
                                 })
                     except Exception as ex:
-                        print(f"Error in OpenCV preprocessing: {ex}")
+                        logger.debug("Error in OpenCV preprocessing: %s", ex, exc_info=True)
                         
                     previous_tracked = session["tracked_cards"]
                     current_tracked = []
@@ -613,7 +616,7 @@ async def vision_detection_loop(session_id: str):
                                 current_tracked.append(matched_card)
                             else:
                                 # New card detected! Identify it locally using ORB feature matching
-                                print(f"New card shape found at ({shape['x']}, {shape['y']}). Matching locally...")
+                                logger.debug("New card shape found at (%s, %s). Matching locally...", shape['x'], shape['y'])
                                 card_name, confidence = match_card_crop(shape["warped_bytes"])
                                 
                                 if card_name == "Unknown Card":
@@ -634,7 +637,7 @@ async def vision_detection_loop(session_id: str):
                                     }
                                     name_lower = card_name.lower().strip()
                                     if deck_card_names and name_lower not in deck_card_names and name_lower not in allowed_basics:
-                                        print(f"Agent 4 (QA): Blocked card '{card_name}' because it is not in the synced decklist.")
+                                        logger.info("Agent 4 (QA): Blocked card '%s' because it is not in the synced decklist.", card_name)
                                         is_plausible = False
 
                                 if card_name != "Unknown Card" and is_plausible:
@@ -779,7 +782,7 @@ async def vision_detection_loop(session_id: str):
                     if now_time - last_gemini_time >= 12.5:
                         session["last_card_signature"] = board_signature
                         if cards_raw:
-                            print(f"Board state changed to: {board_signature}. Requesting AI advice...")
+                            logger.info("Board state changed to: %s. Requesting AI advice...", board_signature)
                             session["last_gemini_request_time"] = now_time
                             advice = await generate_board_advice(cards_raw)
                             session["last_advice"] = advice
@@ -797,16 +800,16 @@ async def vision_detection_loop(session_id: str):
                 for disp in list(displays):
                     try:
                         await disp.send_json(board_state_msg)
-                    except Exception as e:
-                        print(f"Error sending board state to display: {e}")
+                    except Exception:
+                        logger.exception("Error sending board state to display")
                         
-            except Exception as e:
-                print(f"Error in vision detection loop for session {session_id}: {e}")
+            except Exception:
+                logger.exception("Error in vision detection loop for session %s", session_id)
                 
         # Sleep for 2 seconds before the next check
         await asyncio.sleep(2.0)
         
-    print(f"Stopped vision detection loop for session {session_id}")
+    logger.info("Stopped vision detection loop for session %s", session_id)
 
 @router.websocket("/stream/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
@@ -830,7 +833,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
             except Exception:
                 pass
         active_sessions[session_id]["camera"] = websocket
-        print(f"Camera connected for session {session_id}")
+        logger.info("Camera connected for session %s", session_id)
         
         # Start the background detection task if not already running
         ai_task = active_sessions[session_id].get("ai_task")
@@ -839,7 +842,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
             
     elif role == "display":
         active_sessions[session_id]["displays"].append(websocket)
-        print(f"Display connected for session {session_id}")
+        logger.info("Display connected for session %s", session_id)
         # Send initial info message
         await websocket.send_json({
             "type": "info",
@@ -890,7 +893,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
                     # Check if it's a sync_deck command from the user interface
                     if isinstance(data, dict) and data.get("type") == "sync_deck":
                         deck_liste = data.get("deck_liste", "")
-                        print(f"WebSocket: Syncing deck locally for session {session_id}...")
+                        logger.info("WebSocket: Syncing deck locally for session %s...", session_id)
                         try:
                             await websocket.send_json({
                                 "type": "info",
@@ -912,7 +915,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
                                 "message": "Karten offline synchronisiert. Bereit zur Erkennung!"
                             })
                         except Exception as sync_err:
-                            print(f"Error syncing deck: {sync_err}")
+                            logger.exception("Error syncing deck")
                             await websocket.send_json({
                                 "type": "info",
                                 "message": f"Fehler bei Offline-Synchronisierung: {sync_err}"
@@ -927,9 +930,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
                             pass
                             
     except WebSocketDisconnect:
-        print(f"Role {role} disconnected from session {session_id}")
-    except Exception as e:
-        print(f"WebSocket error in session {session_id} (role={role}): {e}")
+        logger.info("Role %s disconnected from session %s", role, session_id)
+    except Exception:
+        logger.exception("WebSocket error in session %s (role=%s)", session_id, role)
     finally:
         # Clean up session registry on disconnect
         if role == "camera":
@@ -948,4 +951,4 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
                 if task and not task.done():
                     task.cancel()
                 active_sessions.pop(session_id, None)
-                print(f"Session {session_id} cleaned up.")
+                logger.info("Session %s cleaned up.", session_id)

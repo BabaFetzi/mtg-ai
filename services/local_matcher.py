@@ -7,6 +7,7 @@ This service implements a 100% offline card identification pipeline:
 - Agent 3 (QA): Validates matching results using confidence thresholds and format checks.
 """
 
+import logging
 import os
 import cv2
 import json
@@ -16,6 +17,8 @@ import asyncio
 from typing import Dict, List, Any, Tuple
 
 from services.scryfall import fetch_card_details_cached, parse_decklist
+
+logger = logging.getLogger(__name__)
 
 # Directories and paths in the workspace root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -81,8 +84,8 @@ async def download_image(url: str, filepath: str) -> bool:
                     with open(filepath, "wb") as f:
                         f.write(resp.content)
                     return True
-        except Exception as e:
-            print(f"Attempt {attempt+1} failed downloading {url}: {e}")
+        except Exception:
+            logger.warning("Attempt %d failed downloading %s", attempt + 1, url, exc_info=True)
             await asyncio.sleep(1.0)
     return False
 
@@ -119,7 +122,7 @@ async def sync_deck_locally(deck_liste_str: str) -> List[str]:
         filepath = os.path.join(IMAGE_DIR, safe_filename)
         
         if not os.path.exists(filepath):
-            print(f"Offline Sync: Downloading card artwork for {canonical_name}...")
+            logger.info("Offline Sync: Downloading card artwork for %s...", canonical_name)
             success = await download_image(details["image"], filepath)
             if success:
                 metadata[safe_filename] = canonical_name
@@ -129,7 +132,7 @@ async def sync_deck_locally(deck_liste_str: str) -> List[str]:
             synced_cards.append(canonical_name)
             
     save_metadata(metadata)
-    print(f"Offline Sync complete: {len(synced_cards)} cards verified locally.")
+    logger.info("Offline Sync complete: %d cards verified locally.", len(synced_cards))
     return synced_cards
 
 # ======================================================================
@@ -143,7 +146,7 @@ def load_and_compute_descriptors():
     
     metadata = load_metadata()
     if not metadata:
-        print("Local Matcher: No cards metadata found. Run sync first.")
+        logger.warning("Local Matcher: No cards metadata found. Run sync first.")
         return
         
     loaded_count = 0
@@ -164,7 +167,7 @@ def load_and_compute_descriptors():
             card_features[canonical_name] = (kp, des, phash)
             loaded_count += 1
             
-    print(f"Local Matcher: Loaded ORB keypoints for {loaded_count} cards in memory.")
+    logger.info("Local Matcher: Loaded ORB keypoints for %d cards in memory.", loaded_count)
 
 def match_card_crop(crop_bytes: bytes) -> Tuple[str, float]:
     """
@@ -249,8 +252,8 @@ def match_card_crop(crop_bytes: bytes) -> Tuple[str, float]:
                 max_good_matches = match_count
                 best_phash_dist = phash_dist
                 best_match = name
-        except Exception as e:
-            print(f"Error matching descriptor for {name}: {e}")
+        except Exception:
+            logger.debug("Error matching descriptor for %s", name, exc_info=True)
             continue
 
     # ======================================================================
