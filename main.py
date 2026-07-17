@@ -9,6 +9,17 @@ und inkludiert alle modularen API-Router.
 import logging
 import os
 
+from dotenv import load_dotenv
+
+# Muss laufen, BEVOR irgendein lokales Modul importiert wird: database.py
+# (DATABASE_URL), services/limiter.py und services/cache.py lesen ihre
+# jeweilige *_URL-Konfiguration bereits beim Import (Modul-/Klassenebene),
+# nicht erst bei einem Funktionsaufruf. Vorher lag load_dotenv() nur in
+# auth.py, das über routers.auth erst NACH database/limiter/cache importiert
+# wird -- .env-Werte kamen dadurch bei diesen drei Modulen nie an, nur
+# echte (z.B. von Docker gesetzte) Umgebungsvariablen wurden gesehen.
+load_dotenv()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

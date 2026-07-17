@@ -8,6 +8,7 @@ automatisch auf eine SQLite-Tabelle gewechselt (Zero-Downtime).
 
 import json
 import logging
+import os
 import time
 import sqlite3
 from typing import Any, Optional
@@ -27,11 +28,16 @@ class HybridCache:
     def __init__(
         self,
         db_path: str = "mtg_app.db",
-        redis_url: str = "redis://localhost:6379",
+        redis_url: Optional[str] = None,
         ttl_seconds: int = 86400,
     ):
         self.db_path = db_path
-        self.redis_url = redis_url
+        # Erst zur Instanziierung ausgewertet (nicht als Default-Parameter-
+        # Wert bei Modul-Import) -- REDIS_URL wie an den anderen Stellen im
+        # Projekt (services/limiter.py, services/usage_limiter.py) aus der
+        # Umgebung gelesen, damit es sowohl lokal als auch containerisiert
+        # korrekt funktioniert, statt fest auf localhost verdrahtet zu sein.
+        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379")
         self.ttl = ttl_seconds
         self.redis_client = None
         self.use_redis = False
@@ -39,7 +45,7 @@ class HybridCache:
         # --- Redis-Verbindung versuchen ---
         try:
             import redis
-            self.redis_client = redis.from_url(redis_url, socket_timeout=1)
+            self.redis_client = redis.from_url(self.redis_url, socket_timeout=1)
             self.redis_client.ping()
             self.use_redis = True
             logger.info("Redis-Cache erfolgreich verbunden!")
