@@ -33,6 +33,96 @@ const TAB_GROUPS = [
     ] },
 ];
 
+const FORMAT_LABELS = {
+  commander: 'Commander',
+  standard: 'Standard',
+  modern: 'Modern',
+  pioneer: 'Pioneer',
+  legacy: 'Legacy',
+  vintage: 'Vintage',
+};
+
+// Deckt sich mit der bestehenden Regelprüfung in format_engine.py: Commander
+// verlangt EXAKT 100 Karten (inkl. Commander), alle anderen Formate
+// mindestens 60 -- dieselbe Logik wie im Statistik-Streifen über der
+// Deckliste, hier auch für die Deck-Bibliothek-Karten wiederverwendet.
+function getCardCountStatus(totalCards, format) {
+  const target = format === 'commander' ? 100 : 60;
+  const legal = format === 'commander' ? totalCards === target : totalCards >= target;
+  const label = format === 'commander' ? `${totalCards} / ${target}` : `${totalCards} / ${target}+`;
+  return { label, legal };
+}
+
+function formatUpdatedAt(isoString) {
+  if (!isoString) return null;
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+const PIP_COLOR_ORDER = ['W', 'U', 'B', 'R', 'G'];
+const PIP_COLOR_HEX = { W: '#F9F6F0', U: '#0E68AB', B: '#3D3D3D', R: '#D32F2F', G: '#2E7D32' };
+
+// Farbidentität als kleine Pips -- gefüllt, wenn die Farbe im Deck vorkommt,
+// sonst nur umrandet. Wiederverwendet vom Statistik-Streifen und den
+// Deck-Bibliothek-Karten.
+function ColorPips({ colorCounts, size = 16, gap = 5 }) {
+  return (
+    <div style={{display: 'flex', gap: `${gap}px`}}>
+      {PIP_COLOR_ORDER.map(c => {
+        const count = colorCounts?.[c] || 0;
+        const present = count > 0;
+        return (
+          <span
+            key={c}
+            title={present ? `${c}: ${count} Symbole` : `${c}: nicht im Deck`}
+            style={{
+              width: `${size}px`,
+              height: `${size}px`,
+              borderRadius: '50%',
+              background: present ? PIP_COLOR_HEX[c] : 'transparent',
+              border: present ? '1px solid rgba(0,0,0,0.15)' : '1.5px solid var(--border-color)',
+              display: 'inline-block',
+              flexShrink: 0
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+const CMC_BUCKET_LABELS = ['0', '1', '2', '3', '4', '5', '6', '7+'];
+
+// Mini-Manakurve als schlichte Balken (CMC 0-6 einzeln, 7+ gebündelt) --
+// bewusst ohne neue Chart-Abhängigkeit, wie das bereits bestehende
+// Radar-Chart in DeckAnalysis.jsx handgebaut.
+function MiniManaCurve({ cmcCurve, barWidth = 7, gap = 3, maxHeight = 28 }) {
+  const bucketValues = [0, 1, 2, 3, 4, 5, 6].map(b => cmcCurve?.[String(b)] || 0);
+  const sevenPlus = Object.entries(cmcCurve || {}).reduce(
+    (acc, [k, v]) => (parseInt(k, 10) >= 7 ? acc + v : acc), 0
+  );
+  const allBars = [...bucketValues, sevenPlus];
+  const maxBar = Math.max(1, ...allBars);
+  return (
+    <div title="Manakurve (Manawert 0 bis 7+)" style={{display: 'flex', alignItems: 'flex-end', gap: `${gap}px`, height: `${maxHeight}px`}}>
+      {allBars.map((v, i) => (
+        <div
+          key={CMC_BUCKET_LABELS[i]}
+          title={`Manawert ${CMC_BUCKET_LABELS[i]}: ${v} Karten`}
+          style={{
+            width: `${barWidth}px`,
+            height: `${Math.max(2, (v / maxBar) * maxHeight)}px`,
+            background: 'var(--accent-color)',
+            borderRadius: '2px',
+            opacity: v === 0 ? 0.25 : 1
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -563,24 +653,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     if (!visualDeck || visualDeck.length === 0) return null;
 
     const totalCards = visualDeck.reduce((acc, k) => acc + (k?.count || 1), 0);
-    // Deckt sich mit der bestehenden Regelprüfung in format_engine.py:
-    // Commander verlangt EXAKT 100 Karten (inkl. Commander), alle anderen
-    // Formate mindestens 60.
-    const target = selectedFormat === 'commander' ? 100 : 60;
-    const isLegalCount = selectedFormat === 'commander' ? totalCards === target : totalCards >= target;
-    const countLabel = selectedFormat === 'commander' ? `${totalCards} / ${target}` : `${totalCards} / ${target}+`;
-
-    const colorOrder = ['W', 'U', 'B', 'R', 'G'];
-    const colorHex = { W: '#F9F6F0', U: '#0E68AB', B: '#3D3D3D', R: '#D32F2F', G: '#2E7D32' };
-    const colorCounts = stats?.colors || {};
-
-    const cmcBuckets = [0, 1, 2, 3, 4, 5, 6];
-    const cmcData = stats?.cmc || {};
-    const bucketValues = cmcBuckets.map(b => cmcData[String(b)] || 0);
-    const sevenPlus = Object.entries(cmcData).reduce((acc, [k, v]) => (parseInt(k, 10) >= 7 ? acc + v : acc), 0);
-    const allBars = [...bucketValues, sevenPlus];
-    const barLabels = ['0', '1', '2', '3', '4', '5', '6', '7+'];
-    const maxBar = Math.max(1, ...allBars);
+    const { label: countLabel, legal: isLegalCount } = getCardCountStatus(totalCards, selectedFormat);
 
     return (
       <div style={{
@@ -605,46 +678,14 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
         <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
           <span style={{fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase'}}>Farben</span>
-          <div style={{display: 'flex', gap: '5px'}}>
-            {colorOrder.map(c => {
-              const present = (colorCounts[c] || 0) > 0;
-              return (
-                <span
-                  key={c}
-                  title={present ? `${c}: ${colorCounts[c]} Symbole` : `${c}: nicht im Deck`}
-                  style={{
-                    width: '16px',
-                    height: '16px',
-                    borderRadius: '50%',
-                    background: present ? colorHex[c] : 'transparent',
-                    border: present ? '1px solid rgba(0,0,0,0.15)' : '1.5px solid var(--border-color)',
-                    display: 'inline-block'
-                  }}
-                />
-              );
-            })}
-          </div>
+          <ColorPips colorCounts={stats?.colors} size={16} gap={5} />
         </div>
 
         <div style={{width: '1px', height: '24px', background: 'var(--border-color)'}} />
 
         <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
           <span style={{fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase'}}>Kurve</span>
-          <div title="Manakurve (Manawert 0 bis 7+)" style={{display: 'flex', alignItems: 'flex-end', gap: '3px', height: '28px'}}>
-            {allBars.map((v, i) => (
-              <div
-                key={barLabels[i]}
-                title={`Manawert ${barLabels[i]}: ${v} Karten`}
-                style={{
-                  width: '7px',
-                  height: `${Math.max(2, (v / maxBar) * 28)}px`,
-                  background: 'var(--accent-color)',
-                  borderRadius: '2px',
-                  opacity: v === 0 ? 0.25 : 1
-                }}
-              />
-            ))}
-          </div>
+          <MiniManaCurve cmcCurve={stats?.cmc} barWidth={7} gap={3} maxHeight={28} />
         </div>
       </div>
     );
@@ -1052,16 +1093,22 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
               {(decks || []).map((d, idx) => {
                 if(!d) return null;
                 const isCurrentActive = String(d.id) === String(deckId);
+                const cardCount = d.card_count ?? 0;
+                const { label: countLabel, legal: isLegalCount } = getCardCountStatus(cardCount, d.format || 'commander');
+                const updatedLabel = formatUpdatedAt(d.updated_at);
+                const priceVal = parseFloat(d.price);
+                const priceLabel = isNaN(priceVal) ? null : priceVal.toFixed(2);
                 return (
-                <div 
-                  key={d.id || idx} 
-                  className="gallery-item" 
+                <div
+                  key={d.id || idx}
+                  className="gallery-item"
                   style={{
-                    cursor: 'pointer', 
-                    padding: '35px', 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    justifyContent: 'center', 
+                    cursor: 'pointer',
+                    padding: '24px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'flex-start',
+                    gap: '12px',
                     minHeight: '130px',
                     borderColor: isCurrentActive ? 'var(--accent-color)' : 'var(--border-color)',
                     borderWidth: isCurrentActive ? '2.2px' : '1px',
@@ -1074,9 +1121,53 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                       Gruppen-Tab als Einstieg nutzen (Punkt 2 der Navigations-
                       Vereinheitlichung). */}
                   <div onClick={() => navigate(`/decks?tab=visual&deckId=${d.id}`)}>
-                    <h3 style={{fontSize: '1.5rem', marginBottom: '10px'}}>{d.name}</h3>
-                    <p style={{margin: 0, fontSize: '0.9rem', color: 'var(--text-muted)'}}>
-                      {isCurrentActive ? "Aktiviert • Deckliste öffnen" : "Öffnen & Ansehen"}
+                    <span style={{
+                      display: 'inline-block',
+                      fontSize: '0.68rem',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      color: 'var(--text-muted)',
+                      background: 'var(--btn-secondary)',
+                      padding: '3px 9px',
+                      borderRadius: '8px',
+                      marginBottom: '10px'
+                    }}>
+                      {FORMAT_LABELS[d.format] || d.format || 'Commander'}
+                    </span>
+
+                    <h3 style={{
+                      fontSize: '1.3rem',
+                      marginBottom: '10px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {d.name}
+                    </h3>
+
+                    <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px', flexWrap: 'wrap'}}>
+                      <span style={{fontSize: '0.85rem', fontWeight: 700, color: isLegalCount ? 'var(--price-color)' : 'var(--danger-color)'}}>
+                        {countLabel}
+                      </span>
+                      {priceLabel !== null && (
+                        <>
+                          <span style={{color: 'var(--border-color)'}}>•</span>
+                          <span style={{fontSize: '0.85rem', fontWeight: 700, color: 'var(--price-color)'}}>
+                            {priceLabel} €
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    <div style={{display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '10px'}}>
+                      <ColorPips colorCounts={d.colors} size={13} gap={4} />
+                      <MiniManaCurve cmcCurve={d.cmc_curve} barWidth={4} gap={2} maxHeight={18} />
+                    </div>
+
+                    <p style={{margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)'}}>
+                      {isCurrentActive && "Aktiviert • "}
+                      {updatedLabel ? `Zuletzt bearbeitet: ${updatedLabel}` : "Öffnen & Ansehen"}
                     </p>
                   </div>
                 </div>
