@@ -1378,69 +1378,117 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                             </button>
                           </div>
                         </div>
-                        <div style={{display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '200px', padding: '0 10px'}}>
-                          {Object.keys(stats?.cmc || {}).sort((a,b) => parseInt(a)-parseInt(b)).map(cmc => {
-                             const val = activeCmcDataset[cmc] || 0;
-                             const pct = (val / maxCmcCount) * 75;
-                             const cmcNum = parseInt(cmc);
-                             const manaSymbolUrl = cmcNum <= 20 ? `https://svgs.scryfall.io/card-symbols/${cmcNum}.svg` : null;
-                             return (
-                               <div key={cmc} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', flex: 1, height: '100%', justifyContent: 'flex-end'}}>
-                                 <span style={{fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-main)'}}>{val}</span>
-                                 <div style={{
-                                   width: '32px', 
-                                   height: `${pct}%`, 
-                                   minHeight: val > 0 ? '6px' : '0px',
-                                   background: 'linear-gradient(180deg, #61dafb 0%, #2b95d6 100%)',
-                                   borderRadius: '6px 6px 2px 2px',
-                                   boxShadow: '0 0 12px rgba(97, 218, 251, 0.3)',
-                                   transition: 'height 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
-                                 }}></div>
-                                 {manaSymbolUrl ? (
-                                   <img src={manaSymbolUrl} alt={`Kosten ${cmc}`} title={`Manakosten ${cmc}`} style={{width: '24px', height: '24px'}} />
-                                 ) : (
-                                   <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600}}>{cmc}+</span>
-                                 )}
-                               </div>
-                             );
-                          })}
-                        </div>
+                        {/* Dichter als vorher: schmalere Balken, festes statt
+                            elastisches Spacing (space-around zog wenige Balken
+                            künstlich über die volle Breite auseinander), plus
+                            gestrichelte Gitterlinien mit Achsenbeschriftung
+                            links für bessere Lesbarkeit der genauen Werte. */}
+                        {(() => {
+                          const chartHeight = 140;
+                          const gridSteps = 4;
+                          const cmcKeys = Object.keys(stats?.cmc || {}).sort((a, b) => parseInt(a) - parseInt(b));
+                          return (
+                            <div style={{display: 'flex', gap: '8px', marginTop: '5px'}}>
+                              <div style={{position: 'relative', width: '24px', height: `${chartHeight}px`, flexShrink: 0}}>
+                                {Array.from({length: gridSteps + 1}).map((_, i) => {
+                                  const frac = i / gridSteps;
+                                  const value = Math.round(maxCmcCount * frac);
+                                  return (
+                                    <span key={i} style={{position: 'absolute', bottom: `calc(${frac * 100}% - 7px)`, right: 0, fontSize: '0.68rem', color: 'var(--text-muted)'}}>
+                                      {value}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              <div style={{position: 'relative', flex: 1, height: `${chartHeight}px`}}>
+                                {Array.from({length: gridSteps + 1}).map((_, i) => {
+                                  const frac = i / gridSteps;
+                                  return (
+                                    <div key={i} style={{
+                                      position: 'absolute', left: 0, right: 0, bottom: `${frac * 100}%`,
+                                      borderTop: '1px dashed var(--border-color)',
+                                      opacity: i === 0 ? 0.7 : 0.35
+                                    }} />
+                                  );
+                                })}
+                                <div style={{position: 'absolute', inset: 0, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: '12px'}}>
+                                  {cmcKeys.map(cmc => {
+                                     const val = activeCmcDataset[cmc] || 0;
+                                     const pct = (val / maxCmcCount) * 100;
+                                     const cmcNum = parseInt(cmc);
+                                     const manaSymbolUrl = cmcNum <= 20 ? `https://svgs.scryfall.io/card-symbols/${cmcNum}.svg` : null;
+                                     return (
+                                       <div key={cmc} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', height: '100%', justifyContent: 'flex-end', zIndex: 1}}>
+                                         <span style={{fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)'}}>{val}</span>
+                                         <div style={{
+                                           width: '20px',
+                                           height: `${pct}%`,
+                                           minHeight: val > 0 ? '4px' : '0px',
+                                           background: 'linear-gradient(180deg, #61dafb 0%, #2b95d6 100%)',
+                                           borderRadius: '4px 4px 1px 1px',
+                                           transition: 'height 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
+                                         }}></div>
+                                         {manaSymbolUrl ? (
+                                           <img src={manaSymbolUrl} alt={`Kosten ${cmc}`} title={`Manakosten ${cmc}`} style={{width: '18px', height: '18px'}} />
+                                         ) : (
+                                           <span style={{fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600}}>{cmc}+</span>
+                                         )}
+                                       </div>
+                                     );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
 
-                      {/* FARBVERTEILUNG */}
+                      {/* FARBVERTEILUNG -- ein gestapelter Balken statt vier
+                          großer Chips, darunter eine kompakte Legende. Zeigt
+                          dieselbe Information auf einen Bruchteil der Fläche. */}
                       <div style={{background: 'rgba(0, 0, 0, 0.15)', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '30px'}}>
-                        <h4 style={{color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 25px 0'}}>
+                        <h4 style={{color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 20px 0'}}>
                           Farbverteilung
                         </h4>
-                        <div style={{display: 'flex', flexWrap: 'wrap', gap: '20px', justifyContent: 'center'}}>
-                          {Object.keys(stats?.colors || {}).filter(c => stats.colors[c] > 0).map(c => {
-                             const colorInfo = colorNameMap[c] || {name: c, svg: null};
-                             const count = stats.colors[c];
-                             const percentage = totalColorCards > 0 ? ((count / totalColorCards) * 100).toFixed(0) : 0;
-                             return (
-                               <div key={c} style={{
-                                 display: 'flex', 
-                                 alignItems: 'center', 
-                                 gap: '14px',
-                                 background: 'rgba(255, 255, 255, 0.04)',
-                                 border: '1px solid var(--border-color)',
-                                 borderRadius: '14px',
-                                 padding: '16px 24px',
-                                 minWidth: '160px',
-                                 transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                                 cursor: 'default'
-                               }}>
-                                 {colorInfo.svg && (
-                                   <img src={colorInfo.svg} alt={colorInfo.name} style={{width: '36px', height: '36px', flexShrink: 0}} />
-                                 )}
-                                 <div style={{display: 'flex', flexDirection: 'column', gap: '2px'}}>
-                                   <span style={{fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)'}}>{colorInfo.name}</span>
-                                   <span style={{fontSize: '0.85rem', color: 'var(--text-muted)'}}>{count} Karten · {percentage}%</span>
-                                 </div>
-                               </div>
-                             );
-                          })}
-                        </div>
+                        {(() => {
+                          const barColorHex = { ...PIP_COLOR_HEX, C: '#8E8E93' };
+                          const segments = ['W', 'U', 'B', 'R', 'G', 'C']
+                            .map(c => ({ code: c, count: stats.colors?.[c] || 0 }))
+                            .filter(s => s.count > 0);
+                          if (segments.length === 0) {
+                            return <p style={{color: 'var(--text-muted)', margin: 0}}>Keine Farbdaten vorhanden.</p>;
+                          }
+                          return (
+                            <>
+                              <div style={{display: 'flex', width: '100%', height: '26px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)'}}>
+                                {segments.map(s => {
+                                  const pct = totalColorCards > 0 ? (s.count / totalColorCards) * 100 : 0;
+                                  const info = colorNameMap[s.code] || {name: s.code};
+                                  return (
+                                    <div
+                                      key={s.code}
+                                      title={`${info.name}: ${s.count} Karten (${pct.toFixed(0)}%)`}
+                                      style={{width: `${pct}%`, background: barColorHex[s.code]}}
+                                    />
+                                  );
+                                })}
+                              </div>
+                              <div style={{display: 'flex', flexWrap: 'wrap', gap: '16px', marginTop: '16px'}}>
+                                {segments.map(s => {
+                                  const pct = totalColorCards > 0 ? ((s.count / totalColorCards) * 100).toFixed(0) : 0;
+                                  const info = colorNameMap[s.code] || {name: s.code};
+                                  return (
+                                    <div key={s.code} style={{display: 'flex', alignItems: 'center', gap: '7px', fontSize: '0.82rem'}}>
+                                      <span style={{width: '11px', height: '11px', borderRadius: '3px', background: barColorHex[s.code], display: 'inline-block', flexShrink: 0}} />
+                                      <span style={{color: 'var(--text-main)', fontWeight: 600}}>{info.name}</span>
+                                      <span style={{color: 'var(--text-muted)'}}>{s.count} · {pct}%</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   );
