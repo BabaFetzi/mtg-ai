@@ -2,15 +2,20 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
 from main import app
+from auth import create_access_token
 
 client = TestClient(app)
+
+
+def _auth_headers(username: str) -> dict:
+    return {"Authorization": f"Bearer {create_access_token({'sub': username})}"}
 
 
 @pytest.mark.asyncio
 @patch('routers.ai.check_user_premium')
 async def test_judge_free_paywall(mock_check_premium):
     mock_check_premium.return_value = False
-    response = client.post("/api/judge", json={"frage": "Was ist Trample?", "benutzername": "free_user"})
+    response = client.post("/api/judge", json={"frage": "Was ist Trample?", "benutzername": "free_user"}, headers=_auth_headers("free_user"))
     assert response.status_code == 200
     assert "PAYWALL" in response.json()["antwort"]
 
@@ -28,7 +33,7 @@ async def test_judge_premium_uses_model_lite(mock_model_lite, mock_usage, mock_c
     mock_response.text = "Trample lässt überschüssigen Kampfschaden zum Gegner durchgehen."
     mock_model_lite.generate_content.return_value = mock_response
 
-    response = client.post("/api/judge", json={"frage": "Was ist Trample?", "benutzername": "premium_user"})
+    response = client.post("/api/judge", json={"frage": "Was ist Trample?", "benutzername": "premium_user"}, headers=_auth_headers("premium_user"))
 
     assert response.status_code == 200
     assert "Trample" in response.json()["antwort"]
@@ -46,7 +51,7 @@ async def test_judge_blocked_when_monthly_limit_reached(mock_model_lite, mock_us
     mock_check_premium.return_value = True
     mock_usage.return_value = False
 
-    response = client.post("/api/judge", json={"frage": "Was ist Trample?", "benutzername": "power_user"})
+    response = client.post("/api/judge", json={"frage": "Was ist Trample?", "benutzername": "power_user"}, headers=_auth_headers("power_user"))
 
     assert response.status_code == 200
     assert "Limit" in response.json()["antwort"]

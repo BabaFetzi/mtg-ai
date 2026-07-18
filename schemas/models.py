@@ -55,7 +55,7 @@ class DeckErstellenReq(BaseModel):
 
 
 class DeckUpdateReq(BaseModel):
-    benutzername: str
+    benutzername: Optional[str] = None
     deck_id: int
     deck_name: Optional[str] = None
     deck_liste: Optional[str] = None

@@ -7,8 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
 from main import app
+from auth import create_access_token
 
 client = TestClient(app)
+
+
+def _auth_headers(username: str) -> dict:
+    return {"Authorization": f"Bearer {create_access_token({'sub': username})}"}
 
 TEST_WEBHOOK_SECRET = "whsec_test_secret_for_unit_tests"
 
@@ -178,6 +183,7 @@ async def test_create_checkout_session_uses_stripe_secret_key_env_var(monkeypatc
         response = client.post(
             "/api/checkout/create-session",
             json={"benutzername": "testuser", "host_url": "http://localhost:5175"},
+            headers=_auth_headers("testuser"),
         )
 
     assert response.status_code == 200
@@ -198,6 +204,7 @@ async def test_create_checkout_session_falls_back_to_simulated_without_price_id(
         response = client.post(
             "/api/checkout/create-session",
             json={"benutzername": "testuser", "host_url": "http://localhost:5175"},
+            headers=_auth_headers("testuser"),
         )
 
     assert response.status_code == 200
@@ -214,6 +221,7 @@ async def test_create_checkout_session_falls_back_to_simulated_without_key(monke
     response = client.post(
         "/api/checkout/create-session",
         json={"benutzername": "testuser", "host_url": "http://localhost:5175"},
+        headers=_auth_headers("testuser"),
     )
 
     assert response.status_code == 200

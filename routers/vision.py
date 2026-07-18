@@ -14,6 +14,7 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from auth import decode_token
 from database import check_user_premium
 from services.ai_service import model_lite
 from services.local_matcher import sync_deck_locally, load_and_compute_descriptors, match_card_crop
@@ -402,7 +403,18 @@ async def identify_single_card(warped_bytes: bytes) -> str:
         return "Unknown Card"
 
 @router.websocket("/ws")
-async def ws_vision_endpoint(websocket: WebSocket, benutzername: str):
+async def ws_vision_endpoint(websocket: WebSocket, token: str = ""):
+    # Browser-WebSockets können keinen Authorization-Header mitschicken, daher
+    # wird das JWT hier als Query-Param übergeben und manuell verifiziert --
+    # der bisherige `benutzername`-Query-Param wurde entfernt, weil er dem
+    # Client blind vertraute (Premium-Umgehung + Kontingent-Diebstahl auf
+    # fremde Nutzer möglich).
+    payload = decode_token(token) if token else None
+    benutzername = payload.get("sub") if payload else None
+    if not benutzername:
+        await websocket.close(code=4401, reason="Nicht authentifiziert")
+        return
+
     await websocket.accept()
     # Letzter tatsächlich ausgeführter Gemini-Aufruf dieser Verbindung, plus die
     # zuletzt bekannten Ergebnisse -- so friert die Anzeige zwischen zwei

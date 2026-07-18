@@ -17,10 +17,11 @@ import urllib.parse
 from typing import Optional
 
 import stripe
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from auth import get_current_user
 from database import get_db_session
 from schemas.models import CheckoutReq
 
@@ -89,16 +90,13 @@ async def get_checkout_price():
     "/checkout/create-session",
     summary="Stripe Checkout Session erstellen",
 )
-async def create_checkout_session(req: CheckoutReq):
-    if not req.benutzername:
-        return {"erfolg": False, "error": "Benutzername erforderlich"}
-
+async def create_checkout_session(req: CheckoutReq, current_user: str = Depends(get_current_user)):
     stripe_key = os.getenv("STRIPE_SECRET_KEY")
     price_id = os.getenv("STRIPE_PRICE_ID")
     if not stripe_key or not price_id:
         # Fallback simulated checkout url (Simuliert den Upgrade-Flow für lokale Entwicklung,
         # nur wenn Stripe wirklich nicht konfiguriert ist -- kein Dummy-Preis-Versuch mehr)
-        mock_success_url = f"{req.host_url}/premium?status=success&mock_upgrade=true&user={urllib.parse.quote(req.benutzername)}"
+        mock_success_url = f"{req.host_url}/premium?status=success&mock_upgrade=true&user={urllib.parse.quote(current_user)}"
         return {"erfolg": True, "url": mock_success_url, "simulated": True}
 
     try:
@@ -112,10 +110,10 @@ async def create_checkout_session(req: CheckoutReq):
                 },
             ],
             mode='subscription',
-            success_url=req.host_url + "/premium?status=success&session_id={CHECKOUT_SESSION_ID}&user=" + urllib.parse.quote(req.benutzername),
+            success_url=req.host_url + "/premium?status=success&session_id={CHECKOUT_SESSION_ID}&user=" + urllib.parse.quote(current_user),
             cancel_url=req.host_url + "/premium?status=cancel",
             metadata={
-                "benutzername": req.benutzername
+                "benutzername": current_user
             }
         )
         return {"erfolg": True, "url": session.url, "simulated": False}

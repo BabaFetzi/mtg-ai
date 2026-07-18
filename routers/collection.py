@@ -25,11 +25,12 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.scryfall import fetch_card_details_cached
 
@@ -67,11 +68,13 @@ router = APIRouter(
     "/sammlung/{benutzername}",
     summary="Sammlung abrufen",
 )
-async def get_sammlung(benutzername: str):
+async def get_sammlung(benutzername: str, current_user: str = Depends(get_current_user)):
+    if benutzername != current_user:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     async with get_db_session() as session:
         res = await session.execute(
             text("SELECT * FROM sammlung_alben WHERE benutzername = :name"),
-            {"name": benutzername}
+            {"name": current_user}
         )
         rows = res.mappings().all()
         
@@ -106,12 +109,12 @@ async def get_sammlung(benutzername: str):
     "/sammlung/hinzufuegen",
     summary="Karte zur Sammlung hinzufügen",
 )
-async def add_karte(data: AddKarteData):
+async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         await session.execute(
             text("INSERT INTO sammlung_alben (benutzername, karten_name, album_name, bild_url, preis) "
                  "VALUES (:user, :name, :album, :url, :price)"),
-            {"user": data.benutzername, "name": data.karten_name, "album": data.album_name, "url": data.bild_url, "price": data.preis}
+            {"user": current_user, "name": data.karten_name, "album": data.album_name, "url": data.bild_url, "price": data.preis}
         )
     return {"erfolg": True}
 
@@ -122,11 +125,11 @@ async def add_karte(data: AddKarteData):
     "/sammlung/loeschen",
     summary="Karte aus Sammlung löschen",
 )
-async def delete_karte(data: DeleteKarteData):
+async def delete_karte(data: DeleteKarteData, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         await session.execute(
-            text("DELETE FROM sammlung_alben WHERE id = :id"),
-            {"id": data.karten_id}
+            text("DELETE FROM sammlung_alben WHERE id = :id AND benutzername = :user"),
+            {"id": data.karten_id, "user": current_user}
         )
     return {"erfolg": True}
 
@@ -137,11 +140,11 @@ async def delete_karte(data: DeleteKarteData):
     "/sammlung/album_loeschen",
     summary="Gesamtes Album löschen",
 )
-async def delete_album(data: DeleteAlbumData):
+async def delete_album(data: DeleteAlbumData, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         await session.execute(
             text("DELETE FROM sammlung_alben WHERE benutzername = :user AND album_name = :album"),
-            {"user": data.benutzername, "album": data.album_name}
+            {"user": current_user, "album": data.album_name}
         )
     return {"erfolg": True}
 
@@ -161,19 +164,22 @@ async def sammlung_filter(
     manakosten_max: int = Query(default=None, description="Maximale Manakosten (CMC)"),
     typ: str = Query(default=None, description="Kartentyp (Creature, Instant, Sorcery, ...)"),
     suche: str = Query(default=None, description="Freitextsuche im Kartennamen"),
-    album: str = Query(default=None, description="Filter nach Albumname")
+    album: str = Query(default=None, description="Filter nach Albumname"),
+    current_user: str = Depends(get_current_user),
 ):
+    if benutzername != current_user:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     try:
         async with get_db_session() as session:
             if album:
                 res = await session.execute(
                     text("SELECT * FROM sammlung_alben WHERE benutzername = :name AND album_name = :album"),
-                    {"name": benutzername, "album": album}
+                    {"name": current_user, "album": album}
                 )
             else:
                 res = await session.execute(
                     text("SELECT * FROM sammlung_alben WHERE benutzername = :name AND album_name != 'Wunschliste'"),
-                    {"name": benutzername}
+                    {"name": current_user}
                 )
             rows = res.mappings().all()
 
@@ -254,18 +260,20 @@ async def sammlung_filter(
     "/sammlung/{benutzername}/editions",
     summary="Editionen in der Sammlung abfragen",
 )
-async def sammlung_editions(benutzername: str, album: str = Query(default=None)):
+async def sammlung_editions(benutzername: str, album: str = Query(default=None), current_user: str = Depends(get_current_user)):
+    if benutzername != current_user:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     try:
         async with get_db_session() as session:
             if album:
                 res = await session.execute(
                     text("SELECT DISTINCT karten_name FROM sammlung_alben WHERE benutzername = :name AND album_name = :album"),
-                    {"name": benutzername, "album": album}
+                    {"name": current_user, "album": album}
                 )
             else:
                 res = await session.execute(
                     text("SELECT DISTINCT karten_name FROM sammlung_alben WHERE benutzername = :name"),
-                    {"name": benutzername}
+                    {"name": current_user}
                 )
             rows = res.mappings().all()
 
@@ -396,27 +404,27 @@ async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, alb
 async def sammlung_import_csv(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    benutzername: str = Form(...),
-    album_name: str = Form("Import")
+    album_name: str = Form("Import"),
+    current_user: str = Depends(get_current_user),
 ):
     try:
         content = await file.read()
         csv_text = content.decode("utf-8-sig")
-        
+
         job_id = str(uuid.uuid4())
-        
+
         # Save job record
         async with get_db_session() as session:
             await session.execute(
                 text("INSERT INTO import_jobs (job_id, status, erstellt_am) VALUES (:id, 'processing', :now)"),
                 {"id": job_id, "now": datetime.utcnow()}
             )
-            
+
         background_tasks.add_task(
             run_csv_import_task,
             job_id,
             csv_text,
-            benutzername,
+            current_user,
             album_name
         )
         
@@ -432,7 +440,7 @@ async def sammlung_import_csv(
     "/sammlung/import-status/{job_id}",
     summary="Status eines CSV-Imports abfragen",
 )
-async def get_import_status(job_id: str):
+async def get_import_status(job_id: str, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         res = await session.execute(
             text("SELECT * FROM import_jobs WHERE job_id = :id"),
@@ -460,12 +468,14 @@ async def get_import_status(job_id: str):
     "/sammlung/{benutzername}/export-csv",
     summary="Sammlung als CSV exportieren",
 )
-async def sammlung_export_csv(benutzername: str):
+async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get_current_user)):
+    if benutzername != current_user:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     try:
         async with get_db_session() as session:
             res = await session.execute(
                 text("SELECT * FROM sammlung_alben WHERE benutzername = :name"),
-                {"name": benutzername}
+                {"name": current_user}
             )
             rows = res.mappings().all()
 
@@ -518,8 +528,10 @@ async def sammlung_export_csv(benutzername: str):
     "/sammlung/{benutzername}/refresh-prices",
     summary="Sammlungspreise live aktualisieren",
 )
-async def refresh_sammlung_prices(benutzername: str):
-    is_premium = await check_user_premium(benutzername)
+async def refresh_sammlung_prices(benutzername: str, current_user: str = Depends(get_current_user)):
+    if benutzername != current_user:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
+    is_premium = await check_user_premium(current_user)
     if not is_premium:
         return JSONResponse(
             status_code=403,
@@ -530,7 +542,7 @@ async def refresh_sammlung_prices(benutzername: str):
         async with get_db_session() as session:
             res = await session.execute(
                 text("SELECT DISTINCT karten_name FROM sammlung_alben WHERE benutzername = :name AND karten_name != '__PLACEHOLDER__'"),
-                {"name": benutzername}
+                {"name": current_user}
             )
             rows = res.mappings().all()
             

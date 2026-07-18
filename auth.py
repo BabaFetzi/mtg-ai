@@ -127,3 +127,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
             headers={"WWW-Authenticate": "Bearer"},
         )
     return username
+
+# Dependency für Endpunkte, die anonyme Nutzung weiterhin erlauben (z.B.
+# Kartensuche), aber eine mitgeschickte Identität nicht mehr blind vom
+# Client übernehmen dürfen. Gibt None zurück statt 401 zu werfen, wenn kein
+# oder ein ungültiges Token vorhanden ist -- im Gegensatz zu get_current_user.
+async def get_current_user_optional(token: str = Depends(oauth2_scheme)) -> Optional[str]:
+    if not token:
+        return None
+    payload = decode_token(token)
+    if payload is None:
+        return None
+    return payload.get("sub")

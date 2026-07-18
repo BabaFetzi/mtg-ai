@@ -2,9 +2,14 @@ import pytest
 from services.combos import detect_local_combos
 from fastapi.testclient import TestClient
 from main import app
+from auth import create_access_token
 from unittest.mock import patch, AsyncMock, MagicMock
 
 client = TestClient(app)
+
+
+def _auth_headers(username: str) -> dict:
+    return {"Authorization": f"Bearer {create_access_token({'sub': username})}"}
 
 def test_detect_local_combos_empty():
     assert detect_local_combos("") == []
@@ -58,7 +63,7 @@ async def test_scan_combos_cache_hit(mock_cache, mock_get_db, mock_check_premium
         "format": "commander"
     }
     
-    response = client.post("/api/scan_combos", json=payload)
+    response = client.post("/api/scan_combos", json=payload, headers=_auth_headers("premium_user"))
     assert response.status_code == 200
     assert response.json() == cached_payload
     

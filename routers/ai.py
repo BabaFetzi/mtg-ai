@@ -22,10 +22,11 @@ import re
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Depends
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.ai_service import model_lite
@@ -64,8 +65,8 @@ router = APIRouter(
     summary="KI Judge Regelfrage stellen",
 )
 @limiter.limit("10/minute")
-async def judge_endpoint(req: JudgeRequest, request: Request):
-    is_premium = await check_user_premium(req.benutzername)
+async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str = Depends(get_current_user)):
+    is_premium = await check_user_premium(current_user)
     if not is_premium:
         return {
             # "error": "paywall" hier ergänzt, damit das Frontend die Paywall
@@ -76,7 +77,7 @@ async def judge_endpoint(req: JudgeRequest, request: Request):
             "antwort": "PAYWALL: Der KI-Judge steht nur Premium-Mitgliedern zur Verfügung. Bitte upgrade deine Rolle im Premium-Tab!"
         }
 
-    if not check_and_increment_ai_usage(req.benutzername):
+    if not check_and_increment_ai_usage(current_user):
         return {
             "antwort": "Du hast dein monatliches KI-Anfragen-Limit erreicht. Es setzt sich zu Beginn des nächsten Monats zurück."
         }
@@ -100,30 +101,30 @@ async def judge_endpoint(req: JudgeRequest, request: Request):
 async def get_combos(
     card_name: str,
     background_tasks: BackgroundTasks,
-    benutzername: str = "",
-    format: str = "commander"
+    format: str = "commander",
+    current_user: str = Depends(get_current_user),
 ):
-    is_premium = await check_user_premium(benutzername)
+    is_premium = await check_user_premium(current_user)
     if not is_premium:
         return {
             "error": "paywall",
             "empfehlungen": [],
             "message": "Der KI-Synergie-Scanner steht nur Premium-Mitgliedern zur Verfügung."
         }
-        
+
     cache_key = f"combos:{card_name.lower().strip()}:{format.lower().strip()}"
     cached = scryfall_cache.get(cache_key)
     if cached:
         return {"status": "completed", "result": cached}
-        
+
     job_id = str(uuid.uuid4())
     async with get_db_session() as session:
         await session.execute(
             text("INSERT INTO synergy_jobs (job_id, status, result) VALUES (:job_id, 'processing', NULL)"),
             {"job_id": job_id}
         )
-        
-    background_tasks.add_task(run_combos_bg, job_id, card_name, format, cache_key, benutzername)
+
+    background_tasks.add_task(run_combos_bg, job_id, card_name, format, cache_key, current_user)
     return {"status": "processing", "job_id": job_id}
 
 # ======================================================================
@@ -134,34 +135,34 @@ async def get_combos(
     summary="Deckliste auf Kombos scannen",
 )
 @limiter.limit("5/minute")
-async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, request: Request):
-    is_premium = await check_user_premium(req.benutzername)
+async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, request: Request, current_user: str = Depends(get_current_user)):
+    is_premium = await check_user_premium(current_user)
     if not is_premium:
         return {
             "error": "paywall",
             "combos": [],
             "message": "Der KI-Synergie-Scanner steht nur Premium-Mitgliedern zur Verfügung."
         }
-    
+
     # Caching basierend auf sortiertem Deck-Hash
     parsed = parse_decklist(req.karten_liste)
     sorted_names = sorted(list({c["name"].lower().strip() for c in parsed if c.get("name")}))
     deck_str = ",".join(sorted_names)
     deck_hash = hashlib.sha256(deck_str.encode("utf-8")).hexdigest()
     cache_key = f"scan_combos:{deck_hash}:{req.format.lower().strip()}"
-    
+
     cached = scryfall_cache.get(cache_key)
     if cached:
         return cached
-        
+
     job_id = str(uuid.uuid4())
     async with get_db_session() as session:
         await session.execute(
             text("INSERT INTO synergy_jobs (job_id, status, result) VALUES (:job_id, 'processing', NULL)"),
             {"job_id": job_id}
         )
-    
-    background_tasks.add_task(run_scan_combos_bg, job_id, req.karten_liste, req.benutzername, req.format, cache_key)
+
+    background_tasks.add_task(run_scan_combos_bg, job_id, req.karten_liste, current_user, req.format, cache_key)
     return {"status": "processing", "job_id": job_id}
 
 # ======================================================================
@@ -171,7 +172,7 @@ async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, req
     "/scan_combos/status/{job_id}",
     summary="Status eines Combo-Scans abfragen",
 )
-async def get_scan_status(job_id: str):
+async def get_scan_status(job_id: str, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         res = await session.execute(
             text("SELECT status, result FROM synergy_jobs WHERE job_id = :job_id"),

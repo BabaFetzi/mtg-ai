@@ -19,9 +19,10 @@ from typing import Optional
 
 import httpx
 from pydantic import BaseModel
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
+from auth import get_current_user_optional
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached
 from services.ai_service import model_lite, KI_VERFUEGBAR
@@ -52,7 +53,7 @@ router = APIRouter(
 )
 async def suche_karte(
     search_term: str,
-    benutzername: str = Query(default="", description="Benutzername für Premium-Check"),
+    current_user: str = Depends(get_current_user_optional),
 ):
     """
     Ablauf:
@@ -64,7 +65,8 @@ async def suche_karte(
     6. Alle Prints (Auflagen) der Karte laden
     7. Ergebnis cachen und zurückgeben
     """
-    is_premium = await check_user_premium(benutzername)
+    benutzername = current_user or ""
+    is_premium = await check_user_premium(benutzername) if current_user else False
     cache_key = f"suche:{search_term.lower().strip()}:{is_premium}"
 
     # --- Cache-Hit → sofort zurückgeben ---
@@ -124,7 +126,7 @@ async def suche_karte(
     response_model=TrendsResponse,
 )
 async def get_trends(
-    benutzername: str = Query(default="", description="Benutzername für Personalisierung"),
+    current_user: str = Depends(get_current_user_optional),
 ):
     """
     Ablauf:
@@ -133,6 +135,7 @@ async def get_trends(
     3. Notfall-Fallback: Statische Backup-Daten
     """
     # --- Personalisierte Trends ---
+    benutzername = current_user or ""
     has_personalized = False
     if benutzername:
         async with get_db_session() as session:

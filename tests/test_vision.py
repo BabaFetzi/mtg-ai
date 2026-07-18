@@ -4,9 +4,12 @@ from fastapi.testclient import TestClient
 import numpy as np
 import cv2
 from main import app
+from auth import create_access_token
 import routers.vision
 
 client = TestClient(app)
+
+_TEST_TOKEN = create_access_token({"sub": "tester"})
 
 def test_vision_websocket_streaming():
     # Test dynamic display connection and camera frame forwarding
@@ -232,7 +235,7 @@ async def test_ws_vision_throttles_gemini_calls_within_window(monkeypatch):
     # Große Schwelle -> der zweite Frame landet garantiert noch im selben Drossel-Fenster.
     monkeypatch.setattr(routers.vision, "VISION_WS_MIN_GEMINI_INTERVAL_SECONDS", 60.0)
 
-    with client.websocket_connect("/api/vision/ws?benutzername=tester") as ws:
+    with client.websocket_connect(f"/api/vision/ws?token={_TEST_TOKEN}") as ws:
         ws.send_bytes(b"frame1")
         r1 = ws.receive_json()
         assert r1["cards"][0]["name"] == "Card-1"
@@ -263,7 +266,7 @@ async def test_ws_vision_calls_gemini_again_after_throttle_window_passes(monkeyp
     # Winzige Schwelle -> das asyncio.sleep(1) im Loop reicht, um sie zu überschreiten.
     monkeypatch.setattr(routers.vision, "VISION_WS_MIN_GEMINI_INTERVAL_SECONDS", 0.01)
 
-    with client.websocket_connect("/api/vision/ws?benutzername=tester") as ws:
+    with client.websocket_connect(f"/api/vision/ws?token={_TEST_TOKEN}") as ws:
         ws.send_bytes(b"frame1")
         ws.receive_json()
         ws.send_bytes(b"frame2")
@@ -281,7 +284,7 @@ async def test_ws_vision_blocked_when_monthly_minutes_limit_reached(monkeypatch)
     monkeypatch.setattr(routers.vision, "check_user_premium", AsyncMock(return_value=True))
     monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", MagicMock(return_value=False))
 
-    with client.websocket_connect("/api/vision/ws?benutzername=tester") as ws:
+    with client.websocket_connect(f"/api/vision/ws?token={_TEST_TOKEN}") as ws:
         ws.send_bytes(b"frame1")
         r1 = ws.receive_json()
 

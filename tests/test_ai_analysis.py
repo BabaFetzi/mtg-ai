@@ -3,10 +3,15 @@ from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
 import json
 from main import app
+from auth import create_access_token
 import main
 import routers.decks
 
 client = TestClient(app)
+
+
+def _auth_headers(username: str) -> dict:
+    return {"Authorization": f"Bearer {create_access_token({'sub': username})}"}
 
 @pytest.fixture
 def mock_gemini_response():
@@ -44,8 +49,8 @@ async def test_deck_analyse_paywall(mock_premium):
         "deck_liste": "1 Krenko, Mob Boss\n1 Goblin Chieftain",
         "benutzername": "testuser",
         "format": "commander"
-    })
-    
+    }, headers=_auth_headers("testuser"))
+
     assert response.status_code == 200
     data = response.json()
     assert "error" in data
@@ -72,8 +77,8 @@ async def test_deck_analyse_success(mock_premium, mock_gemini_response):
                 "deck_liste": "1 Krenko, Mob Boss\n1 Goblin Chieftain",
                 "benutzername": "testuser",
                 "format": "commander"
-            })
-            
+            }, headers=_auth_headers("testuser"))
+
             assert response.status_code == 200
             data = response.json()
             assert data["strategie"] == "Aggro-Tribal mit Goblin-Synergie"
@@ -108,8 +113,8 @@ async def test_deck_analyse_fallback_on_exception(mock_premium):
                 "deck_liste": "1 Krenko, Mob Boss",
                 "benutzername": "testuser",
                 "format": "commander"
-            })
-            
+            }, headers=_auth_headers("testuser"))
+
             assert response.status_code == 200
             data = response.json()
             assert "error" not in data

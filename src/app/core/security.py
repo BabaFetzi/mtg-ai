@@ -19,7 +19,7 @@ async def require_premium(username: str = Depends(get_current_user)) -> str:
 
 async def check_deck_limit(username: str = Depends(get_current_user)) -> str:
     """
-    Weiche Paywall: Prüft, ob ein Free-User sein Deck-Limit (max. 1 Deck) erreicht hat.
+    Weiche Paywall: Prüft, ob ein Free-User sein Deck-Limit (max. 3 Decks) erreicht hat.
     Gibt HTTP 403 Forbidden zurück, wenn das Limit überschritten wird.
     """
     is_premium = await check_user_premium(username)
@@ -30,9 +30,9 @@ async def check_deck_limit(username: str = Depends(get_current_user)) -> str:
                 {"name": username}
             )
             row = res.mappings().first()
-            if row and row["count"] >= 1:
+            if row and row["count"] >= 3:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Free-Mitglieder können maximal 1 Deck erstellen. Bitte upgrade auf Premium für unbegrenzte Decks!"
+                    detail="Limit erreicht: Kostenlose Konten können maximal 3 Decks erstellen. Bitte erwerbe Grana Pro für unbegrenzte Decks."
                 )
     return username
