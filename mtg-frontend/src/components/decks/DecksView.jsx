@@ -1385,7 +1385,14 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                             links für bessere Lesbarkeit der genauen Werte. */}
                         {(() => {
                           const chartHeight = 140;
-                          const gridSteps = 4;
+                          // Bei kleinem maxCmcCount (z.B. 3) gäbe es mit fest
+                          // 4 Schritten mehr Beschriftungs-Slots als tatsächlich
+                          // unterscheidbare Ganzzahlwerte -- das Runden der
+                          // Bruchteile erzeugte doppelte Werte auf der Achse
+                          // (z.B. "3, 2, 2, 1, 0" statt gleichmäßig steigend).
+                          // Deckelt die Schrittzahl auf maxCmcCount, damit jeder
+                          // Schritt exakt +1 ist, solange maxCmcCount klein ist.
+                          const gridSteps = Math.max(1, Math.min(4, maxCmcCount));
                           const cmcKeys = Object.keys(stats?.cmc || {}).sort((a, b) => parseInt(a) - parseInt(b));
                           return (
                             <div style={{display: 'flex', gap: '8px', marginTop: '5px'}}>
