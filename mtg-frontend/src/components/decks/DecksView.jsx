@@ -23,20 +23,39 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const [visualDeck, setVisualDeck] = useState(null);
   const [playtest, setPlaytest] = useState(null);
   const [hoveredCard, setHoveredCard] = useState(null);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [cmcFilter, setCmcFilter] = useState("all");
   const [copyStatus, setCopyStatus] = useState("");
+
+  // Preview-Position bewusst per ref direkt am DOM gesetzt, NICHT über State:
+  // ein setState pro mousemove würde die komplette DecksView bei jeder
+  // Mausbewegung neu rendern (Hover-Animation ruckelt).
+  const previewRef = useRef(null);
+  const lastMousePos = useRef({ x: 0, y: 0 });
+
+  // Callback-Ref statt Inline-Style: positioniert die Preview beim Mount an
+  // der zuletzt bekannten Mausposition, ohne den ref im Render zu lesen.
+  const setPreviewRef = (node) => {
+    previewRef.current = node;
+    if (node) {
+      node.style.left = `${lastMousePos.current.x}px`;
+      node.style.top = `${lastMousePos.current.y}px`;
+    }
+  };
 
   const handleMouseMove = (e) => {
     const cardWidth = 240;
     const cardHeight = 340;
-    const x = e.clientX + cardWidth + 25 > window.innerWidth 
-      ? e.clientX - cardWidth - 15 
+    const x = e.clientX + cardWidth + 25 > window.innerWidth
+      ? e.clientX - cardWidth - 15
       : e.clientX + 15;
-    const y = e.clientY + cardHeight + 25 > window.innerHeight 
-      ? e.clientY - cardHeight - 15 
+    const y = e.clientY + cardHeight + 25 > window.innerHeight
+      ? e.clientY - cardHeight - 15
       : e.clientY + 15;
-    setMousePos({ x, y });
+    lastMousePos.current = { x, y };
+    if (previewRef.current) {
+      previewRef.current.style.left = `${x}px`;
+      previewRef.current.style.top = `${y}px`;
+    }
   };
 
   const [laedt, setLaedt] = useState(false);
@@ -1644,10 +1663,8 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
       {/* FLOATING HOVER CARD PREVIEW */}
       {hoveredCard && (
-        <div style={{
+        <div ref={setPreviewRef} style={{
           position: 'fixed',
-          left: mousePos.x,
-          top: mousePos.y,
           zIndex: 99999,
           pointerEvents: 'none',
           animation: 'fadeIn 0.1s ease-out',
