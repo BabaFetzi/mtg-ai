@@ -187,14 +187,9 @@ function KartenSuche({ currentUser }) {
                 }}
                 className="primary-btn"
                 style={{
-                  background: 'linear-gradient(135deg, #C4923E 0%, #9E7127 100%)',
-                  border: 'none',
-                  color: 'white',
                   padding: '8px 18px',
-                  borderRadius: '20px',
                   fontSize: '0.85rem',
                   fontWeight: 600,
-                  boxShadow: '0 4px 12px rgba(196, 146, 62, 0.25)',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '6px'
@@ -207,7 +202,7 @@ function KartenSuche({ currentUser }) {
 
           {/* Quick Info Bento Grid */}
           <div className="bento-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginTop: '20px' }}>
-            <div className="bento-item" style={{ textAlign: 'left', padding: '25px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div className="bento-item" style={{ textAlign: 'left', padding: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <h4 style={{ margin: '0', fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)' }}>
                 <Icons.Sparkles style={{ color: '#C4923E' }} /> Synergie-Finder
               </h4>
@@ -216,7 +211,7 @@ function KartenSuche({ currentUser }) {
               </p>
             </div>
 
-            <div className="bento-item" style={{ textAlign: 'left', padding: '25px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div className="bento-item" style={{ textAlign: 'left', padding: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <h4 style={{ margin: '0', fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)' }}>
                 <Icons.Cart style={{ color: '#0071E3' }} /> Cardmarket-Preise
               </h4>
@@ -225,7 +220,7 @@ function KartenSuche({ currentUser }) {
               </p>
             </div>
 
-            <div className="bento-item" style={{ textAlign: 'left', padding: '25px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div className="bento-item" style={{ textAlign: 'left', padding: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <h4 style={{ margin: '0', fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)' }}>
                 <Icons.Heart style={{ color: '#FF3B30' }} /> Alben & Sammlungen
               </h4>
@@ -280,69 +275,41 @@ function KartenSuche({ currentUser }) {
                 <p style={{color: 'var(--text-main)', fontSize: '1.15rem', margin: 0, fontStyle: 'italic'}}>{karte?.text_de}</p>
               </div>
               
-              {/* Premium Cardmarket Affiliate Box */}
+              {/* Marktwert & Cardmarket-Link */}
               <div style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                padding: '24px',
-                borderRadius: '24px',
+                background: 'var(--btn-secondary)',
+                border: '1px solid var(--border-color)',
+                padding: '16px 20px',
+                borderRadius: '14px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 gap: '20px',
-                marginBottom: '40px',
-                flexWrap: 'wrap',
-                boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.15)',
-                transition: 'all 0.3s ease'
+                marginBottom: '30px',
+                flexWrap: 'wrap'
               }}>
                 <div>
                   <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
-                    <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em'}}>Marktwert</span>
+                    <span style={{fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em'}}>Marktwert</span>
                     <span style={{
-                      background: 'rgba(76, 217, 100, 0.15)', 
-                      color: '#4cd964', 
-                      fontSize: '0.7rem', 
-                      fontWeight: 700, 
-                      padding: '2px 8px', 
+                      background: 'var(--bg-card)',
+                      color: 'var(--price-color)',
+                      fontSize: '0.68rem',
+                      fontWeight: 700,
+                      padding: '2px 8px',
                       borderRadius: '12px',
                       textTransform: 'uppercase'
                     }}>Best Price</span>
                   </div>
-                  <p style={{fontSize: '2.2rem', fontWeight: 700, margin: 0, color: 'var(--text-main)', letterSpacing: '-0.02em'}}>{actPrint?.preis || "0.00"} €</p>
+                  <p style={{fontSize: '1.8rem', fontWeight: 700, margin: 0, color: 'var(--price-color)', letterSpacing: '-0.02em'}}>{actPrint?.preis || "0.00"} €</p>
                 </div>
-                
-                <a 
-                  href={getCardmarketUrl(karte?.name)} 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
+
+                <a
+                  href={getCardmarketUrl(karte?.name)}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   onClick={trackCardmarketClick}
-                  className="market-btn-premium"
-                  style={{
-                    background: 'linear-gradient(135deg, #C4923E 0%, #9E7127 100%)',
-                    color: 'white',
-                    border: 'none',
-                    padding: '16px 32px',
-                    borderRadius: '20px',
-                    fontSize: '1.1rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    textDecoration: 'none',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    boxShadow: '0 4px 15px rgba(196, 146, 62, 0.2)',
-                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-2px)';
-                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(196, 146, 62, 0.35)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'none';
-                    e.currentTarget.style.boxShadow = '0 4px 15px rgba(196, 146, 62, 0.2)';
-                  }}
+                  className="market-btn"
                 >
                    <Icons.Cart /> Auf Cardmarket kaufen
                 </a>

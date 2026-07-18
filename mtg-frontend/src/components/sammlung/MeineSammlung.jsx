@@ -669,18 +669,18 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
       {currentTab === 'dashboard' && (
         <div className="dashboard-grid">
            <div>
-              <div className="content-card" style={{padding: '40px'}}>
-                 <h3 style={{fontSize: '1.2rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px'}}>Gesamter Marktwert (Ohne Wunschliste)</h3>
-                 <div style={{display: 'flex', alignItems: 'baseline', gap: '30px', flexWrap: 'wrap', marginBottom: '30px'}}>
-                   <h1 style={{fontSize: '4.5rem', margin: 0, color: 'var(--text-main)', letterSpacing: '-0.04em'}}>{totalPortfolioWert} €</h1>
-                   <button 
-                     className="secondary-btn" 
-                     onClick={handleRefreshPrices} 
+              <div className="content-card" style={{padding: '26px'}}>
+                 <h3 style={{fontSize: '1.05rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px'}}>Gesamter Marktwert (Ohne Wunschliste)</h3>
+                 <div style={{display: 'flex', alignItems: 'baseline', gap: '20px', flexWrap: 'wrap', marginBottom: '22px'}}>
+                   <h1 style={{fontSize: '2.5rem', margin: 0, color: 'var(--price-color)', letterSpacing: '-0.03em'}}>{totalPortfolioWert} €</h1>
+                   <button
+                     className="secondary-btn"
+                     onClick={handleRefreshPrices}
                      disabled={updatingPrices}
                      style={{
-                       padding: '10px 18px', 
-                       borderRadius: '12px', 
-                       fontSize: '0.88rem', 
+                       padding: '10px 18px',
+                       borderRadius: '12px',
+                       fontSize: '0.88rem',
                        fontWeight: 600,
                        display: 'flex',
                        alignItems: 'center',
@@ -695,20 +695,20 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                      Preise aktualisieren
                    </button>
                  </div>
-                 
-                 <h4 style={{marginBottom: '15px', color: 'var(--text-muted)'}}>Wertverteilung nach Ordnern</h4>
+
+                 <h4 style={{marginBottom: '15px', color: 'var(--text-muted)', fontSize: '0.95rem'}}>Wertverteilung nach Ordnern</h4>
                  {Object.entries(portfolioAlben).map(([name, karten]) => {
                     const val = parseFloat(berechneAlbumWert(karten));
                     if(val === 0) return null;
-                    const total = parseFloat(totalPortfolioWert) || 1; 
+                    const total = parseFloat(totalPortfolioWert) || 1;
                     const pct = Math.round((val / total) * 100) || 0;
                     return (
-                      <div key={name} style={{marginBottom: '15px'}}>
-                         <div style={{display: 'flex', justifycontent: 'space-between', marginBottom: '5px', fontSize: '0.95rem'}}>
+                      <div key={name} style={{marginBottom: '12px'}}>
+                         <div style={{display: 'flex', justifycontent: 'space-between', marginBottom: '5px', fontSize: '0.85rem'}}>
                            <span style={{fontWeight: 600}}>{name}</span>
                            <span>{val.toFixed(2)} € ({pct}%)</span>
                          </div>
-                         <div style={{width: '100%', height: '8px', background: 'var(--btn-secondary)', borderRadius: '4px', overflow: 'hidden'}}>
+                         <div style={{width: '100%', height: '6px', background: 'var(--btn-secondary)', borderRadius: '3px', overflow: 'hidden'}}>
                            <div style={{width: `${pct}%`, height: '100%', background: 'var(--accent-color)'}}></div>
                          </div>
                       </div>
@@ -718,15 +718,15 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
            </div>
 
            <div>
-              <div className="content-card" style={{padding: '30px'}}>
-                 <h3 style={{marginBottom: '20px', fontSize: '1.5rem'}}>Top 10 Wertvollste Karten</h3>
+              <div className="content-card" style={{padding: '22px'}}>
+                 <h3 style={{marginBottom: '16px', fontSize: '1.3rem'}}>Top 10 Wertvollste Karten</h3>
                  <div style={{display: 'flex', flexDirection: 'column'}}>
                    {getAllCardsFlat()
                      .sort((a,b) => getPriceVal(b) - getPriceVal(a))
                      .slice(0, 10)
                      .map((k, i) => (
                      <div key={i} className="top-card-item">
-                       <span style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-muted)', width: '30px' }}># {i+1}</span>
+                       <span style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-muted)', width: '28px' }}># {i+1}</span>
                        <img 
                          src={k?.bild_url || getFallbackCardImage(k?.name, "Portfolio")} 
                          alt={k?.name || "Unbekannt"} 
@@ -749,19 +749,19 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
       )}
 
       {currentTab === 'wishlist' && (
-        <div className="content-card" style={{padding: '40px'}}>
-           <div style={{display: 'flex', justifycontent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '20px', marginBottom: '30px', flexWrap: 'wrap', gap: '20px'}}>
+        <div className="content-card" style={{padding: '28px'}}>
+           <div style={{display: 'flex', justifycontent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '18px', marginBottom: '22px', flexWrap: 'wrap', gap: '20px'}}>
               <div>
-                 <h3 style={{margin: 0, fontSize: '2rem'}}>Meine Wunschliste</h3>
+                 <h3 style={{margin: 0, fontSize: '1.7rem'}}>Meine Wunschliste</h3>
                  <p style={{margin: '5px 0 0 0'}}>Diese Karten sind von deinem Finanz-Dashboard ausgeschlossen.</p>
               </div>
               <div style={{textAlign: 'right'}}>
-                 <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em'}}>Benötigtes Budget</span>
-                 <span style={{color: 'var(--accent-color)', fontWeight: 600, fontSize: '1.6rem'}}>{totalWishlistWert} €</span>
+                 <span style={{fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em'}}>Benötigtes Budget</span>
+                 <span style={{color: 'var(--price-color)', fontWeight: 600, fontSize: '1.4rem'}}>{totalWishlistWert} €</span>
               </div>
            </div>
 
-           <div style={{display: 'flex', gap: '15px', maxWidth: '600px', marginBottom: '40px', background: 'var(--bg-main)', padding: '15px', borderRadius: '16px'}}>
+           <div style={{display: 'flex', gap: '15px', maxWidth: '600px', marginBottom: '28px', background: 'var(--bg-main)', padding: '15px', borderRadius: '16px'}}>
               <input 
                  placeholder="Kartenname eingeben (z.B. The One Ring)..." 
                  value={wishlistSearch} 
