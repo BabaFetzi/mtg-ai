@@ -509,6 +509,19 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         .then(applyAnalyseResponse)
         .catch((err) => console.error("Error loading combos in background", err));
       }
+      // Für den Statistik-Streifen über der Deckliste (Manakurve + Farbpips) --
+      // derselbe Endpunkt, den auch Analyse & Stats nutzt, hier zusätzlich schon
+      // beim Öffnen der Deckliste geladen, damit der Streifen sofort da ist.
+      if (currentTab === 'visual' && !stats && !laedt) {
+        fetch(`/api/deck/stats`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ deck_liste: selectedDeck.liste })
+        })
+        .then(res => res.json())
+        .then(data => setStats(data))
+        .catch(() => {});
+      }
     } else if (currentTab === 'stats' || currentTab === 'tuning') {
       ladeStatsUndAnalyse();
     }
@@ -540,6 +553,101 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       }
       return false;
     });
+  };
+
+  // Kompakter Statistik-Streifen über der Deckliste: Gesamtkartenzahl inkl.
+  // Format-Status, Farbidentität als Pips, Manakurve als Mini-Grafik --
+  // alles auf einen Blick, ohne extra in den Analyse & Stats-Tab wechseln
+  // zu müssen. Nutzt dieselben /api/deck/stats-Daten wie dieser Tab.
+  const renderDeckStatsStreifen = () => {
+    if (!visualDeck || visualDeck.length === 0) return null;
+
+    const totalCards = visualDeck.reduce((acc, k) => acc + (k?.count || 1), 0);
+    // Deckt sich mit der bestehenden Regelprüfung in format_engine.py:
+    // Commander verlangt EXAKT 100 Karten (inkl. Commander), alle anderen
+    // Formate mindestens 60.
+    const target = selectedFormat === 'commander' ? 100 : 60;
+    const isLegalCount = selectedFormat === 'commander' ? totalCards === target : totalCards >= target;
+    const countLabel = selectedFormat === 'commander' ? `${totalCards} / ${target}` : `${totalCards} / ${target}+`;
+
+    const colorOrder = ['W', 'U', 'B', 'R', 'G'];
+    const colorHex = { W: '#F9F6F0', U: '#0E68AB', B: '#3D3D3D', R: '#D32F2F', G: '#2E7D32' };
+    const colorCounts = stats?.colors || {};
+
+    const cmcBuckets = [0, 1, 2, 3, 4, 5, 6];
+    const cmcData = stats?.cmc || {};
+    const bucketValues = cmcBuckets.map(b => cmcData[String(b)] || 0);
+    const sevenPlus = Object.entries(cmcData).reduce((acc, [k, v]) => (parseInt(k, 10) >= 7 ? acc + v : acc), 0);
+    const allBars = [...bucketValues, sevenPlus];
+    const barLabels = ['0', '1', '2', '3', '4', '5', '6', '7+'];
+    const maxBar = Math.max(1, ...allBars);
+
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '28px',
+        background: 'var(--btn-secondary)',
+        border: '1px solid var(--border-color)',
+        borderRadius: '14px',
+        padding: '14px 20px',
+        marginBottom: '20px'
+      }}>
+        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+          <span style={{fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase'}}>Karten</span>
+          <span style={{fontSize: '1rem', fontWeight: 700, color: isLegalCount ? 'var(--price-color)' : 'var(--danger-color)'}}>
+            {countLabel}
+          </span>
+        </div>
+
+        <div style={{width: '1px', height: '24px', background: 'var(--border-color)'}} />
+
+        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+          <span style={{fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase'}}>Farben</span>
+          <div style={{display: 'flex', gap: '5px'}}>
+            {colorOrder.map(c => {
+              const present = (colorCounts[c] || 0) > 0;
+              return (
+                <span
+                  key={c}
+                  title={present ? `${c}: ${colorCounts[c]} Symbole` : `${c}: nicht im Deck`}
+                  style={{
+                    width: '16px',
+                    height: '16px',
+                    borderRadius: '50%',
+                    background: present ? colorHex[c] : 'transparent',
+                    border: present ? '1px solid rgba(0,0,0,0.15)' : '1.5px solid var(--border-color)',
+                    display: 'inline-block'
+                  }}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{width: '1px', height: '24px', background: 'var(--border-color)'}} />
+
+        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+          <span style={{fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase'}}>Kurve</span>
+          <div title="Manakurve (Manawert 0 bis 7+)" style={{display: 'flex', alignItems: 'flex-end', gap: '3px', height: '28px'}}>
+            {allBars.map((v, i) => (
+              <div
+                key={barLabels[i]}
+                title={`Manawert ${barLabels[i]}: ${v} Karten`}
+                style={{
+                  width: '7px',
+                  height: `${Math.max(2, (v / maxBar) * 28)}px`,
+                  background: 'var(--accent-color)',
+                  borderRadius: '2px',
+                  opacity: v === 0 ? 0.25 : 1
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderGruppierteKarten = () => {
@@ -1054,6 +1162,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                  <p style={{textAlign: 'center', color: 'var(--text-muted)'}}>Keine Karten gefunden. Hast du Namen im Editor eingegeben?</p>
               ) : (
                 <>
+                  {renderDeckStatsStreifen()}
                   <div style={{textAlign: 'right', marginBottom: '20px'}}>
                     <button className="primary-btn" style={{padding: '16px 30px', fontSize: '1.1rem'}} onClick={startPlaytest}>
                        <Icons.Sparkles /> Starthand Simulator starten
