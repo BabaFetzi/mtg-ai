@@ -199,12 +199,17 @@ def _real_get_db_session(session_maker):
 
 
 @pytest.mark.asyncio
+@patch('routers.decks.fetch_card_details_cached')
 @patch('routers.decks.check_user_premium')
-async def test_deck_save_and_load_roundtrip_against_real_schema(mock_check_premium, real_db_session_factory):
+async def test_deck_save_and_load_roundtrip_against_real_schema(mock_check_premium, mock_fetch, real_db_session_factory):
     """Proves the deck-save bug is fixed: create a deck via the real API,
     then load it back via the real API, against the actual `decks` table
     schema (columns `name`/`liste`) -- not a mock."""
     mock_check_premium.return_value = True
+    mock_fetch.return_value = {
+        "sol ring": {"name": "Sol Ring", "cmc": 1.0, "colors": [], "type": "Artifact", "price": "1.20"},
+        "command tower": {"name": "Command Tower", "cmc": 0.0, "colors": [], "type": "Land", "price": "0.25"},
+    }
 
     with patch('routers.decks.get_db_session', _real_get_db_session(real_db_session_factory)):
         create_payload = {
@@ -224,4 +229,7 @@ async def test_deck_save_and_load_roundtrip_against_real_schema(mock_check_premi
         assert decks[0]["name"] == "Meine Testliste"
         assert decks[0]["liste"] == "1 Sol Ring\n1 Command Tower"
         assert decks[0]["format"] == "commander"
+        assert decks[0]["card_count"] == 2
+        assert decks[0]["price"] == "1.45"
+        assert decks[0]["updated_at"] is not None
 

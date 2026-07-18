@@ -71,6 +71,16 @@ router = APIRouter(
 # ======================================================================
 # GET /api/decks/{benutzername} – Alle Decks abrufen
 # ======================================================================
+def _serialize_dt(value):
+    """SQLite liefert Timestamps über raw SQL als String, PostgreSQL/asyncpg
+    als echtes datetime-Objekt -- vereinheitlicht für die JSON-Antwort."""
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 @router.get(
     "/decks/{benutzername}",
     summary="Decks eines Benutzers abrufen",
@@ -82,7 +92,60 @@ async def get_decks(benutzername: str):
             {"name": benutzername}
         )
         rows = res.mappings().all()
-        return [{"id": r["id"], "name": r["name"], "liste": r["liste"], "format": r.get("format") or "commander"} for r in rows]
+
+    # Für die Deck-Bibliothek-Karten (Kartenzahl, Farbidentität, Mini-Kurve,
+    # Preis) reicht das rohe id/name/liste/format nicht mehr. Alle Karten-
+    # namen über ALLE Decks hinweg werden zusammen aufgelöst, statt pro Deck
+    # einzeln -- ein Cache-/Batch-Durchlauf statt N, da Karten wie Sol Ring
+    # oder Command Tower ohnehin oft in mehreren Decks vorkommen.
+    parsed_per_deck = {r["id"]: parse_decklist(r["liste"] or "") for r in rows}
+    alle_namen = {p["name"] for parsed in parsed_per_deck.values() for p in parsed}
+    scryfall_data = await fetch_card_details_cached(list(alle_namen)) if alle_namen else {}
+
+    decks = []
+    for r in rows:
+        parsed = parsed_per_deck[r["id"]]
+        card_count = sum(p["count"] for p in parsed)
+        color_counts = {"W": 0, "U": 0, "B": 0, "R": 0, "G": 0}
+        cmc_curve = {}
+        gesamt_preis = 0.0
+
+        for p in parsed:
+            info = scryfall_data.get(p["name"].lower().strip())
+            if not info:
+                continue
+            count = p["count"]
+            type_line = info.get("type", "")
+
+            if "Land" not in type_line:
+                try:
+                    cmc = int(float(info.get("cmc") or 0.0))
+                except (ValueError, TypeError):
+                    cmc = 0
+                cmc_curve[str(cmc)] = cmc_curve.get(str(cmc), 0) + count
+
+            for color in set(info.get("colors", []) or []):
+                if color in color_counts:
+                    color_counts[color] += count
+
+            try:
+                preis = float(info.get("price") or 0.0)
+            except (ValueError, TypeError):
+                preis = 0.0
+            gesamt_preis += preis * count
+
+        decks.append({
+            "id": r["id"],
+            "name": r["name"],
+            "liste": r["liste"],
+            "format": r.get("format") or "commander",
+            "card_count": card_count,
+            "colors": color_counts,
+            "cmc_curve": cmc_curve,
+            "price": f"{gesamt_preis:.2f}",
+            "updated_at": _serialize_dt(r.get("aktualisiert_am")),
+        })
+    return decks
 
 # ======================================================================
 # POST /api/decks/erstellen – Deck erstellen
@@ -106,8 +169,15 @@ async def create_deck(data: DeckErstellenReq):
                     detail="Limit erreicht: Kostenlose Konten können maximal 3 Decks erstellen. Bitte erwerbe Grana Pro für unbegrenzte Decks."
                 )
         
+        # erstellt_am/aktualisiert_am müssen hier explizit gesetzt werden --
+        # die ORM-Column-Defaults (Deck.erstellt_am/aktualisiert_am in
+        # database.py) feuern nur bei session.add(), nicht bei rohem SQL wie
+        # hier, sonst bleiben beide Spalten dauerhaft NULL.
         await session.execute(
-            text("INSERT INTO decks (benutzername, name, liste, format) VALUES (:user, :name, :list, :format)"),
+            text(
+                "INSERT INTO decks (benutzername, name, liste, format, erstellt_am, aktualisiert_am) "
+                "VALUES (:user, :name, :list, :format, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            ),
             {"user": data.benutzername, "name": data.deck_name, "list": data.deck_liste, "format": data.format or "commander"}
         )
     return {"erfolg": True}
@@ -134,6 +204,7 @@ async def update_deck(data: DeckUpdateReq):
             params["format"] = data.format
             
         if update_parts:
+            update_parts.append("aktualisiert_am = CURRENT_TIMESTAMP")
             query = f"UPDATE decks SET {', '.join(update_parts)} WHERE id = :id"
             await session.execute(text(query), params)
     return {"erfolg": True}
@@ -466,7 +537,7 @@ async def add_card_to_deck(req: DeckAddCardReq):
 
             new_liste = '\n'.join(updated_lines)
             await session.execute(
-                text("UPDATE decks SET liste = :list WHERE id = :id"),
+                text("UPDATE decks SET liste = :list, aktualisiert_am = CURRENT_TIMESTAMP WHERE id = :id"),
                 {"list": new_liste, "id": req.deck_id}
             )
 
@@ -525,7 +596,7 @@ async def remove_card_from_deck(req: DeckRemoveCardReq):
 
             new_liste = '\n'.join(updated_lines)
             await session.execute(
-                text("UPDATE decks SET liste = :list WHERE id = :id"),
+                text("UPDATE decks SET liste = :list, aktualisiert_am = CURRENT_TIMESTAMP WHERE id = :id"),
                 {"list": new_liste, "id": req.deck_id}
             )
 
