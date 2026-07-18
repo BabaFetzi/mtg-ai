@@ -1,11 +1,25 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import PremiumOverlay from '../layout/PremiumOverlay';
 import { getScryfallImage } from '../../utils/scryfallHelpers';
 import { Infinity } from 'lucide-react';
 
 function DeckAnalysis({ analyse, deckWert, userRole, onShowPremiumModal }) {
   const [hoveredCard, setHoveredCard] = useState(null);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  // Preview-Position bewusst per ref direkt am DOM gesetzt, NICHT über State:
+  // ein setState pro mousemove würde die komplette Analyse-Ansicht bei jeder
+  // Mausbewegung neu rendern (Hover-Animation ruckelt).
+  const previewRef = useRef(null);
+  const lastMousePos = useRef({ x: 0, y: 0 });
+
+  // Callback-Ref statt Inline-Style: positioniert die Preview beim Mount an
+  // der zuletzt bekannten Mausposition, ohne den ref im Render zu lesen.
+  const setPreviewRef = (node) => {
+    previewRef.current = node;
+    if (node) {
+      node.style.left = `${lastMousePos.current.x}px`;
+      node.style.top = `${lastMousePos.current.y}px`;
+    }
+  };
 
   if (!analyse) {
     return <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Keine Analyse verfügbar.</p>;
@@ -74,7 +88,13 @@ function DeckAnalysis({ analyse, deckWert, userRole, onShowPremiumModal }) {
 
   // --- 3. HOVER CARD HANDLERS ---
   const handleMouseMove = (e) => {
-    setMousePos({ x: e.clientX + 15, y: e.clientY + 15 });
+    const x = e.clientX + 15;
+    const y = e.clientY + 15;
+    lastMousePos.current = { x, y };
+    if (previewRef.current) {
+      previewRef.current.style.left = `${x}px`;
+      previewRef.current.style.top = `${y}px`;
+    }
   };
 
   const getPowerLevelLabel = (lvl) => {
@@ -368,10 +388,8 @@ function DeckAnalysis({ analyse, deckWert, userRole, onShowPremiumModal }) {
 
       {/* Floating Image Preview on Hover */}
       {hoveredCard && (
-        <div style={{
+        <div ref={setPreviewRef} style={{
           position: 'fixed',
-          left: mousePos.x,
-          top: mousePos.y,
           zIndex: 99999,
           pointerEvents: 'none',
           boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
