@@ -868,13 +868,6 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
             >
               Deck löschen
             </button>
-            <button
-              className="secondary-btn"
-              onClick={() => navigate(`/decks?tab=overview`)}
-              style={{padding: '8px 16px', borderRadius: '8px', fontSize: '0.9rem', background: 'var(--bg-card)'}}
-            >
-              ← Zurück zur Übersicht
-            </button>
           </div>
         </div>
       )}
@@ -968,10 +961,14 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                   }}
                 >
                   <button className="gallery-remove-btn" onClick={(e) => { e.stopPropagation(); loescheDeck(d.id, d.name); }}>✕</button>
-                  <div onClick={() => navigate(`/decks?tab=editor&deckId=${d.id}`)}>
+                  {/* Landet konsistent auf der Deckliste -- derselbe Standard-Tab,
+                      den auch das "Deck wechseln"-Dropdown und der Bearbeiten-
+                      Gruppen-Tab als Einstieg nutzen (Punkt 2 der Navigations-
+                      Vereinheitlichung). */}
+                  <div onClick={() => navigate(`/decks?tab=visual&deckId=${d.id}`)}>
                     <h3 style={{fontSize: '1.5rem', marginBottom: '10px'}}>{d.name}</h3>
                     <p style={{margin: 0, fontSize: '0.9rem', color: 'var(--text-muted)'}}>
-                      {isCurrentActive ? "Aktiviert • Editor öffnen" : "Öffnen & Bearbeiten"}
+                      {isCurrentActive ? "Aktiviert • Deckliste öffnen" : "Öffnen & Ansehen"}
                     </p>
                   </div>
                 </div>
@@ -985,58 +982,56 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       {currentTab !== 'overview' && !selectedDeck && (
         <div className="content-card" style={{padding: '50px', textAlign: 'center'}}>
           <h3 style={{fontSize: '1.8rem', marginBottom: '15px'}}>Kein Deck ausgewählt</h3>
-          <p style={{color: 'var(--text-muted)', marginBottom: '40px'}}>Bitte wähle ein Deck aus der Deck-Bibliothek aus oder wähle eins aus der Liste unten:</p>
-          
+
           {decks.length === 0 ? (
-            <div className="bento-grid" style={{ marginTop: '20px', textAlign: 'left' }}>
-              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Neues Deck</h4>
-                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle ein leeres Deck und füge manuell oder per KI-Tuning Karten hinzu.</p>
+            <>
+              <p style={{color: 'var(--text-muted)', marginBottom: '40px'}}>Du hast noch kein Deck -- leg direkt eins an:</p>
+              <div className="bento-grid" style={{ marginTop: '20px', textAlign: 'left' }}>
+                <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <div>
+                    <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Neues Deck</h4>
+                    <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle ein leeres Deck und füge manuell oder per KI-Tuning Karten hinzu.</p>
+                  </div>
+                  <button className="primary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
+                    Jetzt erstellen
+                  </button>
                 </div>
-                <button className="primary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
-                  Jetzt erstellen
-                </button>
-              </div>
 
-              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>CSV / Text importieren</h4>
-                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Importiere eine Kartenliste direkt aus anderen Tools oder CSV.</p>
+                <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <div>
+                    <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>CSV / Text importieren</h4>
+                    <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Importiere eine Kartenliste direkt aus anderen Tools oder CSV.</p>
+                  </div>
+                  <button className="secondary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
+                    Zur Importseite
+                  </button>
                 </div>
-                <button className="secondary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
-                  Zur Importseite
-                </button>
-              </div>
 
-              <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <div>
-                  <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Godo Warlord Vorlage</h4>
-                  <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Klone das legendäre Mono-Red Burn & Combo Commander Deck Template.</p>
+                <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <div>
+                    <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Godo Warlord Vorlage</h4>
+                    <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Klone das legendäre Mono-Red Burn & Combo Commander Deck Template.</p>
+                  </div>
+                  <button
+                    className="secondary-btn"
+                    onClick={() => kloneTemplateDeck("Godo Commander Starter", "1 Godo, Bandit Warlord\n1 Helm of the Host\n1 Sol Ring\n1 Commander's Sphere\n1 Command Tower\n35 Mountain")}
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginTop: '15px' }}
+                  >
+                    <Copy size={16} /> Vorlage klonen
+                  </button>
                 </div>
-                <button 
-                  className="secondary-btn" 
-                  onClick={() => kloneTemplateDeck("Godo Commander Starter", "1 Godo, Bandit Warlord\n1 Helm of the Host\n1 Sol Ring\n1 Commander's Sphere\n1 Command Tower\n35 Mountain")} 
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginTop: '15px' }}
-                >
-                  <Copy size={16} /> Vorlage klonen
-                </button>
               </div>
-            </div>
+            </>
           ) : (
-            <div className="gallery-grid" style={{gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))'}}>
-              {decks.map((d, idx) => (
-                <div 
-                  key={d.id || idx} 
-                  className="gallery-item" 
-                  onClick={() => navigate(`/decks?tab=${currentTab}&deckId=${d.id}`)}
-                  style={{cursor: 'pointer', padding: '35px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '130px'}}
-                >
-                  <h3 style={{fontSize: '1.5rem', marginBottom: '10px'}}>{d.name}</h3>
-                  <p style={{margin: 0, fontSize: '0.9rem', color: 'var(--text-muted)'}}>Auswählen</p>
-                </div>
-              ))}
-            </div>
+            // Bewusst KEIN zweites Deck-Auswahl-Raster hier -- die Deck-Bibliothek
+            // ist die einzige Stelle zum Durchsuchen/Anlegen/Löschen von Decks
+            // (siehe Punkt 2 der Navigations-Vereinheitlichung).
+            <>
+              <p style={{color: 'var(--text-muted)', marginBottom: '30px'}}>Wähle ein Deck aus der Deck-Bibliothek aus, um fortzufahren.</p>
+              <button className="primary-btn" onClick={() => navigate('/decks?tab=overview')}>
+                Zur Deck-Bibliothek
+              </button>
+            </>
           )}
         </div>
       )}
