@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import Icons from '../../utils/Icons';
+import { UploadCloud, CheckCircle2, XCircle, FileText } from 'lucide-react';
 
 function CSVImportExport({ currentUser, ladeSammlung }) {
   const [dragActive, setDragActive] = useState(false);
@@ -146,11 +147,11 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '40px', alignItems: 'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '24px', alignItems: 'start' }}>
       {/* Import Section */}
-      <div className="content-card" style={{ padding: '40px', margin: 0 }}>
-        <h3 style={{ fontSize: '1.8rem', marginBottom: '10px' }}>CSV Massen-Import</h3>
-        <p style={{ marginBottom: '25px' }}>Lade deine Sammlung via CSV hoch. Die Spalten müssen folgende Struktur haben: <strong>Kartenname, Anzahl, Edition, Album</strong>.</p>
+      <div className="content-card" style={{ padding: '24px', margin: 0 }}>
+        <h3 style={{ fontSize: '1.5rem', marginBottom: '8px' }}>CSV Massen-Import</h3>
+        <p style={{ marginBottom: '20px' }}>Lade deine Sammlung via CSV hoch. Die Spalten müssen folgende Struktur haben: <strong>Kartenname, Anzahl, Edition, Album</strong>.</p>
 
         {importStatus === "idle" && (
           <>
@@ -162,17 +163,17 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
               onDrop={handleDrop}
               onClick={handleButtonClick}
               style={{
-                border: dragActive ? '2px solid #0071E3' : '2px dashed var(--border-color)',
-                background: dragActive ? 'rgba(0,113,227,0.05)' : 'var(--bg-main)',
-                borderRadius: '16px',
-                padding: '40px 20px',
+                border: dragActive ? '2px solid var(--accent-color)' : '2px dashed var(--border-color)',
+                background: dragActive ? 'var(--btn-secondary)' : 'var(--bg-main)',
+                borderRadius: '14px',
+                padding: '28px 20px',
                 textAlign: 'center',
                 cursor: 'pointer',
                 transition: 'all 0.2s',
-                marginBottom: '25px'
+                marginBottom: '20px'
               }}
             >
-              <div style={{ fontSize: '3rem', marginBottom: '15px' }}>📁</div>
+              <UploadCloud size={32} style={{ color: 'var(--text-muted)', marginBottom: '10px' }} />
               <p style={{ fontWeight: 600, color: 'var(--text-main)', margin: '0 0 5px 0' }}>
                 CSV-Datei hierher ziehen oder klicken
               </p>
@@ -189,7 +190,7 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
             </div>
 
             {file && (
-              <div style={{ marginBottom: '25px' }}>
+              <div style={{ marginBottom: '20px' }}>
                 <div style={{
                   background: 'var(--btn-secondary)',
                   padding: '12px 20px',
@@ -199,7 +200,7 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
                   alignItems: 'center',
                   marginBottom: '15px'
                 }}>
-                  <span style={{ fontWeight: 600 }}>Ausgewählt: {file.name}</span>
+                  <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}><FileText size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} /> {file.name}</span>
                   <button onClick={() => { setFile(null); setPreviewRows([]); }} style={{ background: 'none', border: 'none', color: 'var(--danger-color)', cursor: 'pointer', fontWeight: 600 }}>Entfernen</button>
                 </div>
 
@@ -215,14 +216,14 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
                   />
                 </div>
 
-                <button className="primary-btn" onClick={handleImport} style={{ width: '100%', padding: '16px' }}>Import starten</button>
+                <button className="primary-btn" onClick={handleImport} style={{ width: '100%', padding: '14px' }}>Import starten</button>
               </div>
             )}
           </>
         )}
 
         {importStatus === "importing" && (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+          <div style={{ textAlign: 'center', padding: '30px 0' }}>
             <div className="spinner" style={{ marginBottom: '20px' }}></div>
             <h4 style={{ margin: '0 0 10px 0' }}>Import läuft...</h4>
             <p style={{ color: 'var(--text-muted)' }}>Wir prüfen deine Karten gegen die Scryfall-Datenbank.</p>
@@ -237,13 +238,13 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
           <div>
             <div style={{
               background: 'rgba(48, 209, 88, 0.08)',
-              border: '1px solid #30D158',
-              padding: '20px',
-              borderRadius: '16px',
+              border: '1px solid var(--price-color)',
+              padding: '16px 20px',
+              borderRadius: '14px',
               textAlign: 'center',
-              marginBottom: '25px'
+              marginBottom: '20px'
             }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>✅</div>
+              <CheckCircle2 size={30} style={{ color: 'var(--price-color)', marginBottom: '8px' }} />
               <h4 style={{ margin: '0 0 5px 0', color: 'var(--text-main)' }}>Import erfolgreich!</h4>
               <p style={{ margin: 0, color: 'var(--text-muted)' }}>
                 Es wurden <strong>{importResult.imported}</strong> Karten importiert. ({importResult.failed} fehlgeschlagen)
@@ -254,7 +255,7 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
               <div style={{
                 maxHeight: '180px',
                 overflowY: 'auto',
-                background: 'rgba(255, 69, 58, 0.05)',
+                background: 'var(--danger-bg)',
                 border: '1px solid var(--danger-color)',
                 borderRadius: '12px',
                 padding: '15px'
@@ -266,35 +267,35 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
               </div>
             )}
 
-            <button className="secondary-btn" onClick={() => setImportStatus("idle")} style={{ width: '100%', marginTop: '20px' }}>Weiteren Import starten</button>
+            <button className="secondary-btn" onClick={() => setImportStatus("idle")} style={{ width: '100%', marginTop: '16px' }}>Weiteren Import starten</button>
           </div>
         )}
 
         {importStatus === "error" && (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <div style={{ fontSize: '3rem', marginBottom: '15px' }}>❌</div>
+          <div style={{ textAlign: 'center', padding: '30px 0' }}>
+            <XCircle size={32} style={{ color: 'var(--danger-color)', marginBottom: '10px' }} />
             <h4>Import fehlgeschlagen</h4>
             <p style={{ color: 'var(--text-muted)' }}>Es gab einen Fehler bei der Übertragung.</p>
-            <button className="secondary-btn" onClick={() => setImportStatus("idle")} style={{ marginTop: '20px' }}>Erneut versuchen</button>
+            <button className="secondary-btn" onClick={() => setImportStatus("idle")} style={{ marginTop: '16px' }}>Erneut versuchen</button>
           </div>
         )}
       </div>
 
       {/* Preview / Template download column */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Template download */}
-        <div className="content-card" style={{ padding: '30px', margin: 0 }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Format-Template</h4>
-          <p style={{ fontSize: '0.9rem', marginBottom: '20px' }}>Lade dir das Standard-Template herunter, um sicherzustellen, dass dein Import reibungslos funktioniert.</p>
+        <div className="content-card" style={{ padding: '22px', margin: 0 }}>
+          <h4 style={{ margin: '0 0 8px 0' }}>Format-Template</h4>
+          <p style={{ fontSize: '0.9rem', marginBottom: '16px' }}>Lade dir das Standard-Template herunter, um sicherzustellen, dass dein Import reibungslos funktioniert.</p>
           <button className="secondary-btn" onClick={downloadTemplate} style={{ width: '100%', fontSize: '0.9rem' }}>
             Template herunterladen
           </button>
         </div>
 
         {/* Export Button */}
-        <div className="content-card" style={{ padding: '30px', margin: 0, textAlign: 'center' }}>
-          <h4 style={{ margin: '0 0 10px 0' }}>Sammlung exportieren</h4>
-          <p style={{ fontSize: '0.9rem', marginBottom: '20px' }}>Exportiere deine gesamte Sammlung als verifizierte CSV-Datei mit aktuellen Marktwerten.</p>
+        <div className="content-card" style={{ padding: '22px', margin: 0, textAlign: 'center' }}>
+          <h4 style={{ margin: '0 0 8px 0' }}>Sammlung exportieren</h4>
+          <p style={{ fontSize: '0.9rem', marginBottom: '16px' }}>Exportiere deine gesamte Sammlung als verifizierte CSV-Datei mit aktuellen Marktwerten.</p>
           <button className="primary-btn" onClick={handleExport} style={{ width: '100%', fontSize: '0.95rem' }}>
             <Icons.ExternalLink /> Jetzt Exportieren
           </button>
@@ -302,7 +303,7 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
 
         {/* Live Preview of parsing */}
         {previewRows.length > 0 && (
-          <div className="content-card" style={{ padding: '25px', margin: 0, overflowX: 'auto' }}>
+          <div className="content-card" style={{ padding: '20px', margin: 0, overflowX: 'auto' }}>
             <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Dateivorschau (Erste 10 Zeilen)</h4>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>

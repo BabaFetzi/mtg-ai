@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import usePremiumPrice from './usePremiumPrice';
 
-const CheckIcon = ({ color = "#30D158", size = 20 }) => (
+const CheckIcon = ({ color = "var(--price-color)", size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
     <polyline points="20 6 9 17 4 12" />
   </svg>
@@ -23,26 +23,26 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
       <div style={{ maxWidth: '1000px', margin: '0 auto', animation: 'fadeIn 0.6s ease' }}>
         
         {/* Header Section */}
-        <div style={{ textAlign: 'center', marginBottom: '50px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <span style={{
             background: 'var(--btn-secondary)',
             color: 'var(--text-main)',
             border: '1px solid var(--border-color)',
-            fontSize: '0.8rem',
+            fontSize: '0.75rem',
             fontWeight: 600,
-            padding: '6px 16px',
+            padding: '5px 14px',
             borderRadius: '980px',
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
             display: 'inline-block',
-            marginBottom: '15px'
+            marginBottom: '12px'
           }}>
             Tarifübersicht
           </span>
-          <h2 style={{ fontSize: '3rem', letterSpacing: '-0.03em', marginBottom: '15px' }}>
+          <h2 style={{ fontSize: '2.2rem', letterSpacing: '-0.02em', marginBottom: '10px' }}>
             Finde den passenden Tarif.
           </h2>
-          <p style={{ fontSize: '1.15rem', color: 'var(--text-muted)', maxWidth: '600px', margin: '0 auto' }}>
+          <p style={{ fontSize: '1rem', color: 'var(--text-muted)', maxWidth: '560px', margin: '0 auto' }}>
             Erweitere deine Möglichkeiten mit fortschrittlichen KI-Analysen und unbegrenzten Tools für deine Decks.
           </p>
         </div>
@@ -50,65 +50,65 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
         {/* Side-by-Side Pricing Cards */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-          gap: '30px',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+          gap: '20px',
           alignItems: 'stretch',
-          marginBottom: '50px'
+          marginBottom: '30px'
         }}>
-          
+
           {/* Card 1: Free Tier */}
-          <div 
+          <div
             style={{
               background: 'var(--bg-card)',
               border: '1px solid var(--border-color)',
-              borderRadius: '24px',
-              padding: '40px',
+              borderRadius: '18px',
+              padding: '28px',
               boxShadow: '0 8px 30px var(--shadow-color)',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'space-between',
               position: 'relative'
-            }} 
+            }}
             className="pricing-card"
           >
             <div>
-              <h3 style={{ fontSize: '1.6rem', fontWeight: 600, marginBottom: '5px' }}>Free</h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', minHeight: '44px', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '1.4rem', fontWeight: 600, marginBottom: '5px' }}>Free</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '16px' }}>
                 Kostenloser Zugang zu grundlegenden Such- und Verwaltungsfunktionen.
               </p>
-              <div style={{ marginBottom: '30px' }}>
-                <span style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--text-main)' }}>0,00 €</span>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}> / Monat</span>
+              <div style={{ marginBottom: '20px' }}>
+                <span style={{ fontSize: '2.1rem', fontWeight: 700, color: 'var(--text-main)' }}>0,00 €</span>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}> / Monat</span>
               </div>
 
               {/* Divider */}
-              <div style={{ height: '1px', background: 'var(--border-color)', marginBottom: '30px' }} />
+              <div style={{ height: '1px', background: 'var(--border-color)', marginBottom: '20px' }} />
 
               {/* Feature List */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '40px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                   <CheckIcon color="var(--text-muted)" />
-                  <span style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>Standard-Kartensuche & Scryfall-Preise</span>
-                </div>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <CheckIcon color="var(--text-muted)" />
-                  <span style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>Bis zu 3 Decks erstellen</span>
+                  <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>Standard-Kartensuche & Scryfall-Preise</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                   <CheckIcon color="var(--text-muted)" />
-                  <span style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>Sammlungsverwaltung in Alben</span>
+                  <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>Bis zu 3 Decks erstellen</span>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                  <CheckIcon color="var(--text-muted)" />
+                  <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>Sammlungsverwaltung in Alben</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', opacity: 0.6 }}>
                   <LockIcon />
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem', textDecoration: 'line-through' }}>KI-Deck-Analyse & Stärken/Schwächen</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.88rem', textDecoration: 'line-through' }}>KI-Deck-Analyse & Stärken/Schwächen</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', opacity: 0.6 }}>
                   <LockIcon />
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem', textDecoration: 'line-through' }}>KI-Synergie & Combo Scanner</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.88rem', textDecoration: 'line-through' }}>KI-Synergie & Combo Scanner</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', opacity: 0.6 }}>
                   <LockIcon />
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem', textDecoration: 'line-through' }}>24/7 Level 3 KI-Schiedsrichter Chat</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.88rem', textDecoration: 'line-through' }}>24/7 Level 3 KI-Schiedsrichter Chat</span>
                 </div>
               </div>
             </div>
@@ -134,33 +134,32 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
           </div>
 
           {/* Card 2: Pro Tier */}
-          <div 
+          <div
             style={{
               background: 'var(--bg-card)',
-              border: '2px solid #0071E3',
-              borderRadius: '24px',
-              padding: '40px',
+              border: '2px solid var(--accent-color)',
+              borderRadius: '18px',
+              padding: '28px',
               boxShadow: '0 12px 40px var(--shadow-color)',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'space-between',
               position: 'relative'
-            }} 
+            }}
             className="pricing-card highlighted"
           >
-            
+
             {/* Best Value Badge */}
             <div style={{
               position: 'absolute',
-              top: '-15px',
-              right: '25px',
-              background: 'linear-gradient(135deg, #0071E3, #30D158)',
-              color: 'white',
-              fontSize: '0.75rem',
+              top: '-13px',
+              right: '22px',
+              background: 'var(--accent-color)',
+              color: 'var(--accent-text)',
+              fontSize: '0.7rem',
               fontWeight: 700,
-              padding: '4px 14px',
+              padding: '4px 12px',
               borderRadius: '20px',
-              boxShadow: '0 4px 10px rgba(0, 113, 227, 0.25)',
               textTransform: 'uppercase',
               letterSpacing: '0.05em'
             }}>
@@ -168,43 +167,43 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
             </div>
 
             <div>
-              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, marginBottom: '5px', color: 'var(--text-main)' }}>Grana Pro</h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', minHeight: '44px', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '5px', color: 'var(--text-main)' }}>Grana Pro</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '16px' }}>
                 Voller Zugriff auf fortgeschrittene KI-Analysen, Combo-Scanner und Schiedsrichter.
               </p>
-              <div style={{ marginBottom: '30px' }}>
-                <span style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--text-main)' }}>
+              <div style={{ marginBottom: '20px' }}>
+                <span style={{ fontSize: '2.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
                   {preisLoading ? '…' : (preisText || 'Preis nicht verfügbar')}
                 </span>
                 {(preisLoading || preisText) && (
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}> / Monat</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}> / Monat</span>
                 )}
               </div>
 
               {/* Divider */}
-              <div style={{ height: '1px', background: 'var(--border-color)', marginBottom: '30px' }} />
+              <div style={{ height: '1px', background: 'var(--border-color)', marginBottom: '20px' }} />
 
               {/* Feature List */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '40px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <CheckIcon color="#30D158" />
-                  <strong style={{ color: 'var(--text-main)', fontSize: '0.95rem', fontWeight: 600 }}>Unbegrenzte Decks erstellen</strong>
+                  <CheckIcon color="var(--price-color)" />
+                  <strong style={{ color: 'var(--text-main)', fontSize: '0.88rem', fontWeight: 600 }}>Unbegrenzte Decks erstellen</strong>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <CheckIcon color="#30D158" />
-                  <span style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>KI-Deck-Analyse & Stärken/Schwächen-Profil</span>
+                  <CheckIcon color="var(--price-color)" />
+                  <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>KI-Deck-Analyse & Stärken/Schwächen-Profil</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <CheckIcon color="#30D158" />
-                  <span style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>KI-Synergie & Combo Scanner (Sammlung & Decks)</span>
+                  <CheckIcon color="var(--price-color)" />
+                  <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>KI-Synergie & Combo Scanner (Sammlung & Decks)</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <CheckIcon color="#30D158" />
-                  <span style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>24/7 Level 3 KI-Schiedsrichter (Rules Judge Chat)</span>
+                  <CheckIcon color="var(--price-color)" />
+                  <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>24/7 Level 3 KI-Schiedsrichter (Rules Judge Chat)</span>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <CheckIcon color="#30D158" />
-                  <span style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>Priorisierte Abfragen & schnelleres Scryfall-Caching</span>
+                  <CheckIcon color="var(--price-color)" />
+                  <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>Priorisierte Abfragen & schnelleres Scryfall-Caching</span>
                 </div>
               </div>
             </div>
@@ -213,8 +212,8 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
             <div style={{ marginTop: 'auto' }}>
               {userRole === 'premium' ? (
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ color: '#30D158', fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '15px' }}>
-                    <CheckIcon color="#30D158" size={22} /> Premium Aktiv
+                  <div style={{ color: 'var(--price-color)', fontSize: '1.05rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '15px' }}>
+                    <CheckIcon color="var(--price-color)" size={20} /> Premium Aktiv
                   </div>
                   <button 
                     className="secondary-btn" 
@@ -286,14 +285,12 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                     }}
                     style={{
                       width: '100%',
-                      background: 'linear-gradient(135deg, #0071E3 0%, #0077ED 100%)',
+                      background: 'var(--accent-color)',
                       border: 'none',
-                      color: 'white',
-                      padding: '16px 32px',
-                      fontSize: '1.1rem',
+                      color: 'var(--accent-text)',
+                      padding: '14px 28px',
+                      fontSize: '1.05rem',
                       fontWeight: 600,
-                      borderRadius: '980px',
-                      boxShadow: '0 8px 24px rgba(0, 113, 227, 0.25)',
                       cursor: 'pointer'
                     }}
                   >
