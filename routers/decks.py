@@ -176,14 +176,18 @@ async def deck_visualize(req: DeckAnalyseReq):
                 "count": p["count"],
                 "name": scryfall_data[name_lower]["name"],
                 "image": scryfall_data[name_lower]["image"],
-                "type": scryfall_data[name_lower]["type"]
+                "type": scryfall_data[name_lower]["type"],
+                "cmc": scryfall_data[name_lower].get("cmc", 0),
+                "price": scryfall_data[name_lower].get("price", "0.00")
             })
         else:
             karten.append({
                 "count": p["count"],
                 "name": p["name"] + " (Nicht gefunden)",
                 "image": "",
-                "type": "Unbekannt"
+                "type": "Unbekannt",
+                "cmc": 0,
+                "price": "0.00"
             })
             
     return {"karten": karten}
