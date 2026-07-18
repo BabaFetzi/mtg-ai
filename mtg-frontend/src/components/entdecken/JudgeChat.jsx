@@ -1,11 +1,28 @@
 import { useState } from 'react';
 import PremiumOverlay from '../layout/PremiumOverlay';
+import { isPaywallResponse, handlePaywallResponse } from '../../utils/paywall';
 import { Send } from 'lucide-react';
+
+const PAYWALL_CHAT_MESSAGE = "Diese Funktion ist nur für Premium-Mitglieder verfügbar. Upgrade deine Rolle im Premium-Tab, um den KI-Judge zu nutzen.";
 
 function JudgeChat({ currentUser, userRole, onShowPremiumModal }) {
   const [question, setQuestion] = useState("");
   const [chat, setChat] = useState([{role: "judge", text: "Willkommen im offiziellen Judge-Center. Bitte beschreibe die Spielsituation oder Regelfrage so genau wie möglich."}]);
   const [loading, setLoading] = useState(false);
+
+  const askJudgeApi = async (frage) => {
+    const res = await fetch(`/api/judge`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ frage, benutzername: currentUser })
+    });
+    const data = await res.json();
+    if (isPaywallResponse(data)) {
+      handlePaywallResponse(data, onShowPremiumModal);
+      setChat(prev => [...prev, {role: "judge", text: PAYWALL_CHAT_MESSAGE}]);
+    } else {
+      setChat(prev => [...prev, {role: "judge", text: data.antwort}]);
+    }
+  };
 
   const askJudge = async () => {
     if(!question.trim()) return;
@@ -13,12 +30,7 @@ function JudgeChat({ currentUser, userRole, onShowPremiumModal }) {
     setChat([...chat, {role: "user", text: userQ}]);
     setQuestion(""); setLoading(true);
     try {
-      const res = await fetch(`/api/judge`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ frage: userQ, benutzername: currentUser })
-      });
-      const data = await res.json();
-      setChat(prev => [...prev, {role: "judge", text: data.antwort}]);
+      await askJudgeApi(userQ);
     } catch {
       setChat(prev => [...prev, {role: "judge", text: "Verbindungsfehler."}]);
     } finally {
@@ -31,12 +43,7 @@ function JudgeChat({ currentUser, userRole, onShowPremiumModal }) {
     setChat(prev => [...prev, {role: "user", text: qText}]);
     setLoading(true);
     try {
-      const res = await fetch(`/api/judge`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ frage: qText, benutzername: currentUser })
-      });
-      const data = await res.json();
-      setChat(prev => [...prev, {role: "judge", text: data.antwort}]);
+      await askJudgeApi(qText);
     } catch {
       setChat(prev => [...prev, {role: "judge", text: "Verbindungsfehler."}]);
     }

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
+import { isPaywallResponse, handlePaywallResponse, DEFAULT_PAYWALL_MESSAGE } from '../../utils/paywall';
 import PremiumOverlay from '../layout/PremiumOverlay';
 import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw, Infinity } from 'lucide-react';
 import DeckEditor from './DeckEditor';
@@ -270,6 +271,11 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         })
       });
       const data = await res.json();
+      if (isPaywallResponse(data)) {
+        handlePaywallResponse(data, onShowPremiumModal);
+        setRoastData(null);
+        return;
+      }
       setRoastData(data);
     } catch (e) {
       console.error(e);
@@ -298,21 +304,38 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     setVisualDeck(null); setStats(null); setAnalyse(null); setDeckWert(null);
   };
 
+  // Normalisiert die /api/deck/analyse-Antwort, BEVOR sie in den `analyse`-State
+  // wandert: `analyse.error` wird an anderer Stelle direkt als lesbarer Text
+  // angezeigt (siehe "KI nicht erreichbar." unten) -- die rohe Paywall-Antwort
+  // {error: "paywall", message: "..."} würde dort sonst wörtlich "paywall"
+  // anzeigen statt einer verständlichen Meldung. Normalerweise wird dieser
+  // Fetch nur bei userRole === 'premium' überhaupt ausgelöst; die Paywall kann
+  // hier also nur bei einer veralteten/rassigen Rollenangabe auftreten -- dann
+  // öffnet sich zusätzlich das Upgrade-Modal.
+  const applyAnalyseResponse = (data) => {
+    if (isPaywallResponse(data)) {
+      handlePaywallResponse(data, onShowPremiumModal);
+      setAnalyse({ error: data.message || DEFAULT_PAYWALL_MESSAGE });
+      return;
+    }
+    setAnalyse(data);
+  };
+
   const ladeStatsUndAnalyse = async () => {
     if (!selectedDeck || !selectedDeck.liste || !selectedDeck.liste.trim()) {
         return;
     }
     setLaedt(true);
-    
+
     let p1;
     if (userRole === 'premium') {
-      p1 = fetch(`/api/deck/analyse`, { 
-        method: "POST", 
-        headers: {"Content-Type": "application/json"}, 
-        body: JSON.stringify({ deck_liste: selectedDeck.liste, benutzername: currentUser, format: selectedFormat }) 
+      p1 = fetch(`/api/deck/analyse`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ deck_liste: selectedDeck.liste, benutzername: currentUser, format: selectedFormat })
       })
       .then(res => res.json())
-      .then(data => setAnalyse(data))
+      .then(applyAnalyseResponse)
       .catch(() => setAnalyse({error: "KI nicht erreichbar."}));
     } else {
       setAnalyse({
@@ -452,13 +475,13 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         ladeVisuelleAnsicht(currentTab);
       }
       if (currentTab === 'visual' && userRole === 'premium' && !analyse && !laedt) {
-        fetch(`/api/deck/analyse`, { 
-          method: "POST", 
-          headers: {"Content-Type": "application/json"}, 
-          body: JSON.stringify({ deck_liste: selectedDeck.liste, benutzername: currentUser, format: selectedFormat }) 
+        fetch(`/api/deck/analyse`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ deck_liste: selectedDeck.liste, benutzername: currentUser, format: selectedFormat })
         })
         .then(res => res.json())
-        .then(data => setAnalyse(data))
+        .then(applyAnalyseResponse)
         .catch((err) => console.error("Error loading combos in background", err));
       }
     } else if (currentTab === 'stats' || currentTab === 'tuning') {

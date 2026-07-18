@@ -68,6 +68,11 @@ async def judge_endpoint(req: JudgeRequest, request: Request):
     is_premium = await check_user_premium(req.benutzername)
     if not is_premium:
         return {
+            # "error": "paywall" hier ergänzt, damit das Frontend die Paywall
+            # mit demselben Feld erkennt wie bei /deck/analyse, /deck/roast,
+            # /combos und /scan_combos -- "antwort" bleibt für bestehende
+            # Konsumenten/Tests erhalten, die den Chat-Text direkt lesen.
+            "error": "paywall",
             "antwort": "PAYWALL: Der KI-Judge steht nur Premium-Mitgliedern zur Verfügung. Bitte upgrade deine Rolle im Premium-Tab!"
         }
 

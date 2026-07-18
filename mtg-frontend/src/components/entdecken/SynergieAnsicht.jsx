@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getScryfallImage, getFallbackCardImage } from '../../utils/scryfallHelpers';
+import { isPaywallResponse, handlePaywallResponse } from '../../utils/paywall';
 import PremiumOverlay from '../layout/PremiumOverlay';
 import { RefreshCw, Swords, Zap, HelpCircle, FileText } from 'lucide-react';
 
@@ -103,9 +104,8 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
       
       const resCombos = await fetch(`/api/combos/${encodeURIComponent(dataImg.name || searchTerm)}?benutzername=${currentUser}&format=${selectedFormat}`);
       const dataCombos = await resCombos.json();
-      if (dataCombos.error === "paywall") {
-        if (onShowPremiumModal) onShowPremiumModal();
-        else alert(dataCombos.message);
+      if (isPaywallResponse(dataCombos)) {
+        handlePaywallResponse(dataCombos, onShowPremiumModal);
         setLaedt(false);
         return;
       }
@@ -149,15 +149,14 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
               body: JSON.stringify({ karten_liste: listeFürKI, benutzername: currentUser, format: selectedFormat }) 
           });
           const data = await res.json();
-          if (data && data.error) { 
-              if (data.error === "paywall") {
-                   if (onShowPremiumModal) onShowPremiumModal();
-                   else alert(data.message);
+          if (data && data.error) {
+              if (isPaywallResponse(data)) {
+                   handlePaywallResponse(data, onShowPremiumModal);
               } else {
-                   alert("KI Meldung: " + data.error); 
+                   alert("KI Meldung: " + data.error);
               }
-              setLaedt(false); 
-              return; 
+              setLaedt(false);
+              return;
           }
 
           let finalData;
