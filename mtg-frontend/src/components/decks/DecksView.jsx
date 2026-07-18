@@ -577,92 +577,141 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                 </span>
               </h4>
               
-              <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+              <div style={{display: 'flex', flexDirection: 'column'}}>
                 {karten.map((k, idx) => {
                   if(!k) return null;
                   const isUnbekannt = gruppe === 'Unbekannt' || (k.name && k.name.includes("(Nicht gefunden)"));
+                  const isLast = idx === karten.length - 1;
+                  const cmcVal = typeof k.cmc === 'number' ? k.cmc : parseFloat(k.cmc) || 0;
+                  const cmcDisplay = Number.isInteger(cmcVal) ? cmcVal : cmcVal.toFixed(1);
+                  const priceVal = parseFloat(k.price);
+                  const priceDisplay = isNaN(priceVal) ? '0.00' : priceVal.toFixed(2);
                   return (
-                    <div 
-                      key={k.name || idx} 
+                    <div
+                      key={k.name || idx}
                       className="decklist-row-item"
-                      onMouseEnter={(e) => { setHoveredCard(k); handleMouseMove(e); }}
+                      onMouseEnter={(e) => { setHoveredCard(k); handleMouseMove(e); e.currentTarget.style.background = 'var(--btn-secondary)'; }}
                       onMouseMove={handleMouseMove}
-                      onMouseLeave={() => setHoveredCard(null)}
+                      onMouseLeave={(e) => { setHoveredCard(null); e.currentTarget.style.background = 'transparent'; }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '10px 15px',
-                        borderRadius: '8px',
+                        padding: '3px 10px',
+                        minHeight: '30px',
+                        lineHeight: '1.2',
+                        boxSizing: 'border-box',
+                        borderRadius: isUnbekannt ? '6px' : 0,
                         cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        background: 'var(--bg-main)',
-                        border: isUnbekannt ? '1px dashed var(--danger-color)' : '1px solid transparent'
+                        transition: 'background 0.15s ease',
+                        background: 'transparent',
+                        border: isUnbekannt ? '1px dashed var(--danger-color)' : 'none',
+                        borderBottom: isUnbekannt ? '1px dashed var(--danger-color)' : (isLast ? 'none' : '1px solid var(--border-color)')
                       }}
                     >
-                      <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                      <div style={{display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, overflow: 'hidden'}}>
                         <span style={{
-                          fontWeight: 700, 
-                          color: isUnbekannt ? 'var(--danger-color)' : 'var(--accent-color)', 
-                          fontSize: '1rem',
-                          minWidth: '28px'
+                          fontWeight: 700,
+                          color: isUnbekannt ? 'var(--danger-color)' : 'var(--accent-color)',
+                          fontSize: '0.8rem',
+                          minWidth: '22px',
+                          flexShrink: 0
                         }}>
                           {k.count || 1}x
                         </span>
                         <span style={{
-                          fontWeight: 500, 
-                          fontSize: '1.05rem', 
+                          fontWeight: 500,
+                          fontSize: '0.88rem',
                           color: isUnbekannt ? 'var(--danger-color)' : 'var(--text-main)',
-                          textDecoration: isUnbekannt ? 'line-through' : 'none'
+                          textDecoration: isUnbekannt ? 'line-through' : 'none',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
                         }}>
                           {k.name}
                         </span>
                         {findCombosForCard(k.name).length > 0 && (
-                          <span 
+                          <span
                             title="Combo-Teil! Klicke hier, um die Combo-Erklärung zu sehen."
                             onClick={(e) => {
                               e.stopPropagation();
                               navigate(`/decks?tab=stats&deckId=${selectedDeck.id}&focus=combos`);
                             }}
                             style={{
-                              marginLeft: '8px',
+                              flexShrink: 0,
                               background: 'rgba(196, 146, 62, 0.15)',
                               border: '1px solid rgba(196, 146, 62, 0.4)',
                               color: '#C4923E',
-                              fontSize: '0.75rem',
-                              padding: '2px 8px',
-                              borderRadius: '12px',
+                              fontSize: '0.68rem',
+                              padding: '1px 6px',
+                              borderRadius: '10px',
                               fontWeight: 700,
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: '4px',
+                              gap: '3px',
                               cursor: 'pointer'
                             }}
                           >
-                            <Infinity size={12} /> Combo-Teil
+                            <Infinity size={10} /> Combo
                           </span>
                         )}
                       </div>
-                      
-                      <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+
+                      <div style={{display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0}}>
                         {isUnbekannt && (
                           <span style={{
-                            color: 'var(--danger-color)', 
-                            fontSize: '0.8rem', 
-                            background: 'rgba(255, 69, 58, 0.1)', 
-                            padding: '3px 8px', 
-                            borderRadius: '12px',
+                            color: 'var(--danger-color)',
+                            fontSize: '0.72rem',
+                            background: 'rgba(255, 69, 58, 0.1)',
+                            padding: '1px 6px',
+                            borderRadius: '10px',
                             fontWeight: 600
                           }}>
                             Nicht erkannt
                           </span>
                         )}
                         <span style={{
-                          fontSize: '0.85rem', 
-                          color: 'var(--text-muted)'
+                          fontSize: '0.72rem',
+                          color: 'var(--text-muted)',
+                          minWidth: '110px',
+                          maxWidth: '110px',
+                          textAlign: 'right',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
                         }}>
                           {k.type || "Karte"}
                         </span>
+                        {!isUnbekannt && (
+                          <>
+                            <span
+                              title="Manawert (CMC)"
+                              style={{
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                color: 'var(--text-muted)',
+                                background: 'var(--btn-secondary)',
+                                borderRadius: '4px',
+                                padding: '1px 6px',
+                                minWidth: '18px',
+                                textAlign: 'center',
+                                fontVariantNumeric: 'tabular-nums'
+                              }}
+                            >
+                              {cmcDisplay}
+                            </span>
+                            <span style={{
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              color: 'var(--price-color)',
+                              minWidth: '58px',
+                              textAlign: 'right',
+                              fontVariantNumeric: 'tabular-nums'
+                            }}>
+                              {priceDisplay} €
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
