@@ -350,7 +350,13 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                   {Object.entries(portfolioAlben).map(([name, karten]) => {
                     const cardCount = karten.length;
                     const albumWert = berechneAlbumWert(karten);
-                    const coverImg = karten[0]?.bild_url || getFallbackCardImage(null, "Cover");
+                    // Top-Karten nach Wert sortiert, statt nur der ersten Karte im
+                    // Album -- gibt einen tatsächlich aussagekräftigen Eindruck vom
+                    // Inhalt ("was ist hier wertvoll?") statt eines beliebigen Covers.
+                    const topKarten = [...karten]
+                      .filter(Boolean)
+                      .sort((a, b) => getPriceVal(b) - getPriceVal(a))
+                      .slice(0, 4);
                     const isMenuOpen = openMenuAlbum === name;
                     
                     return (
@@ -457,27 +463,63 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                           </div>
                         )}
 
-                        {/* Card Cover Image */}
+                        {/* Gestapelte Mini-Vorschau der wertvollsten Karten im Album,
+                            statt eines einzelnen, beliebig zugeschnittenen Coverbilds --
+                            zeigt auf einen Blick, was in diesem Ordner steckt. */}
                         <div style={{
                           width: '100%',
                           height: '140px',
                           borderRadius: '14px',
-                          overflow: 'hidden',
                           marginBottom: '15px',
                           position: 'relative',
-                          background: 'var(--btn-secondary)'
+                          background: 'var(--btn-secondary)',
+                          overflow: 'visible'
                         }}>
-                          <img 
-                            src={coverImg} 
-                            alt={name}
-                            style={{
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'cover',
-                              opacity: karten.length > 0 ? 0.8 : 0.15
-                            }}
-                            onError={(e) => { e.target.style.opacity = 0.15; }}
-                          />
+                          {topKarten.length === 0 ? (
+                            <div style={{
+                              position: 'absolute', inset: 0, borderRadius: '14px', overflow: 'hidden',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 600
+                            }}>
+                              Leer
+                            </div>
+                          ) : (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {topKarten.map((k, i) => {
+                                // Wertvollste Karte (i=0) mittig und obenauf; die restlichen
+                                // fächern sich abwechselnd nach rechts/links auf, mit
+                                // sinkendem z-index -- wie eine aufgefaecherte Kartenhand.
+                                const magnitude = Math.ceil(i / 2);
+                                const sign = i === 0 ? 0 : (i % 2 === 1 ? 1 : -1);
+                                const offset = sign * magnitude;
+                                return (
+                                  <img
+                                    key={k.id || i}
+                                    src={k.bild_url || getFallbackCardImage(k.name, "Karte")}
+                                    alt={k.name}
+                                    title={k.name}
+                                    style={{
+                                      position: 'absolute',
+                                      // Explizite Höhe (Kartenseitenverhältnis ~0.72), sonst
+                                      // kollabiert das Bild auf 0px Höhe, solange es noch lädt --
+                                      // das Kartenformat ist von vornherein bekannt, muss also
+                                      // nicht erst vom geladenen Bild abgeleitet werden.
+                                      width: '64px',
+                                      height: '89px',
+                                      objectFit: 'cover',
+                                      background: 'var(--bg-card)',
+                                      borderRadius: '6px',
+                                      boxShadow: '0 8px 18px rgba(0,0,0,0.35)',
+                                      border: '2px solid var(--bg-card)',
+                                      transform: `translateX(${offset * 32}px) translateY(${magnitude * 5}px) rotate(${offset * 7}deg)`,
+                                      zIndex: topKarten.length - i
+                                    }}
+                                    onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k.name, "Karte"); }}
+                                  />
+                                );
+                              })}
+                            </div>
+                          )}
                           <div style={{
                             position: 'absolute',
                             bottom: '10px',
@@ -487,7 +529,8 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                             borderRadius: '8px',
                             fontSize: '0.8rem',
                             color: 'white',
-                            fontWeight: 600
+                            fontWeight: 600,
+                            zIndex: topKarten.length + 1
                           }}>
                             {cardCount} {cardCount === 1 ? 'Karte' : 'Karten'}
                           </div>
