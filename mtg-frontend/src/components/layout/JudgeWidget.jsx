@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Icons from '../../utils/Icons';
 import PremiumOverlay from './PremiumOverlay';
+import { isPaywallResponse, handlePaywallResponse } from '../../utils/paywall';
 
 function JudgeWidget({ open, setOpen, currentUser, userRole, onShowPremiumModal }) {
   const [question, setQuestion] = useState("");
@@ -18,7 +19,12 @@ function JudgeWidget({ open, setOpen, currentUser, userRole, onShowPremiumModal 
         body: JSON.stringify({ frage: userQ, benutzername: currentUser })
       });
       const data = await res.json();
-      setChat(prev => [...prev, {role: "judge", text: data.antwort}]);
+      if (isPaywallResponse(data)) {
+        handlePaywallResponse(data, onShowPremiumModal);
+        setChat(prev => [...prev, {role: "judge", text: "Diese Funktion ist nur für Premium-Mitglieder verfügbar. Upgrade deine Rolle im Premium-Tab, um den KI-Judge zu nutzen."}]);
+      } else {
+        setChat(prev => [...prev, {role: "judge", text: data.antwort}]);
+      }
     } catch {
       setChat(prev => [...prev, {role: "judge", text: "Verbindungsfehler zum Judge-Netzwerk."}]);
     }
