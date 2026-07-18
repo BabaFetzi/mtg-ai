@@ -7,9 +7,14 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 from unittest.mock import AsyncMock, MagicMock, patch
 from main import app
+from auth import create_access_token
 from database import Base
 
 client = TestClient(app)
+
+
+def _auth_headers(username: str) -> dict:
+    return {"Authorization": f"Bearer {create_access_token({'sub': username})}"}
 
 @pytest.mark.asyncio
 @patch('routers.decks.check_user_premium')
@@ -26,10 +31,10 @@ async def test_create_deck_premium(mock_get_db, mock_check_premium):
         "deck_liste": "1 Sol Ring"
     }
     
-    response = client.post("/api/decks/erstellen", json=payload)
+    response = client.post("/api/decks/erstellen", json=payload, headers=_auth_headers("premium_user"))
     assert response.status_code == 200
     assert response.json()["erfolg"] is True
-    
+
     # Check that INSERT was executed
     assert mock_session.execute.call_count == 1
     sql = mock_session.execute.call_args[0][0].text
@@ -53,10 +58,10 @@ async def test_create_deck_free_under_limit(mock_get_db, mock_check_premium):
         "deck_liste": "1 Sol Ring"
     }
     
-    response = client.post("/api/decks/erstellen", json=payload)
+    response = client.post("/api/decks/erstellen", json=payload, headers=_auth_headers("free_user"))
     assert response.status_code == 200
     assert response.json()["erfolg"] is True
-    
+
     # Check SELECT COUNT and then INSERT were executed
     assert mock_session.execute.call_count == 2
 
@@ -78,7 +83,7 @@ async def test_create_deck_free_limit_reached(mock_get_db, mock_check_premium):
         "deck_liste": "1 Sol Ring"
     }
     
-    response = client.post("/api/decks/erstellen", json=payload)
+    response = client.post("/api/decks/erstellen", json=payload, headers=_auth_headers("free_user"))
     assert response.status_code == 403
     assert "Limit erreicht" in response.json()["detail"]
     
@@ -96,7 +101,7 @@ async def test_deck_roast_free_paywall(mock_check_premium):
         "deck_liste": "1 Sol Ring",
         "format": "commander"
     }
-    response = client.post("/api/deck/roast", json=payload)
+    response = client.post("/api/deck/roast", json=payload, headers=_auth_headers("free_user"))
     assert response.status_code == 200
     assert response.json()["error"] == "paywall"
 
@@ -116,7 +121,7 @@ async def test_deck_roast_premium_success(mock_model, mock_check_premium):
         "deck_liste": "1 Sol Ring",
         "format": "commander"
     }
-    response = client.post("/api/deck/roast", json=payload)
+    response = client.post("/api/deck/roast", json=payload, headers=_auth_headers("premium_user"))
     assert response.status_code == 200
     data = response.json()
     assert "roast" in data
@@ -218,11 +223,11 @@ async def test_deck_save_and_load_roundtrip_against_real_schema(mock_check_premi
             "deck_liste": "1 Sol Ring\n1 Command Tower",
             "format": "commander",
         }
-        create_resp = client.post("/api/decks/erstellen", json=create_payload)
+        create_resp = client.post("/api/decks/erstellen", json=create_payload, headers=_auth_headers("roundtrip_user"))
         assert create_resp.status_code == 200
         assert create_resp.json()["erfolg"] is True
 
-        load_resp = client.get("/api/decks/roundtrip_user")
+        load_resp = client.get("/api/decks/roundtrip_user", headers=_auth_headers("roundtrip_user"))
         assert load_resp.status_code == 200
         decks = load_resp.json()
         assert len(decks) == 1

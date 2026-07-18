@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist
@@ -85,67 +86,75 @@ def _serialize_dt(value):
     "/decks/{benutzername}",
     summary="Decks eines Benutzers abrufen",
 )
-async def get_decks(benutzername: str):
-    async with get_db_session() as session:
-        res = await session.execute(
-            text("SELECT * FROM decks WHERE benutzername = :name"),
-            {"name": benutzername}
-        )
-        rows = res.mappings().all()
+async def get_decks(benutzername: str, current_user: str = Depends(get_current_user)):
+    if benutzername != current_user:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf die Decks dieses Benutzers.")
+    try:
+        async with get_db_session() as session:
+            res = await session.execute(
+                text("SELECT * FROM decks WHERE benutzername = :name"),
+                {"name": current_user}
+            )
+            rows = res.mappings().all()
 
-    # Für die Deck-Bibliothek-Karten (Kartenzahl, Farbidentität, Mini-Kurve,
-    # Preis) reicht das rohe id/name/liste/format nicht mehr. Alle Karten-
-    # namen über ALLE Decks hinweg werden zusammen aufgelöst, statt pro Deck
-    # einzeln -- ein Cache-/Batch-Durchlauf statt N, da Karten wie Sol Ring
-    # oder Command Tower ohnehin oft in mehreren Decks vorkommen.
-    parsed_per_deck = {r["id"]: parse_decklist(r["liste"] or "") for r in rows}
-    alle_namen = {p["name"] for parsed in parsed_per_deck.values() for p in parsed}
-    scryfall_data = await fetch_card_details_cached(list(alle_namen)) if alle_namen else {}
+        # Für die Deck-Bibliothek-Karten (Kartenzahl, Farbidentität, Mini-Kurve,
+        # Preis) reicht das rohe id/name/liste/format nicht mehr. Alle Karten-
+        # namen über ALLE Decks hinweg werden zusammen aufgelöst, statt pro Deck
+        # einzeln -- ein Cache-/Batch-Durchlauf statt N, da Karten wie Sol Ring
+        # oder Command Tower ohnehin oft in mehreren Decks vorkommen.
+        parsed_per_deck = {r["id"]: parse_decklist(r["liste"] or "") for r in rows}
+        alle_namen = {p["name"] for parsed in parsed_per_deck.values() for p in parsed}
+        scryfall_data = await fetch_card_details_cached(list(alle_namen)) if alle_namen else {}
 
-    decks = []
-    for r in rows:
-        parsed = parsed_per_deck[r["id"]]
-        card_count = sum(p["count"] for p in parsed)
-        color_counts = {"W": 0, "U": 0, "B": 0, "R": 0, "G": 0}
-        cmc_curve = {}
-        gesamt_preis = 0.0
+        decks = []
+        for r in rows:
+            parsed = parsed_per_deck[r["id"]]
+            card_count = sum(p["count"] for p in parsed)
+            color_counts = {"W": 0, "U": 0, "B": 0, "R": 0, "G": 0}
+            cmc_curve = {}
+            gesamt_preis = 0.0
 
-        for p in parsed:
-            info = scryfall_data.get(p["name"].lower().strip())
-            if not info:
-                continue
-            count = p["count"]
-            type_line = info.get("type", "")
+            for p in parsed:
+                info = scryfall_data.get(p["name"].lower().strip())
+                if not info:
+                    continue
+                count = p["count"]
+                type_line = info.get("type", "")
 
-            if "Land" not in type_line:
+                if "Land" not in type_line:
+                    try:
+                        cmc = int(float(info.get("cmc") or 0.0))
+                    except (ValueError, TypeError):
+                        cmc = 0
+                    cmc_curve[str(cmc)] = cmc_curve.get(str(cmc), 0) + count
+
+                for color in set(info.get("colors", []) or []):
+                    if color in color_counts:
+                        color_counts[color] += count
+
                 try:
-                    cmc = int(float(info.get("cmc") or 0.0))
+                    preis = float(info.get("price") or 0.0)
                 except (ValueError, TypeError):
-                    cmc = 0
-                cmc_curve[str(cmc)] = cmc_curve.get(str(cmc), 0) + count
+                    preis = 0.0
+                gesamt_preis += preis * count
 
-            for color in set(info.get("colors", []) or []):
-                if color in color_counts:
-                    color_counts[color] += count
-
-            try:
-                preis = float(info.get("price") or 0.0)
-            except (ValueError, TypeError):
-                preis = 0.0
-            gesamt_preis += preis * count
-
-        decks.append({
-            "id": r["id"],
-            "name": r["name"],
-            "liste": r["liste"],
-            "format": r.get("format") or "commander",
-            "card_count": card_count,
-            "colors": color_counts,
-            "cmc_curve": cmc_curve,
-            "price": f"{gesamt_preis:.2f}",
-            "updated_at": _serialize_dt(r.get("aktualisiert_am")),
-        })
-    return decks
+            decks.append({
+                "id": r["id"],
+                "name": r["name"],
+                "liste": r["liste"],
+                "format": r.get("format") or "commander",
+                "card_count": card_count,
+                "colors": color_counts,
+                "cmc_curve": cmc_curve,
+                "price": f"{gesamt_preis:.2f}",
+                "updated_at": _serialize_dt(r.get("aktualisiert_am")),
+            })
+        return decks
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Fehler beim Laden der Decks für %s", current_user)
+        raise HTTPException(status_code=500, detail="Interner Serverfehler beim Laden der Decks.")
 
 # ======================================================================
 # POST /api/decks/erstellen – Deck erstellen
@@ -154,13 +163,13 @@ async def get_decks(benutzername: str):
     "/decks/erstellen",
     summary="Neues Deck erstellen",
 )
-async def create_deck(data: DeckErstellenReq):
+async def create_deck(data: DeckErstellenReq, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
-        is_premium = await check_user_premium(data.benutzername)
+        is_premium = await check_user_premium(current_user)
         if not is_premium:
             res = await session.execute(
                 text("SELECT COUNT(*) FROM decks WHERE benutzername = :name"),
-                {"name": data.benutzername}
+                {"name": current_user}
             )
             count = res.scalar()
             if count >= 3:
@@ -168,7 +177,7 @@ async def create_deck(data: DeckErstellenReq):
                     status_code=403,
                     detail="Limit erreicht: Kostenlose Konten können maximal 3 Decks erstellen. Bitte erwerbe Grana Pro für unbegrenzte Decks."
                 )
-        
+
         # erstellt_am/aktualisiert_am müssen hier explizit gesetzt werden --
         # die ORM-Column-Defaults (Deck.erstellt_am/aktualisiert_am in
         # database.py) feuern nur bei session.add(), nicht bei rohem SQL wie
@@ -178,7 +187,7 @@ async def create_deck(data: DeckErstellenReq):
                 "INSERT INTO decks (benutzername, name, liste, format, erstellt_am, aktualisiert_am) "
                 "VALUES (:user, :name, :list, :format, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ),
-            {"user": data.benutzername, "name": data.deck_name, "list": data.deck_liste, "format": data.format or "commander"}
+            {"user": current_user, "name": data.deck_name, "list": data.deck_liste, "format": data.format or "commander"}
         )
     return {"erfolg": True}
 
@@ -189,8 +198,18 @@ async def create_deck(data: DeckErstellenReq):
     "/decks/update",
     summary="Deck aktualisieren",
 )
-async def update_deck(data: DeckUpdateReq):
+async def update_deck(data: DeckUpdateReq, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT benutzername FROM decks WHERE id = :id"),
+            {"id": data.deck_id}
+        )
+        row = res.mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Deck nicht gefunden.")
+        if row["benutzername"] != current_user:
+            raise HTTPException(status_code=403, detail="Kein Zugriff auf dieses Deck.")
+
         update_parts = []
         params = {"id": data.deck_id}
         if data.deck_liste is not None:
@@ -202,7 +221,7 @@ async def update_deck(data: DeckUpdateReq):
         if data.format is not None:
             update_parts.append("format = :format")
             params["format"] = data.format
-            
+
         if update_parts:
             update_parts.append("aktualisiert_am = CURRENT_TIMESTAMP")
             query = f"UPDATE decks SET {', '.join(update_parts)} WHERE id = :id"
@@ -216,11 +235,11 @@ async def update_deck(data: DeckUpdateReq):
     "/decks/loeschen",
     summary="Deck löschen",
 )
-async def delete_deck(data: DeckLoeschenReq):
+async def delete_deck(data: DeckLoeschenReq, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         await session.execute(
             text("DELETE FROM decks WHERE id = :id AND benutzername = :user"),
-            {"id": data.deck_id, "user": data.benutzername}
+            {"id": data.deck_id, "user": current_user}
         )
     return {"erfolg": True}
 
@@ -349,21 +368,21 @@ async def deck_wert(req: DeckAnalyseReq):
     "/deck/analyse",
     summary="KI-Deck-Analyse",
 )
-async def deck_analyse(req: DeckAnalyseReq):
-    is_premium = await check_user_premium(req.benutzername)
+async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_current_user)):
+    is_premium = await check_user_premium(current_user)
     if not is_premium:
         return {
             "error": "paywall",
             "message": "Dieses Premium-Feature (KI-Deck-Analyse) steht nur Premium-Mitgliedern zur Verfügung."
         }
-        
+
     deck_hash = hashlib.sha256((req.deck_liste.strip() + ":" + req.format).encode("utf-8")).hexdigest()
     cache_key = f"deck_analysis:{deck_hash}"
     cached = scryfall_cache.get(cache_key)
     if cached:
         return cached
 
-    if model and check_and_increment_ai_usage(req.benutzername):
+    if model and check_and_increment_ai_usage(current_user):
         try:
             prompt = (
                 f"Analysiere dieses Magic the Gathering Deck auf Deutsch unter Berücksichtigung des Formats: '{req.format}'.\n"
@@ -423,21 +442,21 @@ async def deck_analyse(req: DeckAnalyseReq):
     "/deck/roast",
     summary="Humorvoller Deck-Roast",
 )
-async def deck_roast(req: DeckAnalyseReq):
-    is_premium = await check_user_premium(req.benutzername)
+async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_current_user)):
+    is_premium = await check_user_premium(current_user)
     if not is_premium:
         return {
             "error": "paywall",
             "message": "Dieses Premium-Feature (KI-Deck-Roast) steht nur Premium-Mitgliedern zur Verfügung."
         }
-        
+
     deck_hash = hashlib.sha256((req.deck_liste.strip() + ":" + req.format).encode("utf-8")).hexdigest()
     cache_key = f"deck_roast:{deck_hash}"
     cached = scryfall_cache.get(cache_key)
     if cached:
         return cached
 
-    if model_lite and check_and_increment_ai_usage(req.benutzername):
+    if model_lite and check_and_increment_ai_usage(current_user):
         try:
             prompt = (
                 f"Roaste dieses Magic the Gathering Deck auf Deutsch unter Berücksichtigung des Formats: '{req.format}'.\n"
@@ -495,16 +514,18 @@ async def validate_deck(req: ValidateDeckReq):
     "/deck/add-card",
     summary="Karte zu Deck hinzufügen",
 )
-async def add_card_to_deck(req: DeckAddCardReq):
+async def add_card_to_deck(req: DeckAddCardReq, current_user: str = Depends(get_current_user)):
     try:
         async with get_db_session() as session:
             res = await session.execute(
-                text("SELECT liste FROM decks WHERE id = :id"),
+                text("SELECT liste, benutzername FROM decks WHERE id = :id"),
                 {"id": req.deck_id}
             )
             row = res.mappings().first()
             if not row:
                 return {"erfolg": False, "error": "Deck nicht gefunden."}
+            if row["benutzername"] != current_user:
+                return {"erfolg": False, "error": "Kein Zugriff auf dieses Deck."}
 
             current_liste = row["liste"] or ""
             lines = current_liste.split('\n')
@@ -553,7 +574,7 @@ async def add_card_to_deck(req: DeckAddCardReq):
     "/deck/remove-card",
     summary="Karte aus Deck entfernen",
 )
-async def remove_card_from_deck(req: DeckRemoveCardReq):
+async def remove_card_from_deck(req: DeckRemoveCardReq, current_user: str = Depends(get_current_user)):
     try:
         async with get_db_session() as session:
             res = await session.execute(
@@ -563,6 +584,8 @@ async def remove_card_from_deck(req: DeckRemoveCardReq):
             deck = res.mappings().first()
             if not deck:
                 return {"erfolg": False, "error": "Deck nicht gefunden."}
+            if deck["benutzername"] != current_user:
+                return {"erfolg": False, "error": "Kein Zugriff auf dieses Deck."}
 
             deck_liste = deck["liste"] or ""
             lines = deck_liste.strip().split('\n') if deck_liste.strip() else []
