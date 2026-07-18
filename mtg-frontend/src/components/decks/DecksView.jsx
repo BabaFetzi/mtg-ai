@@ -8,6 +8,31 @@ import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw,
 import DeckEditor from './DeckEditor';
 import DeckAnalysis from './DeckAnalysis';
 
+// Die 8 vormals gleichwertigen Tabs zu 4 Gruppen zusammengefasst (Bearbeiten /
+// Analysieren / Extras + die alleinstehende Deck-Bibliothek), damit die
+// Tab-Leiste nicht mehr aus 8 nebeneinander konkurrierenden Buttons besteht.
+// Die `tab`-Werte (URL-Query-Param) bleiben unverändert -- nur die visuelle
+// Gruppierung ändert sich, damit bestehende Links (z.B. der focus=combos-
+// Sprung von der Deckliste zu Analyse & Stats) unangetastet bleiben.
+const TAB_GROUPS = [
+  { id: 'overview', label: 'Deck-Bibliothek', tabs: [
+      { tab: 'overview', label: 'Deck-Bibliothek' },
+    ] },
+  { id: 'edit', label: 'Bearbeiten', tabs: [
+      { tab: 'visual', label: 'Deckliste' },
+      { tab: 'editor', label: 'Text-Editor' },
+    ] },
+  { id: 'analyze', label: 'Analysieren', tabs: [
+      { tab: 'stats', label: 'Analyse & Stats' },
+      { tab: 'tuning', label: 'Tuning' },
+      { tab: 'compare', label: 'Vergleich' },
+    ] },
+  { id: 'extras', label: 'Extras', tabs: [
+      { tab: 'roast', label: 'Deck-Roast' },
+      { tab: 'proxy', label: 'Proxy-Druck' },
+    ] },
+];
+
 function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -729,17 +754,46 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       <h2>Deck-Management & Tools.</h2>
       <p style={{marginBottom: '40px', fontSize: '1.2rem', color: 'var(--text-muted)'}}>Erstelle, editiere und analysiere deine Decks mit KI-Unterstützung.</p>
 
-      {/* TABS SEGMENTED CONTROL */}
-      <div className="segmented-control" style={{marginBottom: '40px', display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '5px'}}>
-        <button className={`segment-btn ${currentTab === 'overview' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=overview${deckId ? `&deckId=${deckId}` : ''}`)}>Deck-Bibliothek</button>
-        <button className={`segment-btn ${currentTab === 'editor' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=editor${deckId ? `&deckId=${deckId}` : ''}`)}>Text-Editor</button>
-        <button className={`segment-btn ${currentTab === 'visual' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=visual${deckId ? `&deckId=${deckId}` : ''}`)}>Deckliste</button>
-        <button className={`segment-btn ${currentTab === 'stats' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=stats${deckId ? `&deckId=${deckId}` : ''}`)}>Analyse & Stats</button>
-        <button className={`segment-btn ${currentTab === 'tuning' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=tuning${deckId ? `&deckId=${deckId}` : ''}`)}>Tuning</button>
-        <button className={`segment-btn ${currentTab === 'compare' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=compare${deckId ? `&deckId=${deckId}` : ''}`)}>Vergleich</button>
-        <button className={`segment-btn ${currentTab === 'roast' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=roast${deckId ? `&deckId=${deckId}` : ''}`)}>Deck-Roast</button>
-        <button className={`segment-btn ${currentTab === 'proxy' ? 'active' : ''}`} onClick={() => navigate(`/decks?tab=proxy${deckId ? `&deckId=${deckId}` : ''}`)}>Proxy-Druck</button>
-      </div>
+      {/* TABS SEGMENTED CONTROL -- zweireihig: Gruppen oben, Untertabs der
+          aktiven Gruppe direkt darunter (immer sichtbar, kein Hover/Klick
+          zum Aufdecken nötig). */}
+      {(() => {
+        const activeGroup = TAB_GROUPS.find(g => g.tabs.some(t => t.tab === currentTab)) || TAB_GROUPS[0];
+        const hasSubTabs = activeGroup.tabs.length > 1;
+        return (
+          <>
+            <div className="segmented-control" style={{marginBottom: hasSubTabs ? '10px' : '40px', display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '5px'}}>
+              {TAB_GROUPS.map(group => (
+                <button
+                  key={group.id}
+                  className={`segment-btn ${activeGroup.id === group.id ? 'active' : ''}`}
+                  onClick={() => {
+                    if (activeGroup.id === group.id) return;
+                    const defaultTab = group.tabs[0].tab;
+                    navigate(`/decks?tab=${defaultTab}${deckId ? `&deckId=${deckId}` : ''}`);
+                  }}
+                >
+                  {group.label}
+                </button>
+              ))}
+            </div>
+            {hasSubTabs && (
+              <div className="segmented-control" style={{marginBottom: '40px', display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '5px', padding: '4px', background: 'transparent', border: 'none', boxShadow: 'none'}}>
+                {activeGroup.tabs.map(({ tab, label }) => (
+                  <button
+                    key={tab}
+                    className={`segment-btn ${currentTab === tab ? 'active' : ''}`}
+                    style={{padding: '7px 18px', fontSize: '0.85rem'}}
+                    onClick={() => navigate(`/decks?tab=${tab}${deckId ? `&deckId=${deckId}` : ''}`)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {/* ACTIVE DECK BAR */}
       {selectedDeck && currentTab !== 'overview' && (
