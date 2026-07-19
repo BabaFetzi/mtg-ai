@@ -227,9 +227,11 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
 .result-layout { display: grid; grid-template-columns: 420px 1fr; gap: 80px; align-items: start; }
 @media (max-width: 1050px) { .result-layout { grid-template-columns: 1fr; gap: 40px; } }
 .card-image-wrapper { position: sticky; top: 100px; }
-.main-card-img { width: 100%; max-width: 420px; border-radius: 4.75% / 3.5%; box-shadow: 0 25px 60px rgba(0,0,0,0.3); margin-bottom: 25px; display: block; }
+.main-card-img { width: 100%; max-width: 420px; aspect-ratio: 63 / 88; object-fit: cover; background: var(--btn-secondary); border-radius: 4.75% / 3.5%; box-shadow: 0 25px 60px rgba(0,0,0,0.3); margin-bottom: 25px; display: block; }
 .prints-scroll { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 15px; scrollbar-width: thin; }
-.print-thumb { width: 80px; flex-shrink: 0; border-radius: 4.75% / 3.5%; cursor: pointer; opacity: 0.4; transition: all 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.2); border: 2px solid transparent; }
+/* aspect-ratio + Hintergrund reservieren Platz, damit die Editionen-Leiste
+   während des Ladens nicht auf 0 Höhe kollabiert (wirkte sonst "leer"). */
+.print-thumb { width: 80px; aspect-ratio: 63 / 88; object-fit: cover; background: var(--btn-secondary); flex-shrink: 0; border-radius: 4.75% / 3.5%; cursor: pointer; opacity: 0.55; transition: all 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.2); border: 2px solid transparent; }
 .print-thumb:hover { opacity: 0.8; transform: translateY(-3px); }
 .print-thumb.active { opacity: 1; border-color: var(--accent-color); transform: translateY(-3px); }
 .info-header { border-bottom: 1px solid var(--border-color); padding-bottom: 25px; margin-bottom: 30px; }

@@ -31,6 +31,7 @@ from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.ai_service import model_lite
 from services.combos import detect_local_combos
+from services.combo_validation import validate_combos
 from services.limiter import limiter
 from services.scryfall import parse_decklist
 from services.usage_limiter import check_and_increment_ai_usage
@@ -289,15 +290,28 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 if match:
                     text_resp = match.group(0)
                 json_data = json.loads(text_resp)
-                if isinstance(json_data, dict) and "combos" in json_data and isinstance(json_data["combos"], list):
-                    for c in json_data["combos"]:
-                        c_name = c.get("name", "")
-                        if c_name and c_name.lower().strip() not in seen_names:
-                            merged_combos.append({
-                                "name": c_name,
-                                "grund": c.get("grund") or c.get("erklaerung") or "Keine Erklärung verfügbar."
-                            })
-                            seen_names.add(c_name.lower().strip())
+                if isinstance(json_data, dict) and isinstance(json_data.get("combos"), list):
+                    # KI-Combos gegen Scryfall validieren (Existenz + Format-Legalität),
+                    # bevor sie übernommen werden -- fängt halluzinierte Karten und
+                    # format-illegale Kombinationen ab.
+                    kandidaten = [
+                        {
+                            "name": c.get("name", ""),
+                            "grund": c.get("grund") or c.get("erklaerung") or "Keine Erklärung verfügbar.",
+                        }
+                        for c in json_data["combos"]
+                        if c.get("name")
+                    ]
+                    valide, verworfen = await validate_combos(kandidaten, format_name)
+                    if verworfen:
+                        logger.info(
+                            "run_scan_combos_bg: %d KI-Combo(s) als unverifizierbar verworfen",
+                            len(verworfen),
+                        )
+                    for c in valide:
+                        if c["name"].lower().strip() not in seen_names:
+                            merged_combos.append(c)
+                            seen_names.add(c["name"].lower().strip())
             except Exception:
                 logger.exception("Error calling Gemini in run_scan_combos_bg")
 
@@ -384,18 +398,26 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
                 if match:
                     text_resp = match.group(0)
                 json_data = json.loads(text_resp)
-                if isinstance(json_data, dict) and "empfehlungen" in json_data and isinstance(json_data["empfehlungen"], list):
-                    spellbook_combos = json_data["empfehlungen"]
+                if isinstance(json_data, dict) and isinstance(json_data.get("empfehlungen"), list):
+                    # KI-Ausgabe gegen echte Kartendaten (Scryfall) validieren, um
+                    # Halluzinationen abzufangen: erfundene Karten oder im Format
+                    # illegale/unmögliche Combos werden verworfen.
+                    valide, verworfen = await validate_combos(
+                        json_data["empfehlungen"], format_name, required_card=card_name
+                    )
+                    if verworfen:
+                        logger.info(
+                            "run_combos_bg: %d KI-Combo(s) als unverifizierbar verworfen",
+                            len(verworfen),
+                        )
+                    spellbook_combos = valide
             except Exception:
                 logger.exception("Error calling Gemini in run_combos_bg")
 
-        # Fallback 2: Lokale Dummy Combos falls alles fehlschlägt
-        if not spellbook_combos:
-            spellbook_combos = [
-                {"name": f"{card_name} + Sol Ring", "grund": "Generischer Mana-Boost für schnellere Aktivierung der Karte."},
-                {"name": f"{card_name} + Command Tower", "grund": "Perfekte Farbstabilität in Mehrfarbendecks."}
-            ]
-
+        # Bewusst KEIN erfundener Fallback mehr: Wenn weder Commander Spellbook noch
+        # die (validierte) KI eine echte Combo finden, ist die ehrliche Antwort eine
+        # leere Liste. Früher wurden hier Fake-"Combos" wie "<Karte> + Sol Ring"
+        # erzeugt -- also genau die Art Nicht-Combo, vor der der Prompt selbst warnt.
         result_data = {"empfehlungen": spellbook_combos}
         status_val = "completed"
         result_val = json.dumps(result_data)
