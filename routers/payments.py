@@ -48,6 +48,28 @@ def get_stripe_val(obj, key, default=None):
     except Exception:
         return getattr(obj, key, default)
 
+def _fallback_price():
+    """Operator-konfigurierbarer Anzeige-Preis, falls Stripe (noch) nicht vollständig
+    eingerichtet ist. Kein fest einprogrammierter Preis -- kommt aus der Umgebung
+    (PREMIUM_PRICE_DISPLAY z.B. '3.90', PREMIUM_CURRENCY z.B. 'CHF'/'EUR'). So zeigt
+    die Preisseite einen Preis statt 'nicht verfügbar', ohne dass ein Preis im Code
+    hartcodiert wird."""
+    raw = os.getenv("PREMIUM_PRICE_DISPLAY")
+    if not raw:
+        return None
+    try:
+        betrag = float(str(raw).replace(",", "."))
+    except (ValueError, TypeError):
+        return None
+    return {
+        "konfiguriert": True,
+        "betrag": betrag,
+        "waehrung": os.getenv("PREMIUM_CURRENCY", "CHF").upper(),
+        "intervall": os.getenv("PREMIUM_INTERVAL", "month"),
+        "quelle": "fallback",
+    }
+
+
 # ======================================================================
 # GET /api/checkout/price – Aktuellen Preis live von Stripe abfragen
 # ======================================================================
@@ -61,11 +83,16 @@ async def get_checkout_price():
     Abrechnungsintervall) für STRIPE_PRICE_ID. Damit das Frontend nie einen
     veralteten, fest einprogrammierten Preis anzeigt -- ändert sich der Preis
     in Stripe, ändert sich automatisch auch die Anzeige, ohne Deploy.
+
+    Ist Stripe nicht (vollständig) konfiguriert oder schlägt der Abruf fehl, wird
+    -- falls gesetzt -- ein operator-konfigurierbarer Fallback-Preis aus der
+    Umgebung (PREMIUM_PRICE_DISPLAY) zurückgegeben, damit die Preisseite nicht
+    "Preis nicht verfügbar" anzeigt.
     """
     stripe_key = os.getenv("STRIPE_SECRET_KEY")
     price_id = os.getenv("STRIPE_PRICE_ID")
     if not stripe_key or not price_id:
-        return {"konfiguriert": False}
+        return _fallback_price() or {"konfiguriert": False}
 
     try:
         stripe.api_key = stripe_key
@@ -81,7 +108,7 @@ async def get_checkout_price():
         }
     except Exception as e:
         logger.exception("Error fetching Stripe price")
-        return {"konfiguriert": False, "error": str(e)}
+        return _fallback_price() or {"konfiguriert": False, "error": str(e)}
 
 # ======================================================================
 # POST /api/checkout/create-session – Checkout Session erstellen

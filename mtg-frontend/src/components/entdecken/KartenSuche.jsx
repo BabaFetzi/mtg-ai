@@ -71,10 +71,14 @@ function KartenSuche({ currentUser }) {
   const speichereKarte = async (zielAlbum, zeigeAlert = true) => {
     const actP = karte?.prints?.[selectedPrintIndex];
     if(!actP) return alert("Fehler beim Speichern der Karte.");
+    // Preis der gewählten Edition, falls echt; sonst bester Marktpreis der Karte.
+    const speicherPreis = (actP.preis && actP.preis !== "N/A" && parseFloat(actP.preis) > 0)
+      ? String(actP.preis)
+      : (karte.marktwert || "0.00");
     try {
       const res = await fetch(`/api/sammlung/hinzufuegen`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: actP.preis && actP.preis !== "N/A" ? String(actP.preis) : "0.00" })
+          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: speicherPreis })
       });
       const data = await res.json();
       if (data && data.erfolg) { 
@@ -249,14 +253,13 @@ function KartenSuche({ currentUser }) {
                   <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600}}>Alle Editionen</span>
                   <div className="prints-scroll" style={{marginTop: '10px'}}>
                     {karte.prints.map((p, i) => (
-                      <img 
-                        key={i} 
-                        src={p?.bild_url || getFallbackCardImage(karte?.name, p?.set_name)} 
-                        className={`print-thumb ${i === selectedPrintIndex ? 'active' : ''} fade-in-img ${loadedImages[p?.bild_url] ? 'loaded' : ''}`} 
-                        onLoad={() => setLoadedImages(prev => ({ ...prev, [p?.bild_url]: true }))}
-                        onClick={() => setSelectedPrintIndex(i)} 
-                        title={p?.set_name} 
-                        alt="Edition" 
+                      <img
+                        key={i}
+                        src={p?.bild_url || getFallbackCardImage(karte?.name, p?.set_name)}
+                        className={`print-thumb ${i === selectedPrintIndex ? 'active' : ''}`}
+                        onClick={() => setSelectedPrintIndex(i)}
+                        title={p?.set_name}
+                        alt="Edition"
                         loading="lazy"
                         onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(karte?.name, p?.set_name); }}
                       />
@@ -301,7 +304,13 @@ function KartenSuche({ currentUser }) {
                       textTransform: 'uppercase'
                     }}>Best Price</span>
                   </div>
-                  <p style={{fontSize: '1.8rem', fontWeight: 700, margin: 0, color: 'var(--price-color)', letterSpacing: '-0.02em'}}>{actPrint?.preis || "0.00"} €</p>
+                  {/* Preis der gewählten Edition, wenn sie einen echten Preis hat;
+                      sonst der beste Marktpreis über alle Editionen (marktwert).
+                      Verhindert 0.00 €, wenn der erste/gewählte Print (z.B. eine
+                      Secret-Lair-Promo) bei Scryfall keinen EUR-Preis hat. */}
+                  <p style={{fontSize: '1.8rem', fontWeight: 700, margin: 0, color: 'var(--price-color)', letterSpacing: '-0.02em'}}>{
+                    (actPrint?.preis && parseFloat(actPrint.preis) > 0) ? actPrint.preis : (karte?.marktwert || "0.00")
+                  } €</p>
                 </div>
 
                 <a
