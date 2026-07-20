@@ -21,9 +21,10 @@ import csv
 import io
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -33,6 +34,127 @@ from sqlalchemy import text
 from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.scryfall import fetch_card_details_cached
+
+
+# ======================================================================
+# CSV-Import-Parsing (robust, testbar, ohne Netzwerk)
+# ======================================================================
+# Header-Aliase (deutsch + englisch), damit unterschiedliche Export-Tools
+# (Moxfield, Deckbox, Archidekt, deutsches/englisches Excel) funktionieren.
+_NAME_KEYS = {"kartenname", "name", "card", "card name", "cardname", "karte"}
+_COUNT_KEYS = {"anzahl", "menge", "count", "quantity", "qty", "amount"}
+_EDITION_KEYS = {"edition", "set", "set code", "set_code", "auflage"}
+_ALBUM_KEYS = {"album", "ordner", "folder", "binder", "sammlung"}
+
+# Führende Menge im Kartennamen: "1 Sol Ring", "2x Lightning Bolt", "3X Forest".
+_LEADING_QTY = re.compile(r"^\s*(\d+)\s*[xX]?\s+(.+)$")
+
+
+def _split_leading_quantity(name_cell: str):
+    """Trennt eine evtl. führende Menge vom Kartennamen ab.
+    '2x Lightning Bolt' -> (2, 'Lightning Bolt'); 'Sol Ring' -> (None, 'Sol Ring')."""
+    m = _LEADING_QTY.match(name_cell or "")
+    if m:
+        try:
+            return int(m.group(1)), m.group(2).strip()
+        except (ValueError, TypeError):
+            pass
+    return None, (name_cell or "").strip()
+
+
+def _detect_delimiter(sample: str) -> str:
+    """Erkennt das CSV-Trennzeichen (Komma/Semikolon/Tab). Deutsches Excel
+    exportiert i.d.R. semikolon-getrennt -- ohne Erkennung schlug der Import
+    dort komplett fehl."""
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        return dialect.delimiter
+    except csv.Error:
+        # Heuristik-Fallback: nimm das häufigste plausible Trennzeichen der 1. Zeile.
+        first_line = sample.splitlines()[0] if sample.splitlines() else ""
+        counts = {d: first_line.count(d) for d in [",", ";", "\t"]}
+        best = max(counts, key=counts.get)
+        return best if counts[best] > 0 else ","
+
+
+def parse_import_csv(csv_text: str, default_album: str) -> List[Dict[str, Any]]:
+    """
+    Parst eine Import-CSV robust in eine Liste von {name, anzahl, edition, album}.
+
+    Behebt die Ursachen des Import-Bugs (falsche/gleiche Karte in Alben):
+    - erkennt Komma-, Semikolon- und Tab-Trennung (deutsches Excel = Semikolon),
+    - ordnet Spalten anhand der Header-Namen zu (statt fester Positionen), mit
+      positionsbasiertem Fallback [Name, Anzahl, Edition, Album],
+    - entfernt eine führende Menge aus dem Kartennamen ('1 Sol Ring').
+
+    Reine Funktion (kein Netzwerk) -> unittestbar.
+    """
+    if not csv_text or not csv_text.strip():
+        return []
+
+    delimiter = _detect_delimiter(csv_text[:4096])
+    reader = csv.reader(io.StringIO(csv_text), delimiter=delimiter)
+    rows = [r for r in reader if any((c or "").strip() for c in r)]
+    if not rows:
+        return []
+
+    # Spalten-Mapping über Header bestimmen, sonst Standard-Positionen.
+    header = [(c or "").strip().lower() for c in rows[0]]
+    has_header = any(h in _NAME_KEYS for h in header)
+    col = {"name": 0, "count": 1, "edition": 2, "album": 3}
+    if has_header:
+        col = {"name": None, "count": None, "edition": None, "album": None}
+        for idx, h in enumerate(header):
+            if col["name"] is None and h in _NAME_KEYS:
+                col["name"] = idx
+            elif col["count"] is None and h in _COUNT_KEYS:
+                col["count"] = idx
+            elif col["edition"] is None and h in _EDITION_KEYS:
+                col["edition"] = idx
+            elif col["album"] is None and h in _ALBUM_KEYS:
+                col["album"] = idx
+        if col["name"] is None:
+            col["name"] = 0
+        data_rows = rows[1:]
+    else:
+        data_rows = rows
+
+    def _cell(row, key):
+        idx = col.get(key)
+        if idx is None or idx >= len(row):
+            return ""
+        return (row[idx] or "").strip()
+
+    parsed = []
+    for row in data_rows:
+        raw_name = _cell(row, "name")
+        if not raw_name:
+            continue
+
+        leading_qty, name = _split_leading_quantity(raw_name)
+        if not name:
+            continue
+
+        count_cell = _cell(row, "count")
+        anzahl = None
+        if count_cell:
+            try:
+                anzahl = int(float(count_cell.replace(",", ".")))
+            except (ValueError, TypeError):
+                anzahl = None
+        if anzahl is None:
+            anzahl = leading_qty if leading_qty is not None else 1
+        if anzahl < 1:
+            anzahl = 1
+
+        album = _cell(row, "album") or default_album
+        parsed.append({
+            "name": name,
+            "anzahl": anzahl,
+            "edition": _cell(row, "edition"),
+            "album": album,
+        })
+    return parsed
 
 logger = logging.getLogger(__name__)
 
@@ -303,41 +425,24 @@ async def sammlung_editions(benutzername: str, album: str = Query(default=None),
 # ======================================================================
 async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, album_name: str):
     try:
-        reader = csv.reader(io.StringIO(csv_text))
         rows_to_insert = []
         imported = 0
         failed = 0
         errors_list = []
         
-        # 1. Parse rows and collect card names
+        # 1. Robust parsen (Delimiter-Erkennung, Header-Spalten-Mapping, Mengen-Strip)
+        parsed_entries = parse_import_csv(csv_text, album_name)
         rows_parsed = []
         unique_card_names = set()
-        
-        for row_num, row in enumerate(reader, start=1):
-            if not row or (row_num == 1 and row[0].strip().lower() in ["kartenname", "name", "card"]):
-                continue
-                
-            karten_name = row[0].strip() if len(row) > 0 else ""
-            try:
-                anzahl = int(row[1].strip()) if len(row) > 1 and row[1].strip() else 1
-            except ValueError:
-                anzahl = 1
-            csv_edition = row[2].strip() if len(row) > 2 else ""
-            csv_album = row[3].strip() if len(row) > 3 else album_name
-            
-            if not karten_name:
-                failed += 1
-                errors_list.append(f"Zeile {row_num}: Leerer Kartenname.")
-                continue
-                
+        for i, entry in enumerate(parsed_entries, start=1):
             rows_parsed.append({
-                "row_num": row_num,
-                "name": karten_name,
-                "anzahl": anzahl,
-                "album": csv_album or album_name
+                "row_num": i,
+                "name": entry["name"],
+                "anzahl": entry["anzahl"],
+                "album": entry["album"],
             })
-            unique_card_names.add(karten_name)
-            
+            unique_card_names.add(entry["name"])
+
         # 2. Batch-fetch Scryfall data
         scryfall_data = await fetch_card_details_cached(list(unique_card_names))
         
