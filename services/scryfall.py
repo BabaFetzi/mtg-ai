@@ -148,10 +148,18 @@ def _extract_card_info(card_data: dict) -> Dict[str, Any]:
         or "0.00"
     )
 
+    # Oracle-Text (Regeltext) -- für DFCs/Split-Karten beide Seiten zusammenführen.
+    oracle_text = card_data.get("oracle_text", "")
+    if not oracle_text and "card_faces" in card_data:
+        oracle_text = "\n".join(
+            face.get("oracle_text", "") for face in card_data["card_faces"]
+        ).strip()
+
     return {
         "name": card_data["name"],
         "image": img,
         "type": card_data.get("type_line", ""),
+        "oracle_text": oracle_text,
         "cmc": card_data.get("cmc", 0.0),
         "colors": card_data.get("colors", []),
         "color_identity": card_data.get("color_identity", []),
@@ -197,10 +205,16 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
     uncached_names: List[str] = []
 
     # --- Phase 1: Cache-Lookup ---
+    # Ein gecachter Eintrag ohne "oracle_text" stammt aus einer älteren Version
+    # (vor der Synergie-Erkennung) und gilt als unvollständig -> neu laden, damit
+    # der Regeltext für die Synergie-Analyse verfügbar ist.
+    def _complete(entry) -> bool:
+        return bool(entry) and "oracle_text" in entry
+
     for name in names:
         cache_key = f"card:{name.lower().strip()}"
         cached = scryfall_cache.get(cache_key)
-        if cached:
+        if _complete(cached):
             scryfall_data[name.lower().strip()] = cached
         else:
             # DFC: Auch unter dem Vorderseiten-Namen suchen
@@ -208,7 +222,7 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
             if "//" in name:
                 front_key = name.split("//")[0].strip()
             cached_front = scryfall_cache.get(f"card:{front_key.lower().strip()}")
-            if cached_front:
+            if _complete(cached_front):
                 scryfall_data[name.lower().strip()] = cached_front
                 scryfall_data[front_key.lower().strip()] = cached_front
             else:

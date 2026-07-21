@@ -33,6 +33,7 @@ from services.ai_service import model_lite
 from services.combos import detect_local_combos
 from services.limiter import limiter
 from services.scryfall import parse_decklist
+from services.synergies import detect_synergies
 from services.usage_limiter import check_and_increment_ai_usage
 
 logger = logging.getLogger(__name__)
@@ -149,10 +150,10 @@ async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, req
     sorted_names = sorted(list({c["name"].lower().strip() for c in parsed if c.get("name")}))
     deck_str = ",".join(sorted_names)
     deck_hash = hashlib.sha256(deck_str.encode("utf-8")).hexdigest()
-    # v2: Cache-Version angehoben, seit der Scan zusätzlich "Fast-Combos"
-    # (almostIncluded) liefert -- so werden alte, leere Ergebnisse nicht
-    # weiterverwendet.
-    cache_key = f"scan_combos:v2:{deck_hash}:{req.format.lower().strip()}"
+    # v3: Cache-Version angehoben, seit der Scan zusätzlich "Fast-Combos"
+    # (almostIncluded) UND regelbasierte Synergien liefert -- so werden alte,
+    # leere/unvollständige Ergebnisse nicht weiterverwendet.
+    cache_key = f"scan_combos:v3:{deck_hash}:{req.format.lower().strip()}"
 
     cached = scryfall_cache.get(cache_key)
     if cached:
@@ -344,6 +345,34 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                             seen_names.add(c_name.lower().strip())
             except Exception:
                 logger.exception("Error calling Gemini in run_scan_combos_bg")
+
+        # 5. Regelbasierte Synergien ergänzen (offline, ohne KI). Erkennt Karten-
+        #    Pakete, die sich mechanisch verstärken (Token-Engine, Aristocrats/
+        #    Drain, +1/+1-Counter, ...) -- auch wenn gar keine definierte Combo
+        #    vorliegt. Nutzt die Oracle-Texte aus scryfall_data.
+        try:
+            synergy_input = []
+            seen_syn = set()
+            for n in card_names:
+                info = scryfall_data.get(n.lower().strip())
+                if info and info.get("name") and info["name"].lower() not in seen_syn:
+                    seen_syn.add(info["name"].lower())
+                    synergy_input.append({
+                        "name": info["name"],
+                        "oracle_text": info.get("oracle_text", ""),
+                        "type": info.get("type", ""),
+                    })
+            for s in detect_synergies(synergy_input):
+                cards = s["cards"][:5]
+                combo_name = " + ".join(cards)
+                extra = "" if len(s["cards"]) <= 5 else f" (+{len(s['cards']) - 5} weitere Karten)"
+                grund = f"🔗 SYNERGIE ({s['theme']}): {s['beschreibung']}{extra}"
+                theme_key = f"synergie::{s['theme']}".lower()
+                if theme_key not in seen_names:
+                    merged_combos.append({"name": combo_name, "grund": grund})
+                    seen_names.add(theme_key)
+        except Exception:
+            logger.exception("Error detecting synergies in run_scan_combos_bg")
 
         result_data = {"combos": merged_combos}
         status_val = "completed"
