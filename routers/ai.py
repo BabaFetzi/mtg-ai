@@ -149,7 +149,10 @@ async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, req
     sorted_names = sorted(list({c["name"].lower().strip() for c in parsed if c.get("name")}))
     deck_str = ",".join(sorted_names)
     deck_hash = hashlib.sha256(deck_str.encode("utf-8")).hexdigest()
-    cache_key = f"scan_combos:{deck_hash}:{req.format.lower().strip()}"
+    # v2: Cache-Version angehoben, seit der Scan zusätzlich "Fast-Combos"
+    # (almostIncluded) liefert -- so werden alte, leere Ergebnisse nicht
+    # weiterverwendet.
+    cache_key = f"scan_combos:v2:{deck_hash}:{req.format.lower().strip()}"
 
     cached = scryfall_cache.get(cache_key)
     if cached:
@@ -227,7 +230,11 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
         
         # 2. Commander Spellbook API scan
         spellbook_combos = []
-        
+        # "Fast-Combos": Combos, bei denen nur EINE Karte im Deck/Album fehlt.
+        # Machen aus dem Scanner einen Deckbau-Helfer ("dir fehlt nur noch X").
+        fast_combos = []
+        owned_lower = {n.lower().strip() for n in card_names}
+
         if card_names:
             try:
                 payload = {"main": [{"card": name} for name in card_names]}
@@ -241,20 +248,50 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                         is_legal = legalities.get(format_name.lower().strip(), True)
                         if not is_legal:
                             continue
-                        
+
                         uses = [u["card"]["name"] for u in combo.get("uses", []) if "card" in u]
                         combo_name = " + ".join(uses)
-                        
+
                         produces = [p["feature"]["name"] for p in combo.get("produces", []) if "feature" in p]
                         produces_str = ", ".join(produces)
-                        
+
                         desc = combo.get("description", "")
                         grund = f"Ergebnis: {produces_str}. Ablauf: {desc}" if produces_str else desc
-                        
+
                         spellbook_combos.append({
                             "name": combo_name,
                             "grund": grund
                         })
+
+                    # --- Fast-Combos aus "almostIncluded" (genau 1 fehlende Karte) ---
+                    # Nach Beliebtheit sortieren, damit die relevantesten oben stehen.
+                    almost = results.get("almostIncluded", [])
+                    almost.sort(key=lambda c: c.get("popularity") or 0, reverse=True)
+                    for combo in almost:
+                        legalities = combo.get("legalities", {})
+                        is_legal = legalities.get(format_name.lower().strip(), True)
+                        if not is_legal:
+                            continue
+
+                        uses = [u["card"]["name"] for u in combo.get("uses", []) if "card" in u]
+                        missing = [n for n in uses if n.lower().strip() not in owned_lower]
+                        # Nur "fast fertige" Combos: es darf genau eine Karte fehlen.
+                        if len(missing) != 1:
+                            continue
+
+                        combo_name = " + ".join(uses)
+                        produces = [p["feature"]["name"] for p in combo.get("produces", []) if "feature" in p]
+                        produces_str = ", ".join(produces)
+
+                        grund = f"⚡ FAST-COMBO – dir fehlt nur noch: {missing[0]}."
+                        if produces_str:
+                            grund += f" Ergebnis: {produces_str}."
+
+                        fast_combos.append({"name": combo_name, "grund": grund})
+
+                        # Auf die relevantesten begrenzen, um die Liste nicht zu fluten.
+                        if len(fast_combos) >= 12:
+                            break
             except Exception:
                 logger.exception("Error calling Spellbook API in run_scan_combos_bg")
 
@@ -263,6 +300,13 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
         seen_names = {c["name"].lower().strip() for c in local_combos}
         
         for c in spellbook_combos:
+            c_name = c["name"]
+            if c_name.lower().strip() not in seen_names:
+                merged_combos.append(c)
+                seen_names.add(c_name.lower().strip())
+
+        # Fast-Combos ans Ende anhängen (nach den vollständigen Combos)
+        for c in fast_combos:
             c_name = c["name"]
             if c_name.lower().strip() not in seen_names:
                 merged_combos.append(c)
