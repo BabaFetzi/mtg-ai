@@ -1,0 +1,55 @@
+# ============================================================================
+# docker-compose.infra.yml – NUR die Infrastruktur-Container für Grana.
+#
+# Die App selbst (FastAPI-Backend + gebautes Frontend) läuft NICHT hier drin,
+# sondern nativ auf dem Server (siehe start.sh). Dieses Compose-File startet
+# ausschließlich die zwei zustandsbehafteten Dienste, die das Backend braucht:
+#
+#   * postgres  – Produktions-Datenbank (ersetzt die lokale SQLite-Datei)
+#   * redis     – Rate-Limiting (services/limiter.py) & Usage-Limiter
+#                 (services/usage_limiter.py) & Cache (services/cache.py)
+#
+# Daten liegen in benannten Volumes und überleben Neustarts.
+# Ports werden nur an localhost (127.0.0.1) gebunden -- die Dienste sind
+# damit NICHT von außen erreichbar, nur für das lokal laufende Backend.
+# ============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: grana-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-grana}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD muss in .env gesetzt sein}
+      POSTGRES_DB: ${POSTGRES_DB:-grana}
+    ports:
+      # Nur an localhost binden -- kein Zugriff aus dem Netz.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - grana_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-grana} -d ${POSTGRES_DB:-grana}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: grana-redis
+    restart: unless-stopped
+    # AOF-Persistenz an, damit Usage-Zähler einen Neustart überleben.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - grana_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  grana_pgdata:
+  grana_redisdata:
