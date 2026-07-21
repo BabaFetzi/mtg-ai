@@ -7,6 +7,7 @@ Kapselt alle Interaktionen mit der Scryfall API:
 - parse_decklist(): Parst Decklisten-Strings in strukturierte Daten
 """
 
+import asyncio
 import logging
 import re
 import urllib.parse
@@ -17,6 +18,49 @@ import httpx
 from services.cache import scryfall_cache
 
 logger = logging.getLogger(__name__)
+
+# ======================================================================
+# Scryfall-Client-Konfiguration
+# ----------------------------------------------------------------------
+# Scryfall verlangt einen aussagekräftigen `User-Agent` und einen
+# `Accept`-Header. Fehlen sie, drosselt oder blockt die API die Anfragen
+# (HTTP 429/403). Ausserdem bittet Scryfall um max. ~10 Anfragen/Sekunde --
+# deshalb eine kleine Pause zwischen den Einzelabrufen im Fallback-Loop.
+# ======================================================================
+SCRYFALL_HEADERS = {
+    "User-Agent": "GranaMTG/1.0 (+https://github.com/BabaFetzi/mtg-ai)",
+    "Accept": "application/json",
+}
+SCRYFALL_MIN_DELAY = 0.1  # Sekunden Pause zwischen Einzelabrufen
+
+
+def scryfall_client(**kwargs) -> httpx.AsyncClient:
+    """httpx-Client mit dem von Scryfall geforderten User-Agent/Accept-Header."""
+    kwargs.setdefault("headers", SCRYFALL_HEADERS)
+    kwargs.setdefault("timeout", 20.0)
+    return httpx.AsyncClient(**kwargs)
+
+
+async def scryfall_request(
+    client: httpx.AsyncClient, method: str, url: str, **kwargs
+) -> httpx.Response:
+    """
+    Führt eine Scryfall-Anfrage aus und wiederholt sie EINMAL bei HTTP 429
+    (Rate-Limit), wobei der `Retry-After`-Header respektiert wird (max. 5s).
+    Verhindert, dass eine kurzzeitige Drosselung sofort als "nicht gefunden"
+    durchschlägt.
+    """
+    resp = await client.request(method, url, **kwargs)
+    if resp.status_code == 429:
+        retry_after = resp.headers.get("Retry-After")
+        try:
+            wait = min(float(retry_after), 5.0) if retry_after else 1.0
+        except (TypeError, ValueError):
+            wait = 1.0
+        logger.warning("Scryfall Rate-Limit (429). Warte %.1fs und versuche erneut.", wait)
+        await asyncio.sleep(wait)
+        resp = await client.request(method, url, **kwargs)
+    return resp
 
 
 # ======================================================================
@@ -174,7 +218,7 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
         return scryfall_data
 
     # --- Phase 2: Batch-Fetch via /cards/collection ---
-    async with httpx.AsyncClient() as client:
+    async with scryfall_client() as client:
         for i in range(0, len(uncached_names), 75):
             name_mapping: Dict[str, str] = {}  # cleaned_lower → original_input
             chunk: List[Dict[str, str]] = []
@@ -192,7 +236,9 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
                 continue
 
             try:
-                resp = await client.post(
+                resp = await scryfall_request(
+                    client,
+                    "POST",
                     "https://api.scryfall.com/cards/collection",
                     json={"identifiers": chunk},
                 )
@@ -232,6 +278,10 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
                 if orig_n_lower in scryfall_data:
                     continue  # Bereits gefunden
 
+                # Kleine Pause vor jedem Einzelabruf, um Scryfalls Rate-Limit
+                # (~10 Anfragen/Sekunde) auch bei grossen Importen einzuhalten.
+                await asyncio.sleep(SCRYFALL_MIN_DELAY)
+
                 # Fallback 1: Fuzzy-Suche (Tippfehler, fehlende Satzzeichen)
                 card_info = await _fallback_fuzzy(client, input_name)
                 if card_info:
@@ -262,7 +312,7 @@ async def _fallback_fuzzy(
     """Versucht eine Fuzzy-Suche über Scryfall /cards/named?fuzzy=..."""
     try:
         url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(card_name)}"
-        resp = await client.get(url)
+        resp = await scryfall_request(client, "GET", url)
         if resp.status_code == 200:
             return _extract_card_info(resp.json())
     except Exception:
@@ -279,7 +329,7 @@ async def _fallback_multilang(
             f"https://api.scryfall.com/cards/search?"
             f"q=lang:any+name:%22{urllib.parse.quote(card_name)}%22"
         )
-        resp = await client.get(url)
+        resp = await scryfall_request(client, "GET", url)
         if resp.status_code == 200:
             search_data = resp.json()
             if "data" in search_data and len(search_data["data"]) > 0:

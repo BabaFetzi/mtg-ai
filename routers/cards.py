@@ -24,7 +24,7 @@ from sqlalchemy import text
 
 from auth import get_current_user_optional
 from services.cache import scryfall_cache
-from services.scryfall import fetch_card_details_cached
+from services.scryfall import fetch_card_details_cached, scryfall_client, scryfall_request
 from services.ai_service import model_lite, KI_VERFUEGBAR
 from services.usage_limiter import check_and_increment_ai_usage
 from database import get_db_session, check_user_premium
@@ -74,10 +74,10 @@ async def suche_karte(
     if cached:
         return cached
 
-    async with httpx.AsyncClient() as client:
+    async with scryfall_client() as client:
         # --- Scryfall Fuzzy-Suche ---
         url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(search_term)}"
-        resp = await client.get(url)
+        resp = await scryfall_request(client, "GET", url)
 
         # --- Fallback: Sprachübergreifende Suche ---
         if resp.status_code != 200:
@@ -337,7 +337,7 @@ async def _newest_set_trends() -> dict:
     pool = scryfall_cache.get(cache_key)
 
     if not pool:
-        async with httpx.AsyncClient() as client:
+        async with scryfall_client() as client:
             try:
                 # 1. Neustes physisches Set ermitteln
                 sets_resp = await client.get("https://api.scryfall.com/sets")
