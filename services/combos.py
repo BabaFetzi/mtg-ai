@@ -89,6 +89,9 @@ def detect_local_combos(karten_liste: str) -> List[Dict[str, str]]:
         if combo["cards"].issubset(deck_card_names):
             found.append({
                 "name": combo["name"],
-                "grund": combo["grund"]
+                "grund": combo["grund"],
+                # Exakte Kartennamen (für die Bild-Anzeige im Frontend --
+                # Scryfalls exact-Lookup ist case-insensitiv, lowercase ok).
+                "cards": sorted(combo["cards"]),
             })
     return found

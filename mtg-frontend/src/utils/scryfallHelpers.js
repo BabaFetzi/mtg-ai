@@ -1,6 +1,9 @@
 export const getScryfallImage = (cardName) => {
   if (!cardName) return "";
-  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName.trim())}&format=image`;
+  // Bei doppelseitigen/Split-Karten ("Vorderseite // Rückseite") nur die
+  // Vorderseite abfragen -- das exact-Lookup liefert dafür zuverlässig ein Bild.
+  const frontFace = cardName.split("//")[0].trim();
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(frontFace)}&format=image`;
 };
 
 export const getFallbackCardImage = (name, type) => {

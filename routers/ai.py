@@ -150,10 +150,11 @@ async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, req
     sorted_names = sorted(list({c["name"].lower().strip() for c in parsed if c.get("name")}))
     deck_str = ",".join(sorted_names)
     deck_hash = hashlib.sha256(deck_str.encode("utf-8")).hexdigest()
-    # v3: Cache-Version angehoben, seit der Scan zusätzlich "Fast-Combos"
-    # (almostIncluded) UND regelbasierte Synergien liefert -- so werden alte,
-    # leere/unvollständige Ergebnisse nicht weiterverwendet.
-    cache_key = f"scan_combos:v3:{deck_hash}:{req.format.lower().strip()}"
+    # v4: Cache-Version angehoben -- Ergebnisse enthalten jetzt exakte
+    # "cards"-Listen (für korrekte Kartenbilder im Frontend) sowie Fast-Combos
+    # und regelbasierte Synergien. Alte Cache-Einträge ohne diese Felder
+    # werden nicht weiterverwendet.
+    cache_key = f"scan_combos:v4:{deck_hash}:{req.format.lower().strip()}"
 
     cached = scryfall_cache.get(cache_key)
     if cached:
@@ -262,6 +263,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                         spellbook_combos.append({
                             "name": combo_name,
                             "grund": grund,
+                            "cards": uses,
                             "kategorie": "combo"
                         })
 
@@ -289,7 +291,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                         if produces_str:
                             grund += f" Ergebnis: {produces_str}."
 
-                        fast_combos.append({"name": combo_name, "grund": grund, "kategorie": "fast"})
+                        fast_combos.append({"name": combo_name, "grund": grund, "cards": uses, "kategorie": "fast"})
 
                         # Auf die relevantesten begrenzen, um die Liste nicht zu fluten.
                         if len(fast_combos) >= 12:
@@ -371,7 +373,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 grund = f"🔗 SYNERGIE ({s['theme']}): {s['beschreibung']}{extra}"
                 theme_key = f"synergie::{s['theme']}".lower()
                 if theme_key not in seen_names:
-                    merged_combos.append({"name": combo_name, "grund": grund, "kategorie": "synergie"})
+                    merged_combos.append({"name": combo_name, "grund": grund, "cards": cards, "kategorie": "synergie"})
                     seen_names.add(theme_key)
         except Exception:
             logger.exception("Error detecting synergies in run_scan_combos_bg")
@@ -435,7 +437,8 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
                     
                     spellbook_combos.append({
                         "name": combo_name,
-                        "grund": grund
+                        "grund": grund,
+                        "cards": uses
                     })
         except Exception:
             logger.exception("Error calling Spellbook API in run_combos_bg")

@@ -85,21 +85,39 @@ THEMES: List[Dict[str, Any]] = [
             "Mehrere Karten arbeiten mit dem Friedhof – Karten zurückholen, aus dem "
             "Friedhof wirken oder Friedhofs-Payoffs. Gutes Fundament für Value-Loops."
         ),
-        "payoff": r"from your graveyard|from a graveyard",
+        # Direkter Friedhofs-Regeltext ODER Mechaniken, die aus dem Friedhof
+        # wirken (Erinnerungstext in Klammern wird vorher entfernt, deshalb
+        # explizit die Keywords).
+        "payoff": (
+            r"from (your|a|each) graveyard"
+            r"|\bflashback\b|\bescape\b|\bunearth\b|\bdisturb\b"
+            r"|\bembalm\b|\beternalize\b|\bdredge\b"
+        ),
         "enabler": None,
         "min": 3,
     },
 ]
 
 
+_REMINDER_TEXT_RE = re.compile(r"\([^)]*\)")
+
+
 def _card_texts(cards: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    """Normalisiert die Eingabe zu [{name, text}] mit kleingeschriebenem Oracle-Text."""
+    """
+    Normalisiert die Eingabe zu [{name, text}] mit kleingeschriebenem Oracle-Text.
+
+    Erinnerungstext in Klammern wird entfernt: er wiederholt nur Regelmechanik
+    (z.B. bei Flashback "(You may cast this card from your graveyard...)") und
+    würde sonst falsche Themen-Treffer erzeugen -- die eigentlichen Keywords
+    stehen ausserhalb der Klammern und werden weiterhin erkannt.
+    """
     out = []
     for c in cards:
         name = (c.get("name") or "").strip()
         if not name:
             continue
-        out.append({"name": name, "text": (c.get("oracle_text") or "").lower()})
+        text = _REMINDER_TEXT_RE.sub("", (c.get("oracle_text") or "")).lower()
+        out.append({"name": name, "text": text})
     return out
 
 

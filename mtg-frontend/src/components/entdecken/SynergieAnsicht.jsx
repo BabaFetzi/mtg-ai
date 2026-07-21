@@ -118,7 +118,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
       }
       
       const empf = Array.isArray(finalData?.empfehlungen) ? finalData.empfehlungen : [];
-      const normalizedCombos = empf.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar." }));
+      const normalizedCombos = empf.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar.", cards: Array.isArray(c?.cards) ? c.cards : null }));
       setCombos(normalizedCombos);
     } catch (e) {
       console.error(e);
@@ -167,10 +167,11 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
           }
 
           let normalizedCombos = [];
+          const normalize = c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar.", kategorie: c?.kategorie || "combo", cards: Array.isArray(c?.cards) ? c.cards : null });
           if (Array.isArray(finalData)) {
-              normalizedCombos = finalData.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar.", kategorie: c?.kategorie || "combo" }));
+              normalizedCombos = finalData.map(normalize);
           } else if (finalData && finalData.combos && Array.isArray(finalData.combos)) {
-              normalizedCombos = finalData.combos.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar.", kategorie: c?.kategorie || "combo" }));
+              normalizedCombos = finalData.combos.map(normalize);
           }
           setCombos(normalizedCombos);
       } catch (err) {
@@ -475,7 +476,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
               <h3>Gefundene Combos & Synergien</h3>
               {(!combos || combos.length === 0) ? <p>Keine spezifischen Combos gefunden.</p> : combos.map((c, i) => {
                 if (!c) return null;
-                const comboCardNames = parseComboCards(c.name);
+                const comboCardNames = (Array.isArray(c.cards) && c.cards.length > 0) ? c.cards : parseComboCards(c.name);
                 return (
                   <div key={i} className="synergy-combo-card">
                     {comboCardNames.length > 0 && (
@@ -515,7 +516,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
                     </div>
                     {items.map((c, i) => {
                       if(!c) return null;
-                      const comboCardNames = parseComboCards(c.name);
+                      const comboCardNames = (Array.isArray(c.cards) && c.cards.length > 0) ? c.cards : parseComboCards(c.name);
                       return (
                         <div key={i} className="synergy-combo-card">
                           {comboCardNames.length > 0 && (
