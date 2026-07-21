@@ -75,9 +75,19 @@ async def suche_karte(
         return cached
 
     async with scryfall_client() as client:
-        # --- Scryfall Fuzzy-Suche ---
-        url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(search_term)}"
-        resp = await scryfall_request(client, "GET", url)
+        resp = None
+        # Enthält der Suchbegriff Nicht-ASCII-Zeichen (Umlaute etc.), ist es
+        # sehr wahrscheinlich ein lokalisierter (z.B. deutscher) Kartenname.
+        # Dann ZUERST die sprachübergreifende Namenssuche, weil die Fuzzy-Suche
+        # solche Namen oft falsch auf eine ähnlich geschriebene englische Karte
+        # matcht (z.B. "Plunderprüfer" -> "Plunder" statt "Taster of Wares").
+        if not search_term.isascii():
+            resp = await _fallback_lang_search(client, search_term, None)
+
+        # --- Scryfall Fuzzy-Suche (Standard; bzw. wenn die Sprachsuche nichts fand) ---
+        if resp is None or resp.status_code != 200:
+            url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(search_term)}"
+            resp = await scryfall_request(client, "GET", url)
 
         # --- Fallback: Sprachübergreifende Suche ---
         if resp.status_code != 200:

@@ -261,7 +261,8 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
 
                         spellbook_combos.append({
                             "name": combo_name,
-                            "grund": grund
+                            "grund": grund,
+                            "kategorie": "combo"
                         })
 
                     # --- Fast-Combos aus "almostIncluded" (genau 1 fehlende Karte) ---
@@ -288,7 +289,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                         if produces_str:
                             grund += f" Ergebnis: {produces_str}."
 
-                        fast_combos.append({"name": combo_name, "grund": grund})
+                        fast_combos.append({"name": combo_name, "grund": grund, "kategorie": "fast"})
 
                         # Auf die relevantesten begrenzen, um die Liste nicht zu fluten.
                         if len(fast_combos) >= 12:
@@ -297,7 +298,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 logger.exception("Error calling Spellbook API in run_scan_combos_bg")
 
         # 3. Merge combos (Duplikate vermeiden)
-        merged_combos = list(local_combos)
+        merged_combos = [{**c, "kategorie": "combo"} for c in local_combos]
         seen_names = {c["name"].lower().strip() for c in local_combos}
         
         for c in spellbook_combos:
@@ -340,7 +341,8 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                         if c_name and c_name.lower().strip() not in seen_names:
                             merged_combos.append({
                                 "name": c_name,
-                                "grund": c.get("grund") or c.get("erklaerung") or "Keine Erklärung verfügbar."
+                                "grund": c.get("grund") or c.get("erklaerung") or "Keine Erklärung verfügbar.",
+                                "kategorie": "combo"
                             })
                             seen_names.add(c_name.lower().strip())
             except Exception:
@@ -369,7 +371,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 grund = f"🔗 SYNERGIE ({s['theme']}): {s['beschreibung']}{extra}"
                 theme_key = f"synergie::{s['theme']}".lower()
                 if theme_key not in seen_names:
-                    merged_combos.append({"name": combo_name, "grund": grund})
+                    merged_combos.append({"name": combo_name, "grund": grund, "kategorie": "synergie"})
                     seen_names.add(theme_key)
         except Exception:
             logger.exception("Error detecting synergies in run_scan_combos_bg")

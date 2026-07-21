@@ -168,9 +168,9 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
 
           let normalizedCombos = [];
           if (Array.isArray(finalData)) {
-              normalizedCombos = finalData.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar." }));
+              normalizedCombos = finalData.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar.", kategorie: c?.kategorie || "combo" }));
           } else if (finalData && finalData.combos && Array.isArray(finalData.combos)) {
-              normalizedCombos = finalData.combos.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar." }));
+              normalizedCombos = finalData.combos.map(c => ({ name: c?.name || c?.karten || c?.combo || "Unbekannte Combo", grund: c?.grund || c?.erklaerung || c?.beschreibung || "Keine Erklärung verfügbar.", kategorie: c?.kategorie || "combo" }));
           }
           setCombos(normalizedCombos);
       } catch (err) {
@@ -498,20 +498,38 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
       {(activeMode === 'decks' || activeMode === 'albums') && !laedt && combos && combos.length > 0 && (
           <div className="content-card" style={{padding: '40px'}}>
               <h3 style={{fontSize: '2rem', marginBottom: '30px'}}>Gefundene Synergien & Combos</h3>
-              {combos.map((c, i) => {
-                if(!c) return null;
-                const comboCardNames = parseComboCards(c.name);
+              {[
+                { key: 'combo', titel: '✅ Fertige Combos', hinweis: 'Alle Karten hast du bereits – sofort spielbar.' },
+                { key: 'fast', titel: '⚡ Fast-Combos', hinweis: 'Dir fehlt jeweils nur noch eine Karte.' },
+                { key: 'synergie', titel: '🔗 Synergien', hinweis: 'Karten-Pakete, die sich gegenseitig verstärken.' },
+              ].map(section => {
+                const items = combos.filter(c => (c?.kategorie || 'combo') === section.key);
+                if (items.length === 0) return null;
                 return (
-                  <div key={i} className="synergy-combo-card">
-                    {comboCardNames.length > 0 && (
-                      <div className="combo-images-container">
-                        {comboCardNames.map((cardName, idx) => (
-                          <img key={idx} src={getScryfallImage(cardName)} alt={cardName} className="combo-card-img" onError={(e) => e.target.style.display = 'none'} />
-                        ))}
-                      </div>
-                    )}
-                    <h4 style={{margin: 0, color: 'var(--text-main)', fontSize: '1.3rem', marginBottom: '10px'}}>{c.name}</h4>
-                    <p style={{margin: 0, fontSize: '1.05rem', color: 'var(--text-muted)'}}>{c.grund}</p>
+                  <div key={section.key} style={{marginBottom: '40px'}}>
+                    <div style={{borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '20px'}}>
+                      <h4 style={{fontSize: '1.5rem', margin: 0, color: 'var(--text-main)'}}>
+                        {section.titel} <span style={{color: 'var(--text-muted)', fontWeight: 400, fontSize: '1rem'}}>({items.length})</span>
+                      </h4>
+                      <p style={{margin: '4px 0 0 0', fontSize: '0.9rem', color: 'var(--text-muted)'}}>{section.hinweis}</p>
+                    </div>
+                    {items.map((c, i) => {
+                      if(!c) return null;
+                      const comboCardNames = parseComboCards(c.name);
+                      return (
+                        <div key={i} className="synergy-combo-card">
+                          {comboCardNames.length > 0 && (
+                            <div className="combo-images-container">
+                              {comboCardNames.map((cardName, idx) => (
+                                <img key={idx} src={getScryfallImage(cardName)} alt={cardName} className="combo-card-img" onError={(e) => e.target.style.display = 'none'} />
+                              ))}
+                            </div>
+                          )}
+                          <h4 style={{margin: 0, color: 'var(--text-main)', fontSize: '1.3rem', marginBottom: '10px'}}>{c.name}</h4>
+                          <p style={{margin: 0, fontSize: '1.05rem', color: 'var(--text-muted)'}}>{c.grund}</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
