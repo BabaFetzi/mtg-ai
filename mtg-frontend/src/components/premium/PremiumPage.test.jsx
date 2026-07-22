@@ -30,11 +30,11 @@ describe('PremiumPage – Status-Anzeige je nach Rolle', () => {
     expect(screen.queryByText('Premium Aktiv')).not.toBeInTheDocument();
   });
 
-  test('Premium-Nutzer sieht "Premium Aktiv" und den Downgrade-Button, nicht den Abo-Button', async () => {
+  test('Premium-Nutzer sieht "Premium Aktiv" und den "Abo kündigen"-Button, nicht den Abo-Button', async () => {
     renderPremiumPage({ userRole: 'premium' });
 
     expect(screen.getByText('Premium Aktiv')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Als Entwickler downgraden (Testen)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Abo kündigen' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Jetzt abonnieren' })).not.toBeInTheDocument();
     // Freier Tarif ist für einen Premium-Nutzer nicht "aktuell".
     expect(screen.getByRole('button', { name: 'Kostenloses Basis-Konto' })).toBeInTheDocument();
@@ -46,35 +46,64 @@ describe('PremiumPage – Status-Anzeige je nach Rolle', () => {
     expect(await screen.findByText('3,90 CHF')).toBeInTheDocument();
   });
 
-  test('Downgrade-Button: bei abgelaufener Session (401) erscheint ein klarer Re-Login-Hinweis, kein stiller Fehlschlag', async () => {
+  test('Abo kündigen: bei abgelaufener Session (401) erscheint ein klarer Re-Login-Hinweis, kein stiller Fehlschlag', async () => {
     const user = userEvent.setup();
     const { setUserRole } = renderPremiumPage({ userRole: 'premium' });
 
     // Der Preis-Fetch beim Mount läuft schon über den Default-Mock aus
-    // beforeEach; hier nur den nächsten (Downgrade-)Aufruf gezielt auf 401 setzen.
+    // beforeEach; hier nur den nächsten (Kündigungs-)Aufruf gezielt auf 401 setzen.
     await screen.findByText('3,90 CHF');
 
     global.fetch.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
 
-    await user.click(screen.getByRole('button', { name: 'Als Entwickler downgraden (Testen)' }));
+    await user.click(screen.getByRole('button', { name: 'Abo kündigen' }));
 
     await waitFor(() => {
       expect(window.alert).toHaveBeenCalledWith(
         'Deine Sitzung ist abgelaufen. Bitte logge dich erneut ein und versuche es noch einmal.'
       );
     });
-    // Rolle darf bei einem fehlgeschlagenen Downgrade NICHT lokal auf "free" gesetzt werden.
+    // Rolle darf bei einem Fehlschlag NICHT lokal auf "free" gesetzt werden.
     expect(setUserRole).not.toHaveBeenCalled();
   });
 
-  test('Downgrade-Button: bei Erfolg wird die Rolle lokal auf "free" gesetzt', async () => {
+  test('Abo kündigen: bei Erfolg bleibt Premium bis Periodenende aktiv (kein sofortiges Downgrade)', async () => {
     const user = userEvent.setup();
     const { setUserRole } = renderPremiumPage({ userRole: 'premium' });
     await screen.findByText('3,90 CHF');
 
+    // Echte Stripe-Kündigung: cancel_at_period_end -> laeuft_bis-Timestamp
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ erfolg: true, laeuft_bis: 1790000000 }),
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Abo kündigen' }));
+
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('gekündigt'));
+    });
+    // Der Kündigungs-Endpoint wurde aufgerufen ...
+    expect(global.fetch).toHaveBeenCalledWith('/api/checkout/cancel-subscription', { method: 'POST' });
+    // ... aber Premium bleibt bis zum Periodenende aktiv -- das Downgrade
+    // macht der Stripe-Webhook, NICHT das Frontend.
+    expect(setUserRole).not.toHaveBeenCalled();
+  });
+
+  test('Abo kündigen: ohne Stripe-Abo (Dev-Premium) wird die Rolle als Fallback auf "free" gesetzt', async () => {
+    const user = userEvent.setup();
+    const { setUserRole } = renderPremiumPage({ userRole: 'premium' });
+    await screen.findByText('3,90 CHF');
+
+    // 1. Aufruf: cancel-subscription meldet ehrlich "kein Abo"
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ erfolg: false, kein_abo: true, error: 'Kein Abo' }),
+    });
+    // 2. Aufruf: Fallback update-role auf free
     global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ erfolg: true }) });
 
-    await user.click(screen.getByRole('button', { name: 'Als Entwickler downgraden (Testen)' }));
+    await user.click(screen.getByRole('button', { name: 'Abo kündigen' }));
 
     await waitFor(() => {
       expect(setUserRole).toHaveBeenCalledWith('free');

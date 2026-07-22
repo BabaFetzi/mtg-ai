@@ -51,8 +51,8 @@ describe('KartenSuche – Marktwert-Anzeige', () => {
         (p) => p.style.fontWeight === '700' && /€/.test(p.textContent)
       );
       expect(priceP).toBeTruthy();
-      expect(priceP.textContent).toMatch(/1\.14\s*€/);
-      expect(priceP.textContent).not.toMatch(/0\.00/);
+      expect(priceP.textContent).toMatch(/1,14\s*€/); // de-DE Format (Punkt 9)
+      expect(priceP.textContent).not.toMatch(/0[.,]00/);
     });
   });
 
@@ -82,7 +82,7 @@ describe('KartenSuche – Marktwert-Anzeige', () => {
       const priceP = [...document.querySelectorAll('p')].find(
         (p) => p.style.fontWeight === '700' && /€/.test(p.textContent)
       );
-      expect(priceP.textContent).toMatch(/4\.50\s*€/);
+      expect(priceP.textContent).toMatch(/4,50\s*€/); // de-DE Format (Punkt 9)
     });
   });
 });

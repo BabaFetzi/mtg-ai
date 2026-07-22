@@ -61,10 +61,15 @@ def test_invalid_role_is_rejected():
     _expect_close(f"/api/vision/stream/s1?role=hacker&token={token}", 4400)
 
 
+@patch("routers.vision.vision_detection_loop", new_callable=AsyncMock)
 @patch("routers.vision.check_user_premium", new_callable=AsyncMock)
-def test_premium_display_then_camera_flow_works(mock_premium):
+def test_premium_display_then_camera_flow_works(mock_premium, _mock_loop):
     """Positivfall: Premium-Display öffnet die Session, Kamera tritt bei,
-    Frames werden weitergeleitet (bisheriges Verhalten bleibt erhalten)."""
+    Frames werden weitergeleitet (bisheriges Verhalten bleibt erhalten).
+
+    Die Hintergrund-Detection-Loop wird gemockt: sie macht echte Scryfall-
+    HTTP-Aufrufe und kann den Test-Teardown blockieren -- geprüft wird hier
+    der Zugriffsschutz und das Frame-Forwarding im Handler, nicht die Loop."""
     mock_premium.return_value = True
     token = create_access_token({"sub": "premiumuser"})
 

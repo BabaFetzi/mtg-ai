@@ -7,6 +7,7 @@ import PremiumOverlay from '../layout/PremiumOverlay';
 import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw, Infinity } from 'lucide-react';
 import DeckEditor from './DeckEditor';
 import DeckAnalysis from './DeckAnalysis';
+import { formatEuro, formatZahl } from '../../utils/format';
 
 // Die 8 vormals gleichwertigen Tabs zu 4 Gruppen zusammengefasst (Bearbeiten /
 // Analysieren / Extras + die alleinstehende Deck-Bibliothek), damit die
@@ -882,7 +883,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                               textAlign: 'right',
                               fontVariantNumeric: 'tabular-nums'
                             }}>
-                              {priceDisplay} €
+                              {formatEuro(priceDisplay)}
                             </span>
                           </>
                         )}
@@ -1154,7 +1155,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                         <>
                           <span style={{color: 'var(--border-color)'}}>•</span>
                           <span style={{fontSize: '0.85rem', fontWeight: 700, color: 'var(--price-color)'}}>
-                            {priceLabel} €
+                            {formatEuro(priceLabel)}
                           </span>
                         </>
                       )}
@@ -1311,13 +1312,13 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                       <div style={{fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px'}}>Ø Manakosten</div>
                       <div style={{fontSize: '2rem', fontWeight: 700, color: 'var(--text-main)'}}>
                         <img src="https://svgs.scryfall.io/card-symbols/S.svg" alt="" style={{width: '20px', height: '20px', verticalAlign: 'middle', marginRight: '6px', opacity: 0.7}} />
-                        {avgCmc}
+                        {formatZahl(avgCmc)}
                       </div>
                     </div>
                     {deckWert && (
                       <div style={{background: 'rgba(255, 214, 10, 0.08)', border: '1px solid rgba(255, 214, 10, 0.2)', borderRadius: '16px', padding: '20px', textAlign: 'center'}}>
                         <div style={{fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px'}}>Deckwert</div>
-                        <div style={{fontSize: '2rem', fontWeight: 700, color: 'var(--text-main)'}}>{deckWert.gesamt_wert} €</div>
+                        <div style={{fontSize: '2rem', fontWeight: 700, color: 'var(--text-main)'}}>{formatEuro(deckWert.gesamt_wert)}</div>
                       </div>
                     )}
                   </div>
@@ -1562,7 +1563,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
               {deckWert && (
                 <div style={{marginTop: '50px', paddingTop: '30px', borderTop: '1px solid var(--border-color)', textAlign: 'right'}}>
                   <span style={{fontSize: '0.95rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em'}}>Geschätzter Marktwert</span>
-                  <span style={{color: 'var(--price-color)', fontWeight: 600, fontSize: '2.5rem', letterSpacing: '-0.04em'}}>{deckWert?.gesamt_wert || "0.00"} €</span>
+                  <span style={{color: 'var(--price-color)', fontWeight: 600, fontSize: '2.5rem', letterSpacing: '-0.04em'}}>{formatEuro(deckWert?.gesamt_wert)}</span>
                 </div>
               )}
             </>

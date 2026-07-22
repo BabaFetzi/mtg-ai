@@ -1006,9 +1006,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str, t
         if session_id in active_sessions:
             sess = active_sessions[session_id]
             if not sess["camera"] and not sess["displays"]:
-                # Cancel task if running
+                # Cancel task if running -- und auf ihr tatsächliches Ende
+                # WARTEN. Ohne das await bleibt die gecancelte Loop-Task im
+                # Event-Loop zurück (Task-Leak); im Test-Teardown führte das
+                # zu sporadischen Hängern beim Loop-Shutdown.
                 task = sess.get("ai_task")
                 if task and not task.done():
                     task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 active_sessions.pop(session_id, None)
                 logger.info("Session %s cleaned up.", session_id)

@@ -4,16 +4,16 @@ import { getFallbackCardImage, getScryfallImage } from '../../utils/scryfallHelp
 import { TrendingUp, TrendingDown, Activity, Award, Flame, Search } from 'lucide-react';
 
 const winnersLosersPool = [
-  { name: "Orcish Bowmasters", price: "38.20 €", change: "+12.4%", up: true, set: "LTR" },
-  { name: "Sheoldred, the Apocalypse", price: "68.00 €", change: "+8.1%", up: true, set: "DMU" },
-  { name: "The One Ring", price: "82.50 €", change: "+15.2%", up: true, set: "LTR" },
-  { name: "Mana Crypt", price: "162.00 €", change: "-4.2%", up: false, set: "2XM" },
-  { name: "Ledger Shredder", price: "12.40 €", change: "-5.3%", up: false, set: "SNC" },
-  { name: "Boseiju, Who Endures", price: "34.80 €", change: "+6.8%", up: true, set: "NEO" },
-  { name: "Ragavan, Nimble Pilferer", price: "35.00 €", change: "-2.1%", up: false, set: "MH2" },
-  { name: "Mox Amber", price: "24.50 €", change: "+9.3%", up: true, set: "DOM" },
-  { name: "Grief", price: "18.20 €", change: "-12.5%", up: false, set: "MH2" },
-  { name: "Phyrexian Tower", price: "28.00 €", change: "+11.1%", up: true, set: "MH3" }
+  { name: "Orcish Bowmasters", price: "38,20 €", change: "+12,4%", up: true, set: "LTR" },
+  { name: "Sheoldred, the Apocalypse", price: "68,00 €", change: "+8,1%", up: true, set: "DMU" },
+  { name: "The One Ring", price: "82,50 €", change: "+15,2%", up: true, set: "LTR" },
+  { name: "Mana Crypt", price: "162,00 €", change: "-4,2%", up: false, set: "2XM" },
+  { name: "Ledger Shredder", price: "12,40 €", change: "-5,3%", up: false, set: "SNC" },
+  { name: "Boseiju, Who Endures", price: "34,80 €", change: "+6,8%", up: true, set: "NEO" },
+  { name: "Ragavan, Nimble Pilferer", price: "35,00 €", change: "-2,1%", up: false, set: "MH2" },
+  { name: "Mox Amber", price: "24,50 €", change: "+9,3%", up: true, set: "DOM" },
+  { name: "Grief", price: "18,20 €", change: "-12,5%", up: false, set: "MH2" },
+  { name: "Phyrexian Tower", price: "28,00 €", change: "+11,1%", up: true, set: "MH3" }
 ];
 
 const insiderTips = [

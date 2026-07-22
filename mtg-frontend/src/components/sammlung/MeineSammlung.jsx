@@ -6,6 +6,7 @@ import { FolderPlus, FileSpreadsheet, Heart, RefreshCw, Plus } from 'lucide-reac
 import CollectionFilters from './CollectionFilters';
 import CollectionGrid from './CollectionGrid';
 import CSVImportExport from './CSVImportExport';
+import { formatEuro } from '../../utils/format';
 
 function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal }) {
   const location = useLocation();
@@ -277,7 +278,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                 <div style={{display: 'flex', gap: '20px', alignItems: 'center', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexWrap: 'wrap'}}>
                   <div style={{textAlign: 'right'}}>
                     <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em', display: 'block'}}>Zentraler Gesamtwert</span>
-                    <span style={{color: 'var(--price-color)', fontWeight: 700, fontSize: '1.6rem'}}>{totalPortfolioWert} €</span>
+                    <span style={{color: 'var(--price-color)', fontWeight: 700, fontSize: '1.6rem'}}>{formatEuro(totalPortfolioWert)}</span>
                   </div>
                   <button 
                     className="secondary-btn" 
@@ -556,7 +557,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                         {/* Card text */}
                         <div style={{ textAlign: 'left' }}>
                           <h4 style={{ margin: '0 0 5px 0', fontSize: '1.15rem', color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</h4>
-                          <span style={{ fontSize: '1.25rem', color: 'var(--price-color)', fontWeight: 600 }}>{albumWert} €</span>
+                          <span style={{ fontSize: '1.25rem', color: 'var(--price-color)', fontWeight: 600 }}>{formatEuro(albumWert)}</span>
                         </div>
                       </div>
                     );
@@ -689,7 +690,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
               <div className="content-card" style={{padding: '26px'}}>
                  <h3 style={{fontSize: '1.05rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px'}}>Gesamter Marktwert (Ohne Wunschliste)</h3>
                  <div style={{display: 'flex', alignItems: 'baseline', gap: '20px', flexWrap: 'wrap', marginBottom: '22px'}}>
-                   <h1 style={{fontSize: '2.5rem', margin: 0, color: 'var(--price-color)', letterSpacing: '-0.03em'}}>{totalPortfolioWert} €</h1>
+                   <h1 style={{fontSize: '2.5rem', margin: 0, color: 'var(--price-color)', letterSpacing: '-0.03em'}}>{formatEuro(totalPortfolioWert)}</h1>
                    <button
                      className="secondary-btn"
                      onClick={handleRefreshPrices}
@@ -723,7 +724,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                       <div key={name} style={{marginBottom: '12px'}}>
                          <div style={{display: 'flex', justifycontent: 'space-between', marginBottom: '5px', fontSize: '0.85rem'}}>
                            <span style={{fontWeight: 600}}>{name}</span>
-                           <span>{val.toFixed(2)} € ({pct}%)</span>
+                           <span>{formatEuro(val)} ({pct}%)</span>
                          </div>
                          <div style={{width: '100%', height: '6px', background: 'var(--btn-secondary)', borderRadius: '3px', overflow: 'hidden'}}>
                            <div style={{width: `${pct}%`, height: '100%', background: 'var(--accent-color)'}}></div>
@@ -755,7 +756,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                          <div style={{ fontWeight: 600, fontSize: '1.05rem', color: 'var(--text-main)' }}>{k?.name}</div>
                          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>In: {k?.albumName}</div>
                        </div>
-                       <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--price-color)' }}>{k?.livePreis || k?.preis || "0.00"} €</div>
+                       <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--price-color)' }}>{formatEuro(k?.livePreis || k?.preis)}</div>
                      </div>
                    ))}
                    {getAllCardsFlat().length === 0 && <p>Keine Karten im Portfolio.</p>}
@@ -774,7 +775,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
               </div>
               <div style={{textAlign: 'right'}}>
                  <span style={{fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em'}}>Benötigtes Budget</span>
-                 <span style={{color: 'var(--price-color)', fontWeight: 600, fontSize: '1.4rem'}}>{totalWishlistWert} €</span>
+                 <span style={{color: 'var(--price-color)', fontWeight: 600, fontSize: '1.4rem'}}>{formatEuro(totalWishlistWert)}</span>
               </div>
            </div>
 
@@ -806,7 +807,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                       onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(karte?.name, "Karte"); }}
                     />
                    <span style={{fontWeight: 600, fontSize: '0.95rem', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '5px'}} title={karte?.name}>{karte?.name}</span>
-                   <span className="gallery-price-tag" style={{color: 'var(--text-main)', background: 'var(--bg-main)'}}>{karte?.livePreis || karte?.preis || "0.00"} €</span>
+                   <span className="gallery-price-tag" style={{color: 'var(--text-main)', background: 'var(--bg-main)'}}>{formatEuro(karte?.livePreis || karte?.preis)}</span>
                  </div>
                )})}
              </div>

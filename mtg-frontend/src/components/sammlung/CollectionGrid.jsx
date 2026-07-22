@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
+import { formatEuro, formatZahl } from '../../utils/format';
 
 function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
@@ -31,7 +32,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
           marginLeft: '8px',
           verticalAlign: 'middle'
         }}>
-          ▲ +{diff.toFixed(2)} € (+{diffPct.toFixed(1)}%)
+          ▲ +{formatEuro(diff)} (+{formatZahl(diffPct, 1)}%)
         </span>
       );
     } else if (diff < -0.005) {
@@ -49,7 +50,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
           marginLeft: '8px',
           verticalAlign: 'middle'
         }}>
-          ▼ {diff.toFixed(2)} € ({diffPct.toFixed(1)}%)
+          ▼ {formatEuro(diff)} ({formatZahl(diffPct, 1)}%)
         </span>
       );
     }
@@ -246,7 +247,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
               </div>
               <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
                 <span className="gallery-price-tag" style={{ margin: 0 }}>
-                  {karte.price || "0.00"} €
+                  {formatEuro(karte.price)}
                 </span>
                 {renderPriceTrend(karte)}
               </div>
@@ -297,7 +298,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
                     {karte.rarity}
                   </td>
                   <td style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--price-color)' }}>
-                    {karte.price || "0.00"} €
+                    {formatEuro(karte.price)}
                     {renderPriceTrend(karte)}
                   </td>
                   <td style={{ padding: '12px 20px', textAlign: 'center' }}>

@@ -29,16 +29,20 @@ function RegelbuchAnsicht() {
   return (
     <div style={{maxWidth: '1000px', margin: '0 auto'}}>
       <div className="search-hero" style={{paddingTop: '0'}}>
-        <h2>Offizielles Regelbuch.</h2>
-        <p>Das Handbuch für komplexe Mechaniken und Keywords.</p>
+        <h2>Regel-Nachschlagewerk.</h2>
+        <p>
+          Eine kuratierte Auswahl der {rulesDatabase.length} wichtigsten Regeln und Keywords
+          für den Spielalltag – kein Ersatz für die vollständigen offiziellen Comprehensive
+          Rules von Wizards of the Coast.
+        </p>
       </div>
 
       <div className="content-card" style={{padding: '40px'}}>
-        <input 
-          type="text" 
-          placeholder="Regelbuch durchsuchen (z.B. 'Kampfphase', 'Trampelschaden', '702.1')..." 
-          value={ruleSearch} 
-          onChange={(e) => setRuleSearch(e.target.value)} 
+        <input
+          type="text"
+          placeholder={`${rulesDatabase.length} kuratierte Regeln durchsuchen (z.B. 'Kampfphase', '702.1')...`}
+          value={ruleSearch}
+          onChange={(e) => setRuleSearch(e.target.value)}
           style={{marginBottom: '30px', background: 'var(--btn-secondary)', border: 'none', boxShadow: 'none'}}
         />
         <div>

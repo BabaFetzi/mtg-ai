@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
 import { Dice5 } from 'lucide-react';
+import { formatEuro } from '../../utils/format';
 
 const TAGS_POOL = [
   'Sol Ring', 'Mana Crypt', 'Jeweled Lotus', 'Ragavan', 'Sheoldred',
@@ -308,9 +309,7 @@ function KartenSuche({ currentUser }) {
                       sonst der beste Marktpreis über alle Editionen (marktwert).
                       Verhindert 0.00 €, wenn der erste/gewählte Print (z.B. eine
                       Secret-Lair-Promo) bei Scryfall keinen EUR-Preis hat. */}
-                  <p style={{fontSize: '1.8rem', fontWeight: 700, margin: 0, color: 'var(--price-color)', letterSpacing: '-0.02em'}}>{
-                    (actPrint?.preis && parseFloat(actPrint.preis) > 0) ? actPrint.preis : (karte?.marktwert || "0.00")
-                  } €</p>
+                  <p style={{fontSize: '1.8rem', fontWeight: 700, margin: 0, color: 'var(--price-color)', letterSpacing: '-0.02em'}}>{formatEuro((actPrint?.preis && parseFloat(actPrint.preis) > 0) ? actPrint.preis : karte?.marktwert)}</p>
                 </div>
 
                 <a
