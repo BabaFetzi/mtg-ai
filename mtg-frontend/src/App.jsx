@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { setTokens, clearTokens } from './utils/authFetch'
 
 // Components
 import AuthScreen from './components/auth/AuthScreen'
@@ -441,19 +442,32 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const handleLoginSuccess = (username, token, role) => {
+  const handleLoginSuccess = (username, token, role, refreshToken) => {
     localStorage.setItem("username", username);
-    localStorage.setItem("access_token", token || "");
+    setTokens(token, refreshToken);
     setCurrentUser(username);
     setUserRole(role || "free");
   };
 
   const handleLogout = () => {
     localStorage.removeItem("username");
-    localStorage.removeItem("access_token");
+    clearTokens();
     setCurrentUser(null);
     setUserRole("free");
   };
+
+  // Wenn der Auth-Interceptor den Refresh nicht mehr durchbekommt (Refresh-
+  // Token abgelaufen/ungültig), setzt er die Tokens zurück und feuert
+  // "auth:logout" -- die App muss dann ihren Login-Zustand nachziehen.
+  useEffect(() => {
+    const onAuthLogout = () => {
+      localStorage.removeItem("username");
+      setCurrentUser(null);
+      setUserRole("free");
+    };
+    window.addEventListener("auth:logout", onAuthLogout);
+    return () => window.removeEventListener("auth:logout", onAuthLogout);
+  }, []);
 
   useEffect(() => {
     if (isDarkMode) document.body.classList.add('dark-mode');

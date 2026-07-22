@@ -17,7 +17,7 @@ function AuthScreen({ onLoginSuccess }) {
       const data = await res.json();
       if (data.erfolg) {
         if (isRegister) { setMessage("Konto erstellt. Bitte einloggen."); setIsRegister(false); setPassword(""); } 
-        else { onLoginSuccess(data.benutzername, data.access_token, data.rolle); }
+        else { onLoginSuccess(data.benutzername, data.access_token, data.rolle, data.refresh_token); }
       } else { setMessage(data.error); }
     } catch { setMessage("Serverfehler."); }
   };

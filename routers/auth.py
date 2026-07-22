@@ -27,6 +27,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, Request, HTTPException, status, Query
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import text
 
 from database import get_db_session
@@ -35,6 +36,7 @@ from auth import (
     verify_passwort,
     create_access_token,
     create_refresh_token,
+    decode_token,
     check_login_rate_limit,
     record_login_attempt,
     get_current_user
@@ -161,6 +163,67 @@ async def login(data: LoginData, request: Request):
             "benutzername": row["benutzername"],
             "rolle": row["rolle"] or "free"
         }
+
+# ======================================================================
+# POST /api/auth/refresh – Access-Token erneuern
+# ======================================================================
+class RefreshReq(BaseModel):
+    refresh_token: str
+
+
+@router.post(
+    "/auth/refresh",
+    summary="Access-Token per Refresh-Token erneuern",
+)
+async def refresh_access_token(req: RefreshReq):
+    """
+    Tauscht ein gültiges Refresh-Token gegen ein frisches Access-Token
+    (plus rotiertes Refresh-Token), damit eingeloggte Nutzer nach Ablauf
+    des 30-Minuten-Access-Tokens NICHT neu einloggen müssen.
+
+    Sicherheit:
+    - akzeptiert ausschliesslich Tokens mit type=="refresh" (ein Access-Token
+      kann hier nicht eingetauscht werden)
+    - prüft, dass der Benutzer noch existiert, und liest die Rolle FRISCH aus
+      der DB -- ein zwischenzeitliches Premium-Upgrade/-Downgrade (z.B. durch
+      den Stripe-Webhook) landet damit im nächsten Access-Token
+    """
+    payload = decode_token(req.refresh_token)
+    if payload is None or payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ungültiges oder abgelaufenes Refresh-Token.",
+        )
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ungültiges Refresh-Token.",
+        )
+
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT benutzername, rolle FROM nutzer WHERE benutzername = :name"),
+            {"name": username},
+        )
+        row = res.mappings().first()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Benutzer existiert nicht mehr.",
+        )
+
+    role = row["rolle"] or "free"
+    token_data = {"sub": row["benutzername"], "role": role}
+    return {
+        "erfolg": True,
+        "access_token": create_access_token(token_data),
+        "refresh_token": create_refresh_token(token_data),
+        "benutzername": row["benutzername"],
+        "rolle": role,
+    }
+
 
 # ======================================================================
 # GET /api/user/role/{benutzername} – Rolle abfragen

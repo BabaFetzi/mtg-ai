@@ -79,20 +79,28 @@ def verify_passwort(password: str, hashed_password: str) -> bool:
         return False
 
 # JWT utilities
+#
+# Access- und Refresh-Tokens tragen einen "type"-Claim, damit sie nicht
+# austauschbar sind: ein (30 Tage gültiges) Refresh-Token darf NIE als
+# Access-Token auf geschützten Endpunkten akzeptiert werden, und der
+# /api/auth/refresh-Endpoint akzeptiert ausschliesslich echte Refresh-Tokens.
+# Alt-Tokens ohne "type"-Claim (vor dieser Änderung ausgestellt) werden als
+# Access-Token weiterbehandelt, damit eingeloggte Nutzer nicht schlagartig
+# rausfliegen -- sie laufen ohnehin binnen 30 Minuten bzw. 30 Tagen aus.
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 def create_refresh_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "refresh"})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -119,6 +127,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
             detail="Ungültiges Token oder Token abgelaufen",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Refresh-Tokens sind auf geschützten Endpunkten nicht gültig (nur auf
+    # /api/auth/refresh). Fehlender type-Claim = Alt-Token = Access.
+    if payload.get("type", "access") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh-Token ist kein gültiges Access-Token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     username: str = payload.get("sub")
     if username is None:
         raise HTTPException(
@@ -137,5 +153,7 @@ async def get_current_user_optional(token: str = Depends(oauth2_scheme)) -> Opti
         return None
     payload = decode_token(token)
     if payload is None:
+        return None
+    if payload.get("type", "access") != "access":
         return None
     return payload.get("sub")

@@ -4,18 +4,11 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import './index.css'
 
-// Global fetch interceptor for attaching JWT Bearer tokens automatically
-const originalFetch = window.fetch;
-window.fetch = async (url, options = {}) => {
-  const token = localStorage.getItem("access_token");
-  if (token && (url.startsWith("/api/") || url.includes("/api/"))) {
-    options.headers = {
-      ...options.headers,
-      "Authorization": `Bearer ${token}`
-    };
-  }
-  return originalFetch(url, options);
-};
+// Globaler Fetch-Interceptor: hängt das Bearer-Token an alle /api/-Requests
+// und erneuert bei 401 automatisch das Access-Token per Refresh-Token
+// (siehe utils/authFetch.js).
+import { installAuthInterceptor } from './utils/authFetch';
+installAuthInterceptor();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
