@@ -203,3 +203,76 @@ async def test_csv_import_no_cross_album_leak(real_db_session_factory):
 
     assert {k["name"] for k in a} == {"Sol Ring"}
     assert {k["name"] for k in b} == {"Counterspell"}
+
+
+# ======================================================================
+# 3. Garbage-Namen dürfen NIE fuzzy zu fremden Karten werden
+# ======================================================================
+def test_implausible_names_detected():
+    from routers.collection import _is_implausible_card_name
+    # Müll (verrutschte Spalten, Set-Codes) -> True
+    assert _is_implausible_card_name("1")
+    assert _is_implausible_card_name("0.61")
+    assert _is_implausible_card_name("SPM")   # löst bei Scryfall fuzzy auf 'Wispmare' auf!
+    assert _is_implausible_card_name("ECL")
+    assert _is_implausible_card_name("MH2")
+    assert _is_implausible_card_name("")
+    # Echte (auch kurze) Kartennamen -> False
+    assert not _is_implausible_card_name("Opt")
+    assert not _is_implausible_card_name("Fog")
+    assert not _is_implausible_card_name("Sol Ring")
+    assert not _is_implausible_card_name("Plunderprüfer")
+
+
+@pytest.mark.asyncio
+async def test_csv_import_garbage_rows_fail_instead_of_foreign_cards(real_db_session_factory):
+    """User-Szenario: Zeilen, deren Namens-Spalte eine Zahl oder ein Set-Code
+    ist (verrutschte Spalten), dürfen NICHT per Fuzzy-Match als fremde Karte
+    (z.B. 'SPM' -> Wispmare) in den Alben landen. Sie zählen als Fehler; der
+    Scryfall-Fetch wird für sie gar nicht erst aufgerufen."""
+    from routers import collection as coll
+
+    csv_text = "Kartenname;Anzahl;Edition;Album\nSol Ring;1;C21;Deck A\nSPM;1;;Deck A\n2;1;;Deck B\n"
+
+    requested_names = []
+
+    async def fake_fetch(names):
+        requested_names.extend(names)
+        # Selbst wenn Scryfall für Müll etwas liefern WÜRDE, darf es nie
+        # angefragt werden -- deshalb absichtlich auch 'spm' im Fake-Katalog.
+        katalog = dict(_FAKE_CARDS)
+        katalog["spm"] = {"name": "Wispmare", "image": "img/wm", "price": "0.10",
+                          "type": "Creature", "colors": ["W"], "cmc": 3,
+                          "rarity": "common", "set": "lrw", "legalities": {}}
+        return {n.lower().strip(): katalog[n.lower().strip()]
+                for n in names if n.lower().strip() in katalog}
+
+    session_factory = _real_get_db_session(real_db_session_factory)
+    with patch.object(coll, "get_db_session", session_factory), \
+         patch.object(coll, "fetch_card_details_cached", side_effect=fake_fetch):
+        # Job-Zeile anlegen, damit das Status-Update ins Leere läuft
+        async with session_factory() as s:
+            await s.execute(text(
+                "INSERT INTO import_jobs (job_id, status, erstellt_am) VALUES ('job-g', 'processing', CURRENT_TIMESTAMP)"
+            ))
+        await coll.run_csv_import_task("job-g", csv_text, "tester", "Import")
+
+        async with session_factory() as s:
+            res = await s.execute(text(
+                "SELECT karten_name, album_name FROM sammlung_alben WHERE benutzername='tester'"
+            ))
+            rows = [dict(r) for r in res.mappings().all()]
+            res_job = await s.execute(text("SELECT status, result FROM import_jobs WHERE job_id='job-g'"))
+            job = res_job.mappings().first()
+
+    # Nur die echte Karte wurde importiert -- KEINE Wispmare, nirgends.
+    assert rows == [{"karten_name": "Sol Ring", "album_name": "Deck A"}]
+    # Der Müll wurde Scryfall nie vorgelegt
+    assert "SPM" not in requested_names and "2" not in requested_names
+    # Job-Ergebnis meldet die zwei Fehler ehrlich
+    import json as _json
+    result = _json.loads(job["result"])
+    assert job["status"] == "completed"
+    assert result["imported"] == 1
+    assert result["failed"] == 2
+    assert len(result["errors"]) == 2

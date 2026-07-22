@@ -423,18 +423,47 @@ async def sammlung_editions(benutzername: str, album: str = Query(default=None),
 # ======================================================================
 # Asynchroner Background-Task für CSV-Import
 # ======================================================================
+def _is_implausible_card_name(name: str) -> bool:
+    """
+    Erkennt Zellinhalte, die offensichtlich KEIN Kartenname sind und beim
+    Import niemals per Fuzzy-Suche 'erraten' werden dürfen (Scryfalls
+    Fuzzy-Match löst z.B. den Set-Code 'SPM' auf die echte Karte 'Wispmare'
+    auf -- so landete früher dieselbe fremde Karte in allen Alben):
+    - rein numerische Werte (verrutschte Mengen-/Preis-Spalte, '1', '0.61')
+    - kurze ALL-CAPS-Codes (Set-Codes wie 'SPM', 'ECL', 'MH2') -- echte
+      Kartennamen sind nie komplett großgeschrieben
+    """
+    n = (name or "").strip()
+    if not n:
+        return True
+    if re.fullmatch(r"[\d.,]+", n):
+        return True
+    if len(n) <= 5 and n.isupper() and n.isalnum():
+        return True
+    return False
+
+
 async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, album_name: str):
     try:
         rows_to_insert = []
         imported = 0
         failed = 0
         errors_list = []
-        
+
         # 1. Robust parsen (Delimiter-Erkennung, Header-Spalten-Mapping, Mengen-Strip)
         parsed_entries = parse_import_csv(csv_text, album_name)
         rows_parsed = []
         unique_card_names = set()
         for i, entry in enumerate(parsed_entries, start=1):
+            # Offensichtlichen Nicht-Kartennamen-Müll VOR dem Scryfall-Fetch
+            # aussortieren, damit er nicht fuzzy auf fremde Karten auflöst.
+            if _is_implausible_card_name(entry["name"]):
+                failed += entry["anzahl"]
+                errors_list.append(
+                    f"Zeile {i}: '{entry['name']}' sieht nicht nach einem Kartennamen aus "
+                    "(Zahl oder Set-Code) und wurde übersprungen."
+                )
+                continue
             rows_parsed.append({
                 "row_num": i,
                 "name": entry["name"],
