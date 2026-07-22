@@ -148,6 +148,70 @@ async def create_checkout_session(req: CheckoutReq, current_user: str = Depends(
         return {"erfolg": False, "error": str(e)}
 
 # ======================================================================
+# POST /api/checkout/cancel-subscription – Abo selbst kündigen (Self-Service)
+# ======================================================================
+@router.post(
+    "/checkout/cancel-subscription",
+    summary="Eigenes Premium-Abo kündigen",
+)
+async def cancel_subscription(current_user: str = Depends(get_current_user)):
+    """
+    Kündigt das Stripe-Abo des eingeloggten Nutzers zum Ende der bezahlten
+    Periode (cancel_at_period_end) -- Self-Service, wie in den AGB zugesagt.
+
+    Verhalten:
+    - Premium bleibt bis zum Periodenende aktiv (der Nutzer hat dafür bezahlt);
+      das Downgrade auf 'free' erledigt der bestehende
+      customer.subscription.deleted-Webhook, wenn Stripe das Abo beendet.
+    - Hat der Nutzer KEIN Stripe-Abo (z.B. per Admin/Dev-Upgrade Premium),
+      gibt es eine ehrliche Fehlermeldung statt einer Schein-Kündigung.
+    """
+    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    if not stripe_key:
+        return {"erfolg": False, "error": "Stripe ist auf diesem Server nicht konfiguriert."}
+
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT stripe_subscription_id FROM nutzer WHERE benutzername = :name"),
+            {"name": current_user},
+        )
+        row = res.mappings().first()
+
+    subscription_id = row["stripe_subscription_id"] if row else None
+    if not subscription_id:
+        return {
+            "erfolg": False,
+            "kein_abo": True,
+            "error": "Für dieses Konto ist kein aktives Stripe-Abo hinterlegt.",
+        }
+
+    try:
+        stripe.api_key = stripe_key
+        sub = stripe.Subscription.modify(subscription_id, cancel_at_period_end=True)
+    except Exception as e:
+        logger.exception("Fehler beim Kündigen des Abos für %s", current_user)
+        return {"erfolg": False, "error": f"Kündigung bei Stripe fehlgeschlagen: {e}"}
+
+    # Periodenende ermitteln (neuere Stripe-API-Versionen liefern
+    # current_period_end auf den Subscription-Items statt top-level).
+    period_end = get_stripe_val(sub, "current_period_end")
+    if not period_end:
+        items = get_stripe_val(get_stripe_val(sub, "items", {}), "data", []) or []
+        if items:
+            period_end = get_stripe_val(items[0], "current_period_end")
+
+    logger.info(
+        "User %s hat Abo %s gekündigt (cancel_at_period_end, läuft bis %s).",
+        current_user, subscription_id, period_end,
+    )
+    return {
+        "erfolg": True,
+        "laeuft_bis": period_end,  # Unix-Timestamp oder None
+        "nachricht": "Dein Abo ist gekündigt. Premium bleibt bis zum Ende der bezahlten Periode aktiv.",
+    }
+
+
+# ======================================================================
 # Gemeinsamer Webhook Event Processor
 # ======================================================================
 async def handle_stripe_webhook_logic(request: Request):

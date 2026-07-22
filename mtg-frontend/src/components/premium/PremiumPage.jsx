@@ -215,36 +215,59 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                   <div style={{ color: 'var(--price-color)', fontSize: '1.05rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '15px' }}>
                     <CheckIcon color="var(--price-color)" size={20} /> Premium Aktiv
                   </div>
-                  <button 
-                    className="secondary-btn" 
+                  <button
+                    className="secondary-btn"
                     onClick={async () => {
-                      if (!window.confirm("Möchtest du dein Test-Abonnement zu Testzwecken beenden? (Downgrade)")) {
+                      if (!window.confirm(
+                        "Möchtest du dein Premium-Abo wirklich kündigen?\n\n" +
+                        "Premium bleibt bis zum Ende der bereits bezahlten Periode aktiv, danach wird nichts mehr abgebucht."
+                      )) {
                         return;
                       }
-                      // benutzername wird zusätzlich zum Bearer-Token mitgeschickt, weil das
-                      // Backend beides verlangt: einen gültigen Login-Token (wird automatisch
-                      // vom globalen fetch-Interceptor in main.jsx angehängt) UND dass der
-                      // Token-Inhaber (current_user) mit dem Ziel-Account übereinstimmt --
-                      // ein Nutzer darf sich nur selbst zurückstufen, nie hoch- oder fremde
-                      // Accounts verändern.
                       try {
-                        const res = await fetch('/api/user/update-role', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ benutzername: currentUser, rolle: 'free' })
-                        });
-                        if (res.ok) {
-                          alert("Abo beendet (Rolle zurückgesetzt auf 'free').");
-                          setUserRole("free");
-                        } else if (res.status === 401) {
-                          alert("Deine Sitzung ist abgelaufen. Bitte logge dich erneut ein und versuche es noch einmal.");
-                        } else {
-                          const data = await res.json().catch(() => ({}));
-                          alert(data.detail || "Downgrade fehlgeschlagen. Bitte versuche es später erneut.");
+                        // Echte Self-Service-Kündigung: setzt das Stripe-Abo auf
+                        // cancel_at_period_end. Das Downgrade auf 'free' erledigt
+                        // der Stripe-Webhook am Periodenende automatisch.
+                        const res = await fetch('/api/checkout/cancel-subscription', { method: 'POST' });
+                        const data = await res.json().catch(() => ({}));
+
+                        if (res.ok && data.erfolg) {
+                          const bis = data.laeuft_bis
+                            ? new Date(data.laeuft_bis * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                            : null;
+                          alert(
+                            "Dein Abo ist gekündigt." +
+                            (bis ? `\nPremium bleibt noch bis zum ${bis} aktiv.` : "\nPremium bleibt bis zum Ende der bezahlten Periode aktiv.")
+                          );
+                          return;
                         }
+
+                        if (res.status === 401) {
+                          alert("Deine Sitzung ist abgelaufen. Bitte logge dich erneut ein und versuche es noch einmal.");
+                          return;
+                        }
+
+                        if (data.kein_abo) {
+                          // Premium ohne Stripe-Abo (Dev-/Admin-Upgrade): dann gibt es
+                          // bei Stripe nichts zu kündigen -- Rolle direkt zurücksetzen.
+                          const resRole = await fetch('/api/user/update-role', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ benutzername: currentUser, rolle: 'free' })
+                          });
+                          if (resRole.ok) {
+                            alert("Für dieses Konto war kein Stripe-Abo hinterlegt (Test-Premium). Die Rolle wurde auf 'free' zurückgesetzt.");
+                            setUserRole("free");
+                          } else {
+                            alert(data.error || "Kündigung fehlgeschlagen. Bitte kontaktiere den Support.");
+                          }
+                          return;
+                        }
+
+                        alert(data.error || "Kündigung fehlgeschlagen. Bitte versuche es später erneut oder kontaktiere den Support.");
                       } catch (err) {
-                        console.error("Downgrade fehlgeschlagen:", err);
-                        alert("Downgrade fehlgeschlagen (Netzwerkfehler). Bitte versuche es später erneut.");
+                        console.error("Kündigung fehlgeschlagen:", err);
+                        alert("Kündigung fehlgeschlagen (Netzwerkfehler). Bitte versuche es später erneut.");
                       }
                     }}
                     style={{
@@ -256,7 +279,7 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                       fontSize: '0.95rem'
                     }}
                   >
-                    Als Entwickler downgraden (Testen)
+                    Abo kündigen
                   </button>
                 </div>
               ) : (
