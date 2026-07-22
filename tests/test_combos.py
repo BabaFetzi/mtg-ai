@@ -69,3 +69,51 @@ async def test_scan_combos_cache_hit(mock_cache, mock_get_db, mock_check_premium
     
     # Database session shouldn't be touched if cache hit
     assert mock_get_db.call_count == 0
+
+
+# ======================================================================
+# Einzelkarten-Pfad: Leerergebnis bleibt ehrlich leer (keine Dummy-Combos)
+# ======================================================================
+@pytest.mark.asyncio
+async def test_run_combos_bg_empty_result_stays_empty():
+    """Früher erfand der Einzelkarten-Scanner bei Leerergebnis Dummy-Combos
+    ('<Karte> + Sol Ring', '<Karte> + Command Tower'). Jetzt muss ein leeres
+    Spellbook-Ergebnis ohne verfügbare KI als LEERE Empfehlungsliste im Job
+    landen -- das Frontend zeigt dann 'Keine spezifischen Combos gefunden.'"""
+    import routers.ai as ai_mod
+
+    async def fake_fetch(names):
+        return {}
+
+    saved = {}
+
+    class FakeCache:
+        def get(self, key):
+            return None
+        def set(self, key, value):
+            saved["cache"] = value
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json.return_value = {"results": []}
+
+    with patch("services.scryfall.fetch_card_details_cached", side_effect=fake_fetch), \
+         patch.object(ai_mod, "scryfall_cache", FakeCache()), \
+         patch.object(ai_mod, "model_lite", None), \
+         patch.object(ai_mod, "get_db_session", return_value=ctx), \
+         patch("httpx.get", return_value=fake_resp):
+        await ai_mod.run_combos_bg("job-empty", "Totally Obscure Card", "commander", "ck", "tester")
+
+    assert saved["cache"] == {"empfehlungen": []}
+    # Und im Job-Update steht ebenfalls die leere Liste
+    update_call = mock_session.execute.call_args_list[-1]
+    params = update_call.args[1]
+    assert '"empfehlungen": []' in params["result"]
+    assert "Sol Ring" not in params["result"]
+    assert "Command Tower" not in params["result"]

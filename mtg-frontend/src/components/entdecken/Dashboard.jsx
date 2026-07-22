@@ -262,8 +262,8 @@ export default function Dashboard({ currentUser }) {
                   <span style={{ fontSize: '1.4rem', fontWeight: 'bold' }}>{stats?.total_collection_cards ?? 0}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--text-muted)' }}>Suchanfragen & Analysen</span>
-                  <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#0071E3' }}>{stats?.query_count ?? 1420}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>Angelegte Alben</span>
+                  <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: '#0071E3' }}>{stats?.total_albums ?? 0}</span>
                 </div>
               </div>
             )}

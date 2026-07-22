@@ -683,20 +683,29 @@ async def get_dashboard_stats():
             res_collection = await session.execute(text("SELECT SUM(anzahl) FROM sammlung_alben"))
             collection_count = res_collection.scalar() or 0
 
-            # 3. Simulated API queries count (based on decks, collection entries, and a fixed starting value)
-            query_count = (decks_count * 12) + (collection_count * 3) + 1420
+            # 3. Echte Anzahl angelegter Alben (über alle Nutzer). Der frühere
+            # "query_count" war eine erfundene Formel (decks*12+karten*3+1420)
+            # -- keine Fake-Metriken im Dashboard.
+            res_albums = await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM ("
+                    "SELECT DISTINCT benutzername, album_name FROM sammlung_alben"
+                    ") AS alben"
+                )
+            )
+            albums_count = res_albums.scalar() or 0
 
             return {
                 "total_decks": decks_count,
                 "total_collection_cards": collection_count,
-                "query_count": query_count
+                "total_albums": albums_count,
             }
     except Exception as e:
         logger.exception("Fehler beim Laden der Dashboard-Statistiken")
         return {
             "total_decks": 0,
             "total_collection_cards": 0,
-            "query_count": 1420
+            "total_albums": 0,
         }
 
 
