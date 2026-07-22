@@ -794,10 +794,22 @@ async def vision_detection_loop(session_id: str):
                     if now_time - last_gemini_time >= 12.5:
                         session["last_card_signature"] = board_signature
                         if cards_raw:
-                            logger.info("Board state changed to: %s. Requesting AI advice...", board_signature)
-                            session["last_gemini_request_time"] = now_time
-                            advice = await generate_board_advice(cards_raw)
-                            session["last_advice"] = advice
+                            # Gemini-Nutzung auf das monatliche Vision-Minuten-
+                            # Kontingent des Session-Besitzers anrechnen
+                            # (analog /ws) -- ohne Besitzer/über Limit kein
+                            # KI-Aufruf.
+                            owner = session.get("owner", "")
+                            if check_and_increment_vision_minutes(owner, 12.5 / 60):
+                                logger.info("Board state changed to: %s. Requesting AI advice...", board_signature)
+                                session["last_gemini_request_time"] = now_time
+                                advice = await generate_board_advice(cards_raw)
+                                session["last_advice"] = advice
+                            else:
+                                advice = (
+                                    "⚠️ Grana AI Hinweis: Dein monatliches Live-Vision-Limit ist erreicht. "
+                                    "Es setzt sich zu Beginn des nächsten Monats zurück."
+                                )
+                                session["last_advice"] = advice
                         else:
                             advice = ""
                             session["last_advice"] = ""
@@ -824,18 +836,54 @@ async def vision_detection_loop(session_id: str):
     logger.info("Stopped vision detection loop for session %s", session_id)
 
 @router.websocket("/stream/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str):
+async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str, token: str = ""):
+    # ------------------------------------------------------------------
+    # Zugriffsschutz (analog /ws): Dieser Endpoint löst Gemini-Aufrufe aus
+    # und war zuvor komplett ungeschützt.
+    #
+    # - role=display erstellt die Session und MUSS ein gültiges JWT
+    #   (Access-Token) mitbringen und Premium sein. Browser-WebSockets können
+    #   keinen Authorization-Header senden, daher Query-Param wie bei /ws.
+    # - role=camera ist das per QR-Code verbundene Handy (dort ist der Nutzer
+    #   nicht eingeloggt). Eine Kamera darf deshalb NUR einer bereits
+    #   existierenden Session beitreten -- die von einem authentifizierten
+    #   Premium-Display erzeugte Session-ID ist die Zugangsberechtigung.
+    #   Kameras können keine Session anlegen.
+    # ------------------------------------------------------------------
+    if role == "display":
+        payload = decode_token(token) if token else None
+        benutzername = None
+        if payload and payload.get("type", "access") == "access":
+            benutzername = payload.get("sub")
+        if not benutzername:
+            await websocket.close(code=4401, reason="Nicht authentifiziert")
+            return
+        if not await check_user_premium(benutzername):
+            await websocket.close(code=4403, reason="Live-Playfield ist ein Premium-Feature")
+            return
+    elif role == "camera":
+        if session_id not in active_sessions:
+            await websocket.close(code=4404, reason="Session existiert nicht")
+            return
+    else:
+        await websocket.close(code=4400, reason="Ungültige Rolle")
+        return
+
     await websocket.accept()
-    
-    # Initialize session in registry if not exists
+
+    # Initialize session in registry if not exists (nur Displays kommen hierhin,
+    # Kameras wurden oben abgewiesen, wenn die Session fehlt)
     if session_id not in active_sessions:
         active_sessions[session_id] = {
             "camera": None,
             "displays": [],
             "latest_frame": None,
-            "ai_task": None
+            "ai_task": None,
+            # Besitzer der Session -- Gemini-Nutzung der Detection-Loop wird
+            # auf sein monatliches Vision-Minuten-Kontingent angerechnet.
+            "owner": benutzername,
         }
-        
+
     if role == "camera":
         # Close previous camera connection if open
         old_cam = active_sessions[session_id]["camera"]

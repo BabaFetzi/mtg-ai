@@ -1,8 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronRight, Check, Copy, Video, CameraOff, Layers, Sparkles, Target, Bot } from 'lucide-react';
+import { getAccessToken } from '../../utils/authFetch';
 
 function PlayfieldView({ currentUser, userRole, onShowPremiumModal }) {
-  const [sessionId] = useState(() => Math.random().toString(36).substring(2, 9));
+  // Kryptografisch zufällige Session-ID: sie ist die Zugangsberechtigung, mit
+  // der sich die (nicht eingeloggte) Handy-Kamera verbinden darf -- ein kurzer
+  // Math.random()-String wäre erratbar.
+  const [sessionId] = useState(() =>
+    (window.crypto && window.crypto.randomUUID)
+      ? window.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
   const [isConnected, setIsConnected] = useState(false);
   const [streamUrl, setStreamUrl] = useState(null);
   const [cards, setCards] = useState([]);
@@ -112,8 +120,10 @@ function PlayfieldView({ currentUser, userRole, onShowPremiumModal }) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsPort = (window.location.port === '5173' || window.location.port === '5175') ? '8001' : (window.location.port ? window.location.port : '');
     const host = wsPort ? `${window.location.hostname}:${wsPort}` : window.location.hostname;
-    const wsUrl = `${protocol}//${host}/api/vision/stream/${sessionId}?role=display`;
-    console.log(`Connecting to WebSocket: ${wsUrl}`);
+    // JWT als Query-Param, weil Browser-WebSockets keinen Authorization-
+    // Header senden können (gleiches Muster wie /api/vision/ws). Der Server
+    // verlangt für role=display Login + Premium.
+    const wsUrl = `${protocol}//${host}/api/vision/stream/${sessionId}?role=display&token=${encodeURIComponent(getAccessToken())}`;
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
 
@@ -156,9 +166,15 @@ function PlayfieldView({ currentUser, userRole, onShowPremiumModal }) {
       setInfoMessage('Verbindungsfehler.');
     };
 
-    socket.onclose = () => {
+    socket.onclose = (ev) => {
       setIsConnected(false);
-      setInfoMessage('Verbindung getrennt. Versuche erneut zu verbinden...');
+      if (ev && ev.code === 4401) {
+        setInfoMessage('Nicht angemeldet – bitte einloggen, um das Live-Playfield zu nutzen.');
+      } else if (ev && ev.code === 4403) {
+        setInfoMessage('Das Live-Playfield ist ein Premium-Feature.');
+      } else {
+        setInfoMessage('Verbindung getrennt. Versuche erneut zu verbinden...');
+      }
     };
 
     return () => {

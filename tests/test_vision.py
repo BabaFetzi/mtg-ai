@@ -11,9 +11,12 @@ client = TestClient(app)
 
 _TEST_TOKEN = create_access_token({"sub": "tester"})
 
-def test_vision_websocket_streaming():
-    # Test dynamic display connection and camera frame forwarding
-    with client.websocket_connect("/api/vision/stream/test_session_stream?role=display") as display_ws:
+@patch("routers.vision.check_user_premium", new_callable=AsyncMock)
+def test_vision_websocket_streaming(mock_premium):
+    # Test dynamic display connection and camera frame forwarding.
+    # /stream verlangt inzwischen Login + Premium für role=display.
+    mock_premium.return_value = True
+    with client.websocket_connect(f"/api/vision/stream/test_session_stream?role=display&token={_TEST_TOKEN}") as display_ws:
         # Display receives the welcome/status info message first
         info = display_ws.receive_json()
         assert info["type"] == "info"
