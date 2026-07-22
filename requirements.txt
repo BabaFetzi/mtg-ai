@@ -10,7 +10,7 @@ pydantic
 python-multipart
 httpx
 requests
-google-generativeai
+google-genai>=1.0.0
 redis
 slowapi
 stripe

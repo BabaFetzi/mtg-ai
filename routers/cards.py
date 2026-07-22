@@ -24,7 +24,7 @@ from sqlalchemy import text
 
 from auth import get_current_user_optional
 from services.cache import scryfall_cache
-from services.scryfall import fetch_card_details_cached, scryfall_client, scryfall_request
+from services.scryfall import fetch_card_details_cached, scryfall_client, scryfall_request, best_market_price
 from services.ai_service import model_lite, KI_VERFUEGBAR
 from services.usage_limiter import check_and_increment_ai_usage
 from database import get_db_session, check_user_premium
@@ -67,7 +67,10 @@ async def suche_karte(
     """
     benutzername = current_user or ""
     is_premium = await check_user_premium(benutzername) if current_user else False
-    cache_key = f"suche:{search_term.lower().strip()}:{is_premium}"
+    # v2: Cache-Key-Version erhöht, weil das Antwortschema jetzt zusätzlich
+    # 'marktwert' enthält -- so werden vor dem Deploy gecachte Einträge (ohne
+    # marktwert) nicht mehr ausgeliefert und der Preis wird neu berechnet.
+    cache_key = f"suche:v2:{search_term.lower().strip()}:{is_premium}"
 
     # --- Cache-Hit → sofort zurückgeben ---
     cached = scryfall_cache.get(cache_key)
@@ -111,11 +114,15 @@ async def suche_karte(
         prints = await _fetch_prints(client, data, bild)
 
         # --- Ergebnis zusammenbauen ---
+        # marktwert = günstigster echter Preis über ALLE Editionen. Verhindert, dass
+        # 0.00 € angezeigt wird, nur weil der erste Print (z.B. eine Secret-Lair-Promo)
+        # keinen EUR-Preis bei Scryfall hat, obwohl andere Editionen bepreist sind.
         result = {
             "name": data.get("name"),
             "typ": data.get("type_line"),
             "text_de": text_de,
             "prints": prints,
+            "marktwert": best_market_price([p.get("preis") for p in prints]),
         }
         scryfall_cache.set(cache_key, result)
 

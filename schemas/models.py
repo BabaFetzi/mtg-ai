@@ -124,6 +124,7 @@ class CardSearchResult(BaseModel):
     typ: Optional[str] = None
     text_de: str = ""
     prints: List[CardPrint] = []
+    marktwert: str = "0.00"
     error: Optional[str] = None
 
 

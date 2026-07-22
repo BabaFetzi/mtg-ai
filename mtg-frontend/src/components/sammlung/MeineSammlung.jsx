@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
-import { FolderPlus, FileSpreadsheet, Heart, RefreshCw } from 'lucide-react';
+import { FolderPlus, FileSpreadsheet, Heart, RefreshCw, Plus } from 'lucide-react';
 import CollectionFilters from './CollectionFilters';
 import CollectionGrid from './CollectionGrid';
 import CSVImportExport from './CSVImportExport';
@@ -222,9 +222,13 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
             alert("Karte nicht gefunden. Bitte Namen prüfen.");
         } else if (data && Array.isArray(data.prints) && data.prints.length > 0) {
             const actP = data.prints[0];
+            // Bester Marktpreis als Fallback, falls der erste Print keinen echten Preis hat.
+            const wunschPreis = (actP?.preis && actP.preis !== "N/A" && parseFloat(actP.preis) > 0)
+              ? String(actP.preis)
+              : (data.marktwert || "0.00");
             await fetch(`/api/sammlung/hinzufuegen`, {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ benutzername: currentUser, karten_name: data.name, album_name: "Wunschliste", bild_url: actP?.bild_url || "", preis: actP?.preis && actP.preis !== "N/A" ? String(actP.preis) : "0.00" })
+                body: JSON.stringify({ benutzername: currentUser, karten_name: data.name, album_name: "Wunschliste", bild_url: actP?.bild_url || "", preis: wunschPreis })
             });
             setWishlistSearch("");
             ladeSammlung();
@@ -273,7 +277,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                 <div style={{display: 'flex', gap: '20px', alignItems: 'center', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexWrap: 'wrap'}}>
                   <div style={{textAlign: 'right'}}>
                     <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em', display: 'block'}}>Zentraler Gesamtwert</span>
-                    <span style={{color: '#4cd964', fontWeight: 700, fontSize: '1.6rem'}}>{totalPortfolioWert} €</span>
+                    <span style={{color: 'var(--price-color)', fontWeight: 700, fontSize: '1.6rem'}}>{totalPortfolioWert} €</span>
                   </div>
                   <button 
                     className="secondary-btn" 
@@ -300,7 +304,20 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
               </div>
 
               {/* Album Cards Grid */}
-              <h3 style={{ fontSize: '1.5rem', marginBottom: '20px', fontWeight: 600 }}>Meine Ordner</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '15px', flexWrap: 'wrap' }}>
+                <h3 style={{ fontSize: '1.5rem', margin: 0, fontWeight: 600 }}>Meine Ordner</h3>
+                {/* Direkter Einstieg zum Hinzufügen einzelner Karten -- führt zur
+                    Kartensuche, die den funktionierenden "Sichern"-Flow bietet.
+                    Vorher gab es in der Sammlungs-Ansicht keinen sichtbaren Weg,
+                    eine einzelne Karte hinzuzufügen. */}
+                <button
+                  className="primary-btn"
+                  onClick={() => navigate('/?view=search')}
+                  style={{ padding: '10px 18px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <Plus size={16} /> Karte hinzufügen
+                </button>
+              </div>
               
               {Object.keys(portfolioAlben).length === 0 ? (
                 <div className="bento-grid" style={{ marginTop: '20px', marginBottom: '40px' }}>

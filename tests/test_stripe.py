@@ -256,8 +256,37 @@ async def test_checkout_price_returns_live_stripe_price(monkeypatch):
 async def test_checkout_price_not_configured_without_price_id(monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
     monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    monkeypatch.delenv("PREMIUM_PRICE_DISPLAY", raising=False)
 
     response = client.get("/api/checkout/price")
 
     assert response.status_code == 200
     assert response.json() == {"konfiguriert": False}
+
+
+@pytest.mark.asyncio
+async def test_checkout_price_uses_env_fallback_when_stripe_price_missing(monkeypatch):
+    """Ohne STRIPE_PRICE_ID, aber mit gesetztem operator-Fallback PREMIUM_PRICE_DISPLAY
+    zeigt die Preisseite einen echten Preis statt 'nicht verfügbar'."""
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    monkeypatch.setenv("PREMIUM_PRICE_DISPLAY", "3.90")
+    monkeypatch.setenv("PREMIUM_CURRENCY", "chf")
+
+    response = client.get("/api/checkout/price")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["konfiguriert"] is True
+    assert data["betrag"] == 3.90
+    assert data["waehrung"] == "CHF"
+    assert data["quelle"] == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_checkout_price_fallback_handles_comma_decimal(monkeypatch):
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    monkeypatch.setenv("PREMIUM_PRICE_DISPLAY", "4,50")
+
+    response = client.get("/api/checkout/price")
+
+    assert response.json()["betrag"] == 4.50

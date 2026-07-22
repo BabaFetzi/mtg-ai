@@ -136,17 +136,45 @@ def parse_decklist(deck_liste: str) -> List[Dict[str, Any]]:
     return parsed
 
 
+def best_market_price(preise: List[str]) -> str:
+    """Bester (günstigster echter) Marktpreis aus einer Liste von Preis-Strings.
+
+    Ignoriert fehlende/0-Preise. Wird für die 'Best Price'-Anzeige der Kartensuche
+    genutzt, damit nicht fälschlich 0.00 € erscheint, nur weil der erste/ausgewählte
+    Print (z.B. eine Secret-Lair-Promo) keinen EUR-Preis bei Scryfall hat, während
+    andere Editionen derselben Karte reale Preise haben.
+    """
+    werte = []
+    for p in preise or []:
+        try:
+            v = float(str(p).replace(",", "."))
+        except (ValueError, TypeError):
+            continue
+        if v > 0:
+            werte.append(v)
+    return f"{min(werte):.2f}" if werte else "0.00"
+
+
+def _pick_eur(prices: dict) -> str | None:
+    """Wählt einen realen EUR-Preis aus einem Scryfall prices-Objekt (eur → eur_foil
+    → eur_etched). Gibt None zurück, wenn keiner der Werte gesetzt ist -- so lässt
+    sich ein echtes Fehlen von einem tatsächlichen 0-Preis unterscheiden."""
+    if not prices:
+        return None
+    for key in ("eur", "eur_foil", "eur_etched"):
+        val = prices.get(key)
+        if val:
+            return val
+    return None
+
+
 def _extract_card_info(card_data: dict) -> Dict[str, Any]:
     """Extrahiert ein normalisiertes Card-Info-Dict aus einem Scryfall-Datenobjekt."""
     img = card_data.get("image_uris", {}).get("normal", "")
     if not img and "card_faces" in card_data:
         img = card_data["card_faces"][0].get("image_uris", {}).get("normal", "")
 
-    price_val = (
-        card_data.get("prices", {}).get("eur")
-        or card_data.get("prices", {}).get("eur_foil")
-        or "0.00"
-    )
+    price_val = _pick_eur(card_data.get("prices", {})) or "0.00"
 
     # Oracle-Text (Regeltext) -- für DFCs/Split-Karten beide Seiten zusammenführen.
     oracle_text = card_data.get("oracle_text", "")
@@ -167,6 +195,51 @@ def _extract_card_info(card_data: dict) -> Dict[str, Any]:
         "price": price_val,
         "legalities": card_data.get("legalities", {}),
     }
+
+
+async def _fetch_cheapest_paper_eur(client: httpx.AsyncClient, card_name: str) -> str | None:
+    """Findet den günstigsten realen Papier-EUR-Preis über ALLE Prints einer Karte.
+
+    Notwendig, weil der von Scryfall gelieferte Standard-Print oft keinen EUR-Preis
+    hat (z.B. Black Lotus -> Default-Print ist das digitale MTGO-Set 'Vintage Masters'
+    mit prices.eur = null, obwohl die Karte real Tausende Euro wert ist). Ohne diesen
+    Fallback zeigt die App für solche Karten fälschlich 0.00 €.
+    """
+    if not card_name:
+        return None
+    try:
+        # Exakt-Namenssuche über alle Papier-Prints, günstigster EUR zuerst.
+        quoted = urllib.parse.quote('!"' + card_name + '" game:paper')
+        url = f"https://api.scryfall.com/cards/search?q={quoted}&unique=prints&order=eur&dir=asc"
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        prices = []
+        for c in resp.json().get("data", []):
+            eur = _pick_eur(c.get("prices", {}))
+            if eur:
+                try:
+                    prices.append(float(eur))
+                except (ValueError, TypeError):
+                    continue
+        if prices:
+            return f"{min(prices):.2f}"
+    except Exception:
+        logger.debug("cheapest-paper-Preis-Lookup fehlgeschlagen für %s", card_name, exc_info=True)
+    return None
+
+
+async def _build_card_info(client: httpx.AsyncClient, card_data: dict) -> Dict[str, Any]:
+    """Wie _extract_card_info, ergänzt aber einen fehlenden Marktpreis über den
+    günstigsten Papier-Print (nur wenn der Standard-Print keinen EUR-Preis hat --
+    kostet also nur bei diesen Karten einen zusätzlichen Scryfall-Call)."""
+    info = _extract_card_info(card_data)
+    if _pick_eur(card_data.get("prices", {})) is None:
+        cheapest = await _fetch_cheapest_paper_eur(client, card_data.get("name", ""))
+        if cheapest:
+            info["price"] = cheapest
+            info["prices"] = {**info.get("prices", {}), "eur": cheapest}
+    return info
 
 
 def _cache_card_info(card_info: Dict[str, Any], *extra_keys: str) -> None:
@@ -259,7 +332,7 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
                 if resp.status_code == 200:
                     data = resp.json()
                     for c in data.get("data", []):
-                        card_info = _extract_card_info(c)
+                        card_info = await _build_card_info(client, c)
                         c_name_lower = c["name"].lower().strip()
 
                         # In Cache schreiben + Ergebnis-Dict befüllen
@@ -328,7 +401,7 @@ async def _fallback_fuzzy(
         url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(card_name)}"
         resp = await scryfall_request(client, "GET", url)
         if resp.status_code == 200:
-            return _extract_card_info(resp.json())
+            return await _build_card_info(client, resp.json())
     except Exception:
         pass
     return None
@@ -347,7 +420,7 @@ async def _fallback_multilang(
         if resp.status_code == 200:
             search_data = resp.json()
             if "data" in search_data and len(search_data["data"]) > 0:
-                return _extract_card_info(search_data["data"][0])
+                return await _build_card_info(client, search_data["data"][0])
     except Exception:
         pass
     return None
