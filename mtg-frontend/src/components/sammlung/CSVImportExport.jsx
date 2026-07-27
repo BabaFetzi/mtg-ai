@@ -87,6 +87,9 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
         setProgress(50);
         const jobId = data.job_id;
         let attempts = 0;
+        // 200 Versuche à 1,5s = 5 Minuten -- grosszügig für grosse Importe,
+        // aber garantiert endlich.
+        const MAX_IMPORT_POLLS = 200;
         
         const checkStatus = async () => {
           try {
@@ -106,6 +109,15 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
             } else if (statusData.status === "failed") {
               setImportStatus("error");
               alert(statusData.error || "Fehler beim Importieren der CSV.");
+            } else if (attempts >= MAX_IMPORT_POLLS) {
+              // Harte Obergrenze: ohne sie lief die Statusabfrage endlos weiter,
+              // wenn ein Import-Job nie abschloss (Fortschrittsbalken blieb bei
+              // 95% stehen und es passierte für immer nichts).
+              setImportStatus("error");
+              alert(
+                "Der Import dauert ungewöhnlich lange und wurde nicht bestätigt. " +
+                "Bitte lade die Sammlung neu und prüfe, ob die Karten angekommen sind."
+              );
             } else {
               // Still processing, schedule next poll
               setProgress(Math.min(50 + attempts * 5, 95));

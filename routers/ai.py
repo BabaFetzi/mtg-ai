@@ -114,7 +114,12 @@ async def get_combos(
             "message": "Der KI-Synergie-Scanner steht nur Premium-Mitgliedern zur Verfügung."
         }
 
-    cache_key = f"combos:{card_name.lower().strip()}:{format.lower().strip()}"
+    # v2: seit die Ergebnisse eine exakte "cards"-Liste enthalten (für korrekte
+    # Kartenbilder im Frontend). Ohne Versionierung würden alte Einträge ohne
+    # dieses Feld weiter ausgeliefert -- das Frontend müsste die Namen dann aus
+    # der Überschrift raten und zerlegt Namen mit Komma falsch
+    # ("Ashaya, Soul of the Wild" -> "Ashaya" + "Soul of the Wild").
+    cache_key = f"combos:v2:{card_name.lower().strip()}:{format.lower().strip()}"
     cached = scryfall_cache.get(cache_key)
     if cached:
         return {"status": "completed", "result": cached}
@@ -122,7 +127,8 @@ async def get_combos(
     job_id = str(uuid.uuid4())
     async with get_db_session() as session:
         await session.execute(
-            text("INSERT INTO synergy_jobs (job_id, status, result) VALUES (:job_id, 'processing', NULL)"),
+            text("INSERT INTO synergy_jobs (job_id, status, result, erstellt_am) "
+                 "VALUES (:job_id, 'processing', NULL, CURRENT_TIMESTAMP)"),
             {"job_id": job_id}
         )
 
@@ -164,7 +170,8 @@ async def scan_combos(req: ScanCombosReq, background_tasks: BackgroundTasks, req
     job_id = str(uuid.uuid4())
     async with get_db_session() as session:
         await session.execute(
-            text("INSERT INTO synergy_jobs (job_id, status, result) VALUES (:job_id, 'processing', NULL)"),
+            text("INSERT INTO synergy_jobs (job_id, status, result, erstellt_am) "
+                 "VALUES (:job_id, 'processing', NULL, CURRENT_TIMESTAMP)"),
             {"job_id": job_id}
         )
 

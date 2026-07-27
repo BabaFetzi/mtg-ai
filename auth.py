@@ -33,6 +33,29 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login", auto_error=False)
 # Key: (ip, username), Value: (attempts_count, block_until_timestamp)
 login_attempts: Dict[Tuple[str, str], Tuple[int, float]] = {}
 
+# Zeitpunkt des letzten Fehlversuchs je Schlüssel -- nötig, um alte Einträge
+# wieder freizugeben. Ohne diese Bereinigung wuchs `login_attempts` unbegrenzt:
+# wer Logins für viele verschiedene Benutzernamen/IPs durchprobiert, konnte den
+# Serverspeicher volllaufen lassen (jede Kombination legte dauerhaft einen
+# Eintrag an, der nie entfernt wurde).
+_attempt_seen: Dict[Tuple[str, str], float] = {}
+LOGIN_ATTEMPT_TTL_SECONDS = 3600
+_MAX_TRACKED_ATTEMPTS = 10000
+
+
+def _prune_login_attempts(now: float) -> None:
+    """Entfernt abgelaufene Fehlversuchs-Einträge (nicht mehr gesperrt und älter
+    als LOGIN_ATTEMPT_TTL_SECONDS)."""
+    veraltet = [
+        key
+        for key, seen in _attempt_seen.items()
+        if now - seen > LOGIN_ATTEMPT_TTL_SECONDS
+        and now >= login_attempts.get(key, (0, 0.0))[1]
+    ]
+    for key in veraltet:
+        login_attempts.pop(key, None)
+        _attempt_seen.pop(key, None)
+
 def check_login_rate_limit(ip: str, username: str) -> None:
     key = (ip, username)
     now = time.time()
@@ -51,12 +74,19 @@ def check_login_rate_limit(ip: str, username: str) -> None:
 def record_login_attempt(ip: str, username: str, success: bool) -> None:
     key = (ip, username)
     now = time.time()
+
+    # Gelegentlich aufräumen: bei jedem Fehlversuch, sobald die Registry gross
+    # wird -- so bleibt der Speicherverbrauch auch unter Angriff begrenzt.
+    if len(login_attempts) > _MAX_TRACKED_ATTEMPTS:
+        _prune_login_attempts(now)
+
     if success:
-        if key in login_attempts:
-            del login_attempts[key]
+        login_attempts.pop(key, None)
+        _attempt_seen.pop(key, None)
     else:
         attempts, block_until = login_attempts.get(key, (0, 0.0))
         attempts += 1
+        _attempt_seen[key] = now
         if attempts >= 5:
             block_until = now + 900 # 15 minutes block
             login_attempts[key] = (attempts, block_until)

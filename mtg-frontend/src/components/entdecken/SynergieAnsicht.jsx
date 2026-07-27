@@ -68,29 +68,46 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
 
   const handleSearchSubmit = () => { if(!suche) return; analysiereSynergien(suche); }
 
+  // Auf das Hintergrund-Ergebnis warten -- mit harter Obergrenze. Ohne sie lief
+  // die Abfrage endlos weiter (jede Sekunde), wenn ein Job nie fertig wurde:
+  // der Nutzer sah einen Spinner, der sich nie beruhigt. Der Abstand wächst
+  // zudem an, damit lange Scans das Backend nicht mit Statusabfragen fluten.
+  const POLL_TIMEOUT_MS = 90000;
   const pollSynergyJob = (jobId) => {
     return new Promise((resolve, reject) => {
-      const interval = setInterval(async () => {
+      const startedAt = Date.now();
+      let delay = 1000;
+      let cancelled = false;
+
+      const check = async () => {
+        if (cancelled) return;
+        if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+          reject(new Error("Die Analyse dauert ungewöhnlich lange. Bitte versuche es später erneut."));
+          return;
+        }
         try {
           const res = await fetch(`/api/scan_combos/status/${jobId}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === 'completed') {
-              clearInterval(interval);
-              resolve(data.result);
-            } else if (data.status === 'failed') {
-              clearInterval(interval);
-              reject(new Error(data.result?.error || "Job fehlgeschlagen"));
-            }
-          } else {
-            clearInterval(interval);
+          if (!res.ok) {
             reject(new Error("Netzwerkfehler beim Prüfen des Job-Status"));
+            return;
           }
+          const data = await res.json();
+          if (data.status === 'completed') {
+            resolve(data.result);
+            return;
+          }
+          if (data.status === 'failed') {
+            reject(new Error(data.result?.error || "Job fehlgeschlagen"));
+            return;
+          }
+          delay = Math.min(delay * 1.3, 4000);
+          setTimeout(check, delay);
         } catch (err) {
-          clearInterval(interval);
           reject(err);
         }
-      }, 1000);
+      };
+
+      setTimeout(check, delay);
     });
   };
 

@@ -232,7 +232,16 @@ async def refresh_access_token(req: RefreshReq):
     "/user/role/{benutzername}",
     summary="Benutzerrolle abfragen",
 )
-async def get_user_role(benutzername: str):
+async def get_user_role(benutzername: str, current_user: str = Depends(get_current_user)):
+    # Zuvor war der Endpunkt völlig offen: damit liess sich für JEDEN
+    # Benutzernamen prüfen, ob er existiert und ob er zahlender Kunde ist
+    # (Konto-Enumeration + Offenlegung des Abo-Status). Jetzt darf nur der
+    # eigene Status abgefragt werden -- Admins zusätzlich fremde.
+    if benutzername != current_user and not _is_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Du darfst nur deinen eigenen Status abfragen.",
+        )
     async with get_db_session() as session:
         res = await session.execute(
             text("SELECT rolle FROM nutzer WHERE benutzername = :name"),

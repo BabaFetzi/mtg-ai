@@ -6,6 +6,7 @@ globalen Exception-Handler, Lifespan-Events für die DB-Verbindung
 und inkludiert alle modularen API-Router.
 """
 
+import asyncio
 import logging
 import os
 
@@ -63,6 +64,54 @@ def get_allowed_origins() -> list[str]:
 # ======================================================================
 # Lifespan Events (Datenbank-Initialisierung beim Startup)
 # ======================================================================
+MAINTENANCE_INTERVAL_SECONDS = int(os.getenv("MAINTENANCE_INTERVAL_SECONDS", "1800"))
+JOB_RETENTION_HOURS = int(os.getenv("JOB_RETENTION_HOURS", "24"))
+
+
+async def _run_maintenance() -> None:
+    """
+    Räumt periodisch auf, damit die App im Dauerbetrieb nicht zuwächst:
+    - erledigte Hintergrund-Jobs (synergy_jobs, import_jobs) älter als
+      JOB_RETENTION_HOURS -- sie wurden bisher nie gelöscht, die Tabellen
+      wuchsen also mit jeder Analyse und jedem Import unbegrenzt.
+    - abgelaufene Cache-Einträge (nur relevant ohne Redis).
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import text as sql_text
+
+    from database import get_db_session
+    from services.cache import scryfall_cache
+
+    cutoff = datetime.utcnow() - timedelta(hours=JOB_RETENTION_HOURS)
+    try:
+        async with get_db_session() as session:
+            for tabelle in ("synergy_jobs", "import_jobs"):
+                # erstellt_am IS NULL: Alt-Zeilen aus der Zeit, als der
+                # Zeitstempel bei Roh-SQL-Inserts nicht gesetzt wurde.
+                await session.execute(
+                    sql_text(
+                        f"DELETE FROM {tabelle} "
+                        "WHERE erstellt_am < :cutoff OR erstellt_am IS NULL"
+                    ),
+                    {"cutoff": cutoff},
+                )
+    except Exception:
+        logger.warning("Job-Aufräumen fehlgeschlagen", exc_info=True)
+
+    try:
+        entfernt = await asyncio.to_thread(scryfall_cache.flush_expired)
+        if entfernt:
+            logger.info("Cache-Wartung: %d abgelaufene Einträge entfernt.", entfernt)
+    except Exception:
+        logger.warning("Cache-Aufräumen fehlgeschlagen", exc_info=True)
+
+
+async def _maintenance_loop() -> None:
+    while True:
+        await asyncio.sleep(MAINTENANCE_INTERVAL_SECONDS)
+        await _run_maintenance()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starte Datenbankverbindung...")
@@ -71,7 +120,16 @@ async def lifespan(app: FastAPI):
         logger.info("Datenbank erfolgreich initialisiert. Backend ist BEREIT!")
     except Exception:
         logger.exception("FEHLER bei der Datenbankinitialisierung")
-    yield
+
+    wartung = asyncio.create_task(_maintenance_loop())
+    try:
+        yield
+    finally:
+        wartung.cancel()
+        try:
+            await wartung
+        except (asyncio.CancelledError, Exception):
+            pass
 
 # ======================================================================
 # FastAPI App Setup

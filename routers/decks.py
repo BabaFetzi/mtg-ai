@@ -29,7 +29,7 @@ import logging
 import re
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -38,6 +38,7 @@ from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist
 from services.ai_service import model, model_lite
+from services.limiter import limiter
 from services.usage_limiter import check_and_increment_ai_usage
 from format_engine import FormatValidator
 from schemas.models import (
@@ -250,7 +251,8 @@ async def delete_deck(data: DeckLoeschenReq, current_user: str = Depends(get_cur
     "/deck/visualize",
     summary="Kartenbilder für Deck auflösen",
 )
-async def deck_visualize(req: DeckAnalyseReq):
+@limiter.limit("30/minute")
+async def deck_visualize(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     parsed = parse_decklist(req.deck_liste)
     if not parsed:
         return {"karten": []}
@@ -289,7 +291,8 @@ async def deck_visualize(req: DeckAnalyseReq):
     "/deck/stats",
     summary="Statistiken berechnen",
 )
-async def deck_stats(req: DeckAnalyseReq):
+@limiter.limit("30/minute")
+async def deck_stats(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     parsed = parse_decklist(req.deck_liste)
     unique_names = list(set([p["name"] for p in parsed]))
     cmc_counts = {}
@@ -341,7 +344,8 @@ async def deck_stats(req: DeckAnalyseReq):
     "/deck/wert",
     summary="Deckwert berechnen",
 )
-async def deck_wert(req: DeckAnalyseReq):
+@limiter.limit("30/minute")
+async def deck_wert(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     parsed = parse_decklist(req.deck_liste)
     unique_names = list(set([p["name"] for p in parsed]))
     total_value = 0.0
@@ -494,7 +498,8 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
     "/deck/validate",
     summary="Deck-Validierung",
 )
-async def validate_deck(req: ValidateDeckReq):
+@limiter.limit("30/minute")
+async def validate_deck(req: ValidateDeckReq, request: Request, current_user: str = Depends(get_current_user)):
     try:
         result = await FormatValidator.validate_deck(req.deck_liste, req.format, fetch_card_details_cached)
         return result

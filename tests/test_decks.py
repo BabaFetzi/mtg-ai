@@ -151,7 +151,11 @@ async def test_deck_stats_success(mock_fetch):
         "deck_liste": "1 Sol Ring\n2 Grizzly Bears",
         "format": "commander"
     }
-    response = client.post("/api/deck/stats", json=payload)
+    # /deck/stats verlangt jetzt einen Login (der Endpunkt verbraucht das
+    # gemeinsame Scryfall-Budget und war zuvor für jeden offen).
+    assert client.post("/api/deck/stats", json=payload).status_code == 401
+
+    response = client.post("/api/deck/stats", json=payload, headers=_auth_headers("test_user"))
     assert response.status_code == 200
     data = response.json()
     assert "cmc" in data

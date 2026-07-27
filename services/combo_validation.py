@@ -102,6 +102,7 @@ async def validate_combos(
 
         problem: Optional[str] = None
         resolved_lower: Set[str] = set()
+        resolved_names: List[str] = []
 
         for card in cards:
             info = scryfall_data.get(card.lower().strip())
@@ -109,6 +110,7 @@ async def validate_combos(
                 problem = f"Karte existiert nicht: '{card}'"
                 break
             resolved_lower.add(str(info.get("name", card)).lower().strip())
+            resolved_names.append(str(info.get("name", card)))
 
             # Format-Legalität: nur bestrafen, wenn Scryfall eine Angabe hat und
             # diese 'nicht legal'/'banned' lautet (fehlende Angabe -> nicht bestrafen).
@@ -124,6 +126,10 @@ async def validate_combos(
 
         if problem is None:
             result["verifiziert"] = True
+            # Exakte, von Scryfall bestätigte Kartennamen mitgeben. Ohne dieses
+            # Feld müsste das Frontend die Namen aus der Überschrift raten und
+            # zerlegt Namen mit Komma falsch ("Ashaya, Soul of the Wild").
+            result.setdefault("cards", resolved_names)
             valide.append(result)
         else:
             result["grund_verworfen"] = problem
