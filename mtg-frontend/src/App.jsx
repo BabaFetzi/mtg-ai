@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { setTokens, clearTokens } from './utils/authFetch'
+import { FEATURES } from './config'
 
 // Components
 import AuthScreen from './components/auth/AuthScreen'
@@ -620,8 +621,17 @@ function App() {
           <Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/decks" element={<DecksView currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/premium" element={<PremiumPage currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} />} />
-          <Route path="/playfield" element={<PlayfieldView currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
-          <Route path="/playfield/camera/:sessionId" element={<MobileCamera />} />
+          {/* Live-Playfield fürs erste Launch pausiert (siehe config.js).
+              Aktive Routen nur, wenn der Feature-Schalter an ist; sonst leitet
+              ein direkter /playfield-Aufruf auf die Startseite um (kein toter Link). */}
+          {FEATURES.livePlayfield ? (
+            <>
+              <Route path="/playfield" element={<PlayfieldView currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
+              <Route path="/playfield/camera/:sessionId" element={<MobileCamera />} />
+            </>
+          ) : (
+            <Route path="/playfield/*" element={<Navigate to="/" replace />} />
+          )}
         </Routes>
       </main>
       {!isCameraView && (
