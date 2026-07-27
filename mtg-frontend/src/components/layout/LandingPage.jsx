@@ -208,29 +208,11 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
         </div>
       </section>
 
-      {/* 3. SOCIAL PROOF / STATS BAR */}
-      <section style={{
-        background: 'var(--btn-secondary)',
-        borderTop: '1px solid var(--border-color)',
-        borderBottom: '1px solid var(--border-color)',
-        padding: '30px 20px',
-        boxSizing: 'border-box'
-      }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '30px', textAlign: 'center' }}>
-          <div>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em' }}>142.800+</div>
-            <div style={{ fontSize: '0.88rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginTop: '5px' }}>Analysierte Decks</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em' }}>99.98%</div>
-            <div style={{ fontSize: '0.88rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginTop: '5px' }}>Schiedsrichter-Präzision</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em' }}>1.4M+</div>
-            <div style={{ fontSize: '0.88rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, marginTop: '5px' }}>Verifizierte Combos</div>
-          </div>
-        </div>
-      </section>
+      {/* 3. Statistik-Leiste entfernt: die drei Zahlen ("142.800+ Analysierte
+          Decks", "99.98% Schiedsrichter-Präzision", "1.4M+ Verifizierte
+          Combos") waren frei erfunden. Auf der öffentlichen Verkaufsseite eines
+          kostenpflichtigen Angebots wären das irreführende Werbeaussagen --
+          insbesondere eine unbelegbare Genauigkeitsangabe zur KI. */}
 
       {/* 4. FEATURE SHOWCASE */}
       <section style={{
