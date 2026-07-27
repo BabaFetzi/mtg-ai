@@ -100,13 +100,14 @@ class _GeminiModel:
 # - model       -> Deck-Analyse (komplexes JSON-Schema, Anti-Halluzination).
 # - model_lite  -> alles andere (Judge, Übersetzung, Roast, Combo-Fallbacks, Vision).
 #
-# Die Modellnamen sind über Umgebungsvariablen überschreibbar, weil Google
-# einzelne Modelle abschaltet (z.B. war 'gemini-2.5-flash-lite' für neue
-# API-Keys nicht mehr verfügbar -> HTTP 404 NotFound). Default ist deshalb für
-# beide Stufen das breit verfügbare gemini-2.5-flash; wer flash-lite nutzen
-# kann, setzt GEMINI_MODEL_LITE=gemini-2.5-flash-lite in der .env.
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-MODEL_LITE_NAME = os.getenv("GEMINI_MODEL_LITE", "gemini-2.5-flash")
+# Default sind Googles rollende Alias-Modelle ("...-latest"): Google schaltet
+# fest versionierte Modelle für neue API-Keys ab (z.B. gab 'gemini-2.5-flash'
+# HTTP 404 "no longer available to new users") -- die -latest-Aliase zeigen
+# hingegen immer auf das aktuelle Modell und brechen darum nicht weg.
+# Ein bestimmtes Modell lässt sich per GEMINI_MODEL / GEMINI_MODEL_LITE in der
+# .env erzwingen (z.B. gemini-2.0-flash oder gemini-3-flash-preview).
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+MODEL_LITE_NAME = os.getenv("GEMINI_MODEL_LITE", "gemini-flash-lite-latest")
 
 model = None
 model_lite = None
