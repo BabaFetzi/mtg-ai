@@ -17,8 +17,9 @@ Deckt zwei Bug-Fixes aus dem Qualitäts-Sweep ab:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import services.scryfall as scryfall_module
 from services.scryfall import best_market_price, _pick_eur, _build_card_info
 from services.combo_validation import split_combo_cards, validate_combos
 
@@ -50,27 +51,70 @@ def test_pick_eur_prefers_eur_then_foil_then_none():
 # ======================================================================
 # _build_card_info: Preis-Anreicherung über günstigsten Papier-Print
 # ======================================================================
+class _FakeCache:
+    """Isoliert die Preis-Tests vom globalen (persistenten) Cache -- sonst würde
+    das negative Preis-Caching den zweiten Testlauf verfälschen."""
+
+    def __init__(self):
+        self.data = {}
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def set(self, key, value):
+        self.data[key] = value
+
+    def delete(self, key):
+        self.data.pop(key, None)
+
+
 @pytest.mark.asyncio
 async def test_build_card_info_enriches_missing_price():
     """Karte, deren Standard-Print keinen EUR-Preis hat (z.B. Black Lotus), muss
-    über den günstigsten Papier-Print einen realen Preis erhalten -- nicht 0.00."""
+    über den günstigsten Papier-Print einen realen Preis erhalten -- nicht 0.00.
+
+    Der Lookup läuft über die globale Scryfall-Drossel (client.request), damit er
+    bei vielen Nutzern die Rate-Limits nicht sprengt.
+    """
     card_data = {"name": "Black Lotus", "prices": {"eur": None, "eur_foil": None}, "type_line": "Artifact"}
 
     resp = MagicMock()
     resp.status_code = 200
+    resp.headers = {}
     resp.json.return_value = {"data": [
         {"prices": {"eur": "22454.09"}},
         {"prices": {"eur": "11005.15"}},   # günstigster
         {"prices": {"eur": None}},
     ]}
     client = MagicMock()
-    client.get = AsyncMock(return_value=resp)
+    client.request = AsyncMock(return_value=resp)
 
-    info = await _build_card_info(client, card_data)
+    with patch.object(scryfall_module, "scryfall_cache", _FakeCache()):
+        info = await _build_card_info(client, card_data)
 
     assert info["price"] == "11005.15"
     assert info["prices"]["eur"] == "11005.15"
-    client.get.assert_awaited_once()
+    client.request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_build_card_info_caches_missing_price_negatively():
+    """Ein zweiter Aufruf für dieselbe Karte ohne Preis darf KEINE weitere
+    Scryfall-Anfrage auslösen (Verstärker des früheren Rate-Limit-Sturms)."""
+    card_data = {"name": "Promo Karte", "prices": {"eur": None}, "type_line": "Artifact"}
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.headers = {}
+    resp.json.return_value = {"data": [{"prices": {"eur": None}}]}
+    client = MagicMock()
+    client.request = AsyncMock(return_value=resp)
+
+    with patch.object(scryfall_module, "scryfall_cache", _FakeCache()):
+        await _build_card_info(client, card_data)
+        await _build_card_info(client, card_data)
+
+    assert client.request.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -79,12 +123,13 @@ async def test_build_card_info_keeps_existing_price_without_extra_call():
     Scryfall-Call erfolgen (Performance im Batch-Pfad)."""
     card_data = {"name": "Sol Ring", "prices": {"eur": "1.21"}, "type_line": "Artifact"}
     client = MagicMock()
-    client.get = AsyncMock()
+    client.request = AsyncMock()
 
-    info = await _build_card_info(client, card_data)
+    with patch.object(scryfall_module, "scryfall_cache", _FakeCache()):
+        info = await _build_card_info(client, card_data)
 
     assert info["price"] == "1.21"
-    client.get.assert_not_called()
+    client.request.assert_not_called()
 
 
 # ======================================================================

@@ -239,13 +239,13 @@ async def _fallback_lang_search(
             f"https://api.scryfall.com/cards/search?"
             f"q=lang:any+name:%22{urllib.parse.quote(search_term)}%22"
         )
-        search_resp = await client.get(url_search)
+        search_resp = await scryfall_request(client, "GET", url_search)
         if search_resp.status_code == 200:
             search_data = search_resp.json()
             if "data" in search_data and len(search_data["data"]) > 0:
                 english_name = search_data["data"][0]["name"]
                 url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(english_name)}"
-                return await client.get(url)
+                return await scryfall_request(client, "GET", url)
     except Exception:
         pass
     return original_resp
@@ -260,7 +260,7 @@ async def _fetch_prints(
 
     if prints_url:
         try:
-            prints_resp = await client.get(prints_url)
+            prints_resp = await scryfall_request(client, "GET", prints_url)
             if prints_resp.status_code == 200:
                 prints_data = prints_resp.json()
                 for item in prints_data.get("data", []):
@@ -357,7 +357,7 @@ async def _newest_set_trends() -> dict:
         async with scryfall_client() as client:
             try:
                 # 1. Neustes physisches Set ermitteln
-                sets_resp = await client.get("https://api.scryfall.com/sets")
+                sets_resp = await scryfall_request(client, "GET", "https://api.scryfall.com/sets")
                 if sets_resp.status_code == 200:
                     sets_data = sets_resp.json()
                     newest_set_code = None
@@ -373,7 +373,7 @@ async def _newest_set_trends() -> dict:
                             f"q=set:{newest_set_code}+is:unique+not:digital+cheapest:eur"
                             f"&order=eur&dir=desc"
                         )
-                        cards_resp = await client.get(search_url)
+                        cards_resp = await scryfall_request(client, "GET", search_url)
                         if cards_resp.status_code == 200:
                             cards_data = cards_resp.json()
                             raw_cards = cards_data.get("data", [])[:15]

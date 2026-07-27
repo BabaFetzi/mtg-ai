@@ -27,11 +27,17 @@ class HybridCache:
 
     def __init__(
         self,
-        db_path: str = "mtg_app.db",
+        db_path: Optional[str] = None,
         redis_url: Optional[str] = None,
         ttl_seconds: int = 86400,
     ):
-        self.db_path = db_path
+        # WICHTIG: Der Karten-Cache liegt in einer EIGENEN SQLite-Datei, nicht in
+        # der App-Datenbank. Vorher teilten sich Cache-Schreibvorgänge (bei einem
+        # Sammlungs-Refresh hunderte pro Sekunde) die Datei mit nutzer/decks/
+        # sammlung_alben -- SQLite sperrt beim Schreiben die ganze Datei, wodurch
+        # Login und Sammlung minutenlang blockierten. Getrennte Dateien = keine
+        # Sperr-Konkurrenz zwischen Cache und Nutzerdaten.
+        self.db_path = db_path or os.getenv("CACHE_DB_PATH", "scryfall_cache.db")
         # Erst zur Instanziierung ausgewertet (nicht als Default-Parameter-
         # Wert bei Modul-Import) -- REDIS_URL wie an den anderen Stellen im
         # Projekt (services/limiter.py, services/usage_limiter.py) aus der
@@ -65,6 +71,11 @@ class HybridCache:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            # WAL: Leser blockieren Schreiber nicht (und umgekehrt) -- ohne WAL
+            # serialisiert SQLite jeden Cache-Zugriff, was bei vielen
+            # gleichzeitigen Nutzern zum Flaschenhals wird.
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS scryfall_cache (
                     key TEXT PRIMARY KEY,
@@ -82,7 +93,12 @@ class HybridCache:
 
     def _get_sqlite_conn(self) -> sqlite3.Connection:
         """Liefert eine frische SQLite-Connection (Thread-safe)."""
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=5.0)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+        except Exception:
+            pass
+        return conn
 
     # ------------------------------------------------------------------
     # Öffentliche API

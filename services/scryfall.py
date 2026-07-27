@@ -9,9 +9,10 @@ Kapselt alle Interaktionen mit der Scryfall API:
 
 import asyncio
 import logging
+import os
 import re
 import urllib.parse
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Set
 
 import httpx
 
@@ -31,13 +32,87 @@ SCRYFALL_HEADERS = {
     "User-Agent": "GranaMTG/1.0 (+https://github.com/BabaFetzi/mtg-ai)",
     "Accept": "application/json",
 }
-SCRYFALL_MIN_DELAY = 0.1  # Sekunden Pause zwischen Einzelabrufen
+
+# Scryfalls Rate-Limit gilt PRO SERVER (IP), nicht pro Nutzer: bei 1000 Nutzern
+# teilen sich alle dasselbe Budget von ~10 Anfragen/Sekunde. Deshalb wird der
+# Zugriff hier GLOBAL gedrosselt statt mit lokalen Pausen pro Aufruf.
+SCRYFALL_MAX_CONCURRENCY = int(os.getenv("SCRYFALL_MAX_CONCURRENCY", "4"))
+SCRYFALL_MIN_INTERVAL = float(os.getenv("SCRYFALL_MIN_INTERVAL", "0.12"))  # ~8 req/s
+SCRYFALL_COOLDOWN_SECONDS = float(os.getenv("SCRYFALL_COOLDOWN_SECONDS", "5"))
+SCRYFALL_TIMEOUT = float(os.getenv("SCRYFALL_TIMEOUT", "8"))
+
+
+class _ScryfallLimiter:
+    """
+    Prozessweite Zugriffskontrolle für die Scryfall-API.
+
+    Drei Aufgaben:
+    1. Begrenzt die Zahl GLEICHZEITIGER Anfragen (Semaphore).
+    2. Vergibt Zeitslots mit Mindestabstand, sodass die Gesamtrate über alle
+       Nutzer/Requests hinweg unter Scryfalls Limit bleibt.
+    3. Merkt sich einen Cooldown nach einem 429 -- danach warten ALLE Aufrufer,
+       statt weiter gegen die geschlossene Tür zu laufen (verhindert den
+       Rückkopplungseffekt, bei dem Drosselung noch mehr Anfragen auslöst).
+    """
+
+    def __init__(self) -> None:
+        self._sem = asyncio.Semaphore(SCRYFALL_MAX_CONCURRENCY)
+        self._spacing_lock = asyncio.Lock()
+        self._next_slot = 0.0
+        self._cooldown_until = 0.0
+
+    @staticmethod
+    def _now() -> float:
+        return asyncio.get_running_loop().time()
+
+    @property
+    def under_pressure(self) -> bool:
+        """True, solange Scryfall uns gerade drosselt."""
+        try:
+            return self._now() < self._cooldown_until
+        except RuntimeError:  # kein laufender Event-Loop
+            return False
+
+    def note_rate_limited(self, seconds: Optional[float] = None) -> None:
+        wait = seconds if (seconds and seconds > 0) else SCRYFALL_COOLDOWN_SECONDS
+        wait = min(wait, 30.0)
+        try:
+            self._cooldown_until = max(self._cooldown_until, self._now() + wait)
+        except RuntimeError:
+            pass
+
+    async def __aenter__(self):
+        await self._sem.acquire()
+        try:
+            async with self._spacing_lock:
+                now = self._now()
+                start = max(now, self._next_slot, self._cooldown_until)
+                self._next_slot = start + SCRYFALL_MIN_INTERVAL
+            delay = start - self._now()
+            if delay > 0:
+                await asyncio.sleep(delay)
+        except BaseException:
+            self._sem.release()
+            raise
+        return self
+
+    async def __aexit__(self, *exc_info) -> bool:
+        self._sem.release()
+        return False
+
+
+_limiter = _ScryfallLimiter()
 
 
 def scryfall_client(**kwargs) -> httpx.AsyncClient:
-    """httpx-Client mit dem von Scryfall geforderten User-Agent/Accept-Header."""
+    """httpx-Client mit dem von Scryfall geforderten User-Agent/Accept-Header.
+
+    Das Timeout ist bewusst knapp: Ist Scryfall nicht erreichbar, soll die
+    Anfrage schnell in die (begrenzte) Degradation laufen, statt Nutzer
+    minutenlang auf einen hängenden Aufruf warten zu lassen.
+    """
     kwargs.setdefault("headers", SCRYFALL_HEADERS)
-    kwargs.setdefault("timeout", 20.0)
+    kwargs.setdefault("timeout", SCRYFALL_TIMEOUT)
     return httpx.AsyncClient(**kwargs)
 
 
@@ -45,21 +120,44 @@ async def scryfall_request(
     client: httpx.AsyncClient, method: str, url: str, **kwargs
 ) -> httpx.Response:
     """
-    Führt eine Scryfall-Anfrage aus und wiederholt sie EINMAL bei HTTP 429
-    (Rate-Limit), wobei der `Retry-After`-Header respektiert wird (max. 5s).
-    Verhindert, dass eine kurzzeitige Drosselung sofort als "nicht gefunden"
-    durchschlägt.
+    Führt eine Scryfall-Anfrage über die globale Drossel aus und wiederholt sie
+    EINMAL bei HTTP 429. Das Warten übernimmt der Limiter (der Cooldown gilt für
+    alle gleichzeitigen Aufrufer), nicht ein lokaler sleep.
+
+    Gibt bei anhaltendem 429 die 429-Antwort zurück -- Aufrufer MÜSSEN das als
+    "später erneut versuchen" behandeln, niemals als "Karte existiert nicht".
     """
-    resp = await client.request(method, url, **kwargs)
-    if resp.status_code == 429:
+    resp = None
+    last_error: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            async with _limiter:
+                resp = await client.request(method, url, **kwargs)
+        except httpx.RequestError as exc:
+            # Netzwerkaussetzer (Timeout, DNS, Verbindungsabbruch): EINMAL
+            # wiederholen. Bewusst nur hier -- niemals durch Auffächern in
+            # viele Einzelanfragen "kompensieren".
+            last_error = exc
+            if attempt == 0:
+                logger.warning("Scryfall-Anfrage fehlgeschlagen (%s) -- ein Wiederholungsversuch.", type(exc).__name__)
+                continue
+            raise
+
+        if resp.status_code != 429:
+            return resp
+
         retry_after = resp.headers.get("Retry-After")
         try:
-            wait = min(float(retry_after), 5.0) if retry_after else 1.0
+            wait = float(retry_after) if retry_after else None
         except (TypeError, ValueError):
-            wait = 1.0
-        logger.warning("Scryfall Rate-Limit (429). Warte %.1fs und versuche erneut.", wait)
-        await asyncio.sleep(wait)
-        resp = await client.request(method, url, **kwargs)
+            wait = None
+        _limiter.note_rate_limited(wait)
+        if attempt == 0:
+            logger.warning(
+                "Scryfall Rate-Limit (429) -- globale Drossel aktiv, ein Wiederholungsversuch."
+            )
+    if resp is None and last_error is not None:
+        raise last_error
     return resp
 
 
@@ -207,12 +305,29 @@ async def _fetch_cheapest_paper_eur(client: httpx.AsyncClient, card_name: str) -
     """
     if not card_name:
         return None
+
+    # Ergebnis (auch das negative!) cachen: Karten ohne EUR-Preis am Standard-
+    # Print sind häufig (Promos, Spezialdrucke). Ohne dieses Caching löst
+    # JEDER Sammlungs-Aufruf für JEDE dieser Karten eine Extra-Suchanfrage aus
+    # -- das war der Haupt-Verstärker des Rate-Limit-Sturms.
+    cache_key = f"cheapest_eur:{card_name.lower().strip()}"
+    cached = scryfall_cache.get(cache_key)
+    if cached is not None:
+        return cached or None  # "" = bekannt: kein Preis vorhanden
+
+    # Solange Scryfall uns drosselt, ist ein fehlender Preis das kleinere Übel
+    # als eine hängende Seite -- der Preis wird beim nächsten Aufruf nachgeholt.
+    if _limiter.under_pressure:
+        return None
+
     try:
         # Exakt-Namenssuche über alle Papier-Prints, günstigster EUR zuerst.
         quoted = urllib.parse.quote('!"' + card_name + '" game:paper')
         url = f"https://api.scryfall.com/cards/search?q={quoted}&unique=prints&order=eur&dir=asc"
-        resp = await client.get(url)
+        resp = await scryfall_request(client, "GET", url)
         if resp.status_code != 200:
+            # Bei 429/Fehler NICHT negativ cachen -- sonst würde ein
+            # vorübergehendes Limit einen dauerhaft fehlenden Preis festschreiben.
             return None
         prices = []
         for c in resp.json().get("data", []):
@@ -222,8 +337,9 @@ async def _fetch_cheapest_paper_eur(client: httpx.AsyncClient, card_name: str) -
                     prices.append(float(eur))
                 except (ValueError, TypeError):
                     continue
-        if prices:
-            return f"{min(prices):.2f}"
+        result = f"{min(prices):.2f}" if prices else ""
+        scryfall_cache.set(cache_key, result)
+        return result or None
     except Exception:
         logger.debug("cheapest-paper-Preis-Lookup fehlgeschlagen für %s", card_name, exc_info=True)
     return None
@@ -262,51 +378,94 @@ def _cache_card_info(card_info: Dict[str, Any], *extra_keys: str) -> None:
 # Haupt-Funktion: Batch-Fetch mit Cache
 # ======================================================================
 
-async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any]]:
+# Laufende Netzwerk-Auflösungen pro Kartenname ("Single Flight"): Fragen 500
+# Nutzer gleichzeitig dieselbe noch nicht gecachte Karte an, geht genau EINE
+# Anfrage an Scryfall -- alle anderen warten auf dasselbe Ergebnis.
+_inflight: Dict[str, "asyncio.Future"] = {}
+_INFLIGHT_TIMEOUT = float(os.getenv("SCRYFALL_INFLIGHT_TIMEOUT", "25"))
+
+# Veraltete Cache-Einträge, die im Hintergrund aufgefrischt werden.
+_refresh_queued: Set[str] = set()
+MAX_BACKGROUND_REFRESH = int(os.getenv("SCRYFALL_MAX_BACKGROUND_REFRESH", "25"))
+
+# Obergrenze für Einzelabfragen (Fuzzy/Sprachsuche) pro Aufruf. Sie erlauben
+# eine BEGRENZTE Degradation: fällt der Sammel-Endpunkt aus (5xx/Timeout),
+# bekommen Nutzer wenigstens einen Teil der Daten -- ohne dass daraus wieder
+# hunderte Anfragen werden. Bei echter Drosselung (429) greift die Grenze gar
+# nicht erst, dort werden Fallbacks komplett übersprungen.
+MAX_FALLBACK_LOOKUPS = int(os.getenv("SCRYFALL_MAX_FALLBACK_LOOKUPS", "10"))
+
+
+def _is_stale(entry: Optional[dict]) -> bool:
+    """Eintrag stammt aus einer älteren Version (ohne Regeltext) -- verwendbar,
+    aber sollte irgendwann aufgefrischt werden."""
+    return bool(entry) and "oracle_text" not in entry
+
+
+def _schedule_background_refresh(names: List[str]) -> None:
     """
-    Löst eine Liste von Kartennamen zu Scryfall-Daten auf.
+    Frischt veraltete Cache-Einträge NACH der Antwort im Hintergrund auf --
+    gedeckelt und dedupliziert.
 
-    1. Prüft den Cache für jeden Namen
-    2. Holt nicht-gecachte Karten via POST /cards/collection (max 75 pro Batch)
-    3. Fallback: Fuzzy-Suche für nicht gefundene Karten
-    4. Fallback 2: Sprachübergreifende Suche (für deutsche Namen)
+    Vorher wurden veraltete Einträge verworfen und sofort synchron nachgeladen:
+    eine einzige Schema-Änderung entwertete damit den kompletten Cache und löste
+    beim nächsten Seitenaufruf hunderte gleichzeitige Anfragen aus. Jetzt wird
+    der alte Eintrag ausgeliefert (Seite bleibt schnell) und nur ein kleines
+    Kontingent pro Aufruf nachgezogen.
+    """
+    todo: List[str] = []
+    for n in names:
+        if len(todo) >= MAX_BACKGROUND_REFRESH:
+            break
+        key = n.lower().strip()
+        if key not in _refresh_queued:
+            _refresh_queued.add(key)
+            todo.append(n)
+    if not todo:
+        return
 
-    Returns:
-        Dict[str, CardInfo] – Mapping von name.lower().strip() → Card-Info
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        for n in todo:
+            _refresh_queued.discard(n.lower().strip())
+        return
+
+    async def _run() -> None:
+        try:
+            await _fetch_uncached(todo)
+        except Exception:
+            logger.debug("Hintergrund-Refresh fehlgeschlagen", exc_info=True)
+        finally:
+            for n in todo:
+                _refresh_queued.discard(n.lower().strip())
+
+    loop.create_task(_run())
+
+
+async def _fetch_uncached(uncached_names: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Holt Kartendaten für nicht (mehr) gecachte Namen vom Netzwerk.
+
+    Entscheidend für die Stabilität: Ein fehlgeschlagener oder gedrosselter
+    Batch löst KEINE Einzel-Fallbacks aus. Früher galten nach einem 429 alle 75
+    Karten des Batches als "nicht gefunden", was pro Batch 150 zusätzliche
+    Einzelanfragen erzeugte -- Drosselung führte also zu MEHR Last statt zu
+    weniger (Rückkopplung). Fallbacks laufen jetzt nur für Namen, die eine
+    erfolgreiche Batch-Antwort wirklich nicht kannte.
     """
     scryfall_data: Dict[str, Dict[str, Any]] = {}
-    uncached_names: List[str] = []
+    fallback_budget = MAX_FALLBACK_LOOKUPS
 
-    # --- Phase 1: Cache-Lookup ---
-    # Ein gecachter Eintrag ohne "oracle_text" stammt aus einer älteren Version
-    # (vor der Synergie-Erkennung) und gilt als unvollständig -> neu laden, damit
-    # der Regeltext für die Synergie-Analyse verfügbar ist.
-    def _complete(entry) -> bool:
-        return bool(entry) and "oracle_text" in entry
-
-    for name in names:
-        cache_key = f"card:{name.lower().strip()}"
-        cached = scryfall_cache.get(cache_key)
-        if _complete(cached):
-            scryfall_data[name.lower().strip()] = cached
-        else:
-            # DFC: Auch unter dem Vorderseiten-Namen suchen
-            front_key = name
-            if "//" in name:
-                front_key = name.split("//")[0].strip()
-            cached_front = scryfall_cache.get(f"card:{front_key.lower().strip()}")
-            if _complete(cached_front):
-                scryfall_data[name.lower().strip()] = cached_front
-                scryfall_data[front_key.lower().strip()] = cached_front
-            else:
-                uncached_names.append(name)
-
-    if not uncached_names:
-        return scryfall_data
-
-    # --- Phase 2: Batch-Fetch via /cards/collection ---
     async with scryfall_client() as client:
         for i in range(0, len(uncached_names), 75):
+            if _limiter.under_pressure:
+                logger.warning(
+                    "Scryfall drosselt gerade -- überspringe restliche Batches "
+                    "(Daten werden beim nächsten Aufruf nachgeladen)."
+                )
+                break
+
             name_mapping: Dict[str, str] = {}  # cleaned_lower → original_input
             chunk: List[Dict[str, str]] = []
 
@@ -352,11 +511,33 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
                             ):
                                 _cache_card_info(card_info, orig_n)
                                 scryfall_data[orig_n.lower().strip()] = card_info
+                elif resp.status_code == 429:
+                    # Gedrosselt: NICHT als "nicht gefunden" behandeln und
+                    # keine Einzel-Fallbacks starten.
+                    logger.warning(
+                        "Scryfall-Batch gedrosselt (429) -- %d Karten werden später nachgeladen.",
+                        len(chunk),
+                    )
+                    break
+                else:
+                    logger.warning(
+                        "Scryfall-Batch fehlgeschlagen (HTTP %s) -- begrenzte Einzel-Fallbacks.",
+                        resp.status_code,
+                    )
             except Exception:
-                logger.exception("Error in collection fetch")
+                logger.warning(
+                    "Scryfall-Batch nicht erreichbar -- begrenzte Einzel-Fallbacks.",
+                    exc_info=True,
+                )
 
-            # --- Phase 3: Fallbacks für nicht aufgelöste Namen ---
+            # --- Fallbacks für nicht aufgelöste Namen ---
+            # Bei erfolgreichem Batch: nur die vom Batch nicht gekannten Namen.
+            # Bei ausgefallenem Batch: dasselbe, aber hart budgetiert, damit ein
+            # Ausfall nicht in eine Anfrage-Lawine umschlägt.
             for identifier in chunk:
+                if _limiter.under_pressure or fallback_budget <= 0:
+                    break
+
                 input_name = identifier["name"]
                 input_name_lower = input_name.lower().strip()
                 orig_n = name_mapping.get(input_name_lower, input_name)
@@ -365,9 +546,7 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
                 if orig_n_lower in scryfall_data:
                     continue  # Bereits gefunden
 
-                # Kleine Pause vor jedem Einzelabruf, um Scryfalls Rate-Limit
-                # (~10 Anfragen/Sekunde) auch bei grossen Importen einzuhalten.
-                await asyncio.sleep(SCRYFALL_MIN_DELAY)
+                fallback_budget -= 1
 
                 # Fallback 1: Fuzzy-Suche (Tippfehler, fehlende Satzzeichen)
                 card_info = await _fallback_fuzzy(client, input_name)
@@ -385,6 +564,85 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
                     scryfall_data[orig_n_lower] = card_info
                     scryfall_data[input_name_lower] = card_info
                     scryfall_data[card_info["name"].lower().strip()] = card_info
+
+    return scryfall_data
+
+
+async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Löst eine Liste von Kartennamen zu Scryfall-Daten auf.
+
+    1. Cache-Lookup (veraltete Einträge werden AUSGELIEFERT und im Hintergrund
+       aufgefrischt -- die Antwort wartet nie darauf)
+    2. Single-Flight: parallele Anfragen zur selben Karte teilen sich einen Abruf
+    3. Batch-Fetch via POST /cards/collection (max 75 pro Batch), global gedrosselt
+    4. Fallbacks (Fuzzy / sprachübergreifend) nur für wirklich unbekannte Namen
+
+    Returns:
+        Dict[str, CardInfo] – Mapping von name.lower().strip() → Card-Info
+    """
+    scryfall_data: Dict[str, Dict[str, Any]] = {}
+    uncached_names: List[str] = []
+    stale_names: List[str] = []
+
+    # --- Phase 1: Cache-Lookup (stale-while-revalidate) ---
+    for name in names:
+        key = name.lower().strip()
+        cached = scryfall_cache.get(f"card:{key}")
+
+        if not cached and "//" in name:
+            # DFC: Auch unter dem Vorderseiten-Namen suchen
+            front_key = name.split("//")[0].strip().lower()
+            cached = scryfall_cache.get(f"card:{front_key}")
+            if cached:
+                scryfall_data[front_key] = cached
+
+        if cached:
+            scryfall_data[key] = cached
+            if _is_stale(cached):
+                stale_names.append(name)
+        else:
+            uncached_names.append(name)
+
+    if stale_names:
+        _schedule_background_refresh(stale_names)
+
+    if not uncached_names:
+        return scryfall_data
+
+    # --- Phase 2: Single-Flight-Aufteilung ---
+    loop = asyncio.get_running_loop()
+    my_names: List[str] = []
+    awaiting: Dict[str, "asyncio.Future"] = {}
+
+    for n in uncached_names:
+        key = n.lower().strip()
+        existing = _inflight.get(key)
+        if existing is not None:
+            awaiting[key] = existing
+        else:
+            _inflight[key] = loop.create_future()
+            my_names.append(n)
+
+    # --- Phase 3: Eigene Namen holen, dann Wartende bedienen ---
+    if my_names:
+        try:
+            scryfall_data.update(await _fetch_uncached(my_names))
+        finally:
+            # Futures IMMER auflösen -- auch im Fehlerfall, damit parallele
+            # Anfragen nicht ins Timeout laufen.
+            for n in my_names:
+                fut = _inflight.pop(n.lower().strip(), None)
+                if fut is not None and not fut.done():
+                    fut.set_result(scryfall_data.get(n.lower().strip()))
+
+    for key, fut in awaiting.items():
+        try:
+            info = await asyncio.wait_for(asyncio.shield(fut), timeout=_INFLIGHT_TIMEOUT)
+            if info:
+                scryfall_data[key] = info
+        except Exception:
+            logger.debug("Warten auf parallelen Abruf von %s fehlgeschlagen", key)
 
     return scryfall_data
 
