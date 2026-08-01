@@ -289,6 +289,11 @@ def _extract_card_info(card_data: dict) -> Dict[str, Any]:
         "cmc": card_data.get("cmc", 0.0),
         "colors": card_data.get("colors", []),
         "color_identity": card_data.get("color_identity", []),
+        # rarity + set werden vom Sammlungs-Filter (Seltenheit / Edition) benötigt.
+        # Fehlten sie hier, filterten diese beiden Kriterien immer auf 0 Treffer.
+        "rarity": card_data.get("rarity", ""),
+        "set": card_data.get("set", ""),
+        "set_name": card_data.get("set_name", ""),
         "prices": card_data.get("prices", {}),
         "price": price_val,
         "legalities": card_data.get("legalities", {}),

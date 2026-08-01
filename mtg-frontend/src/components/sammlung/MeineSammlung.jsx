@@ -20,6 +20,10 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   const [wishlistSearch, setWishlistSearch] = useState("");
   const [isWishlistAdding, setIsWishlistAdding] = useState(false);
 
+  // Karte direkt in den gerade geöffneten Ordner suchen & hinzufügen.
+  const [albumCardSearch, setAlbumCardSearch] = useState("");
+  const [isAlbumAdding, setIsAlbumAdding] = useState(false);
+
   const [filteredKarten, setFilteredKarten] = useState([]);
   const [loadingFilters, setLoadingFilters] = useState(false);
   const [activeFilters, setActiveFilters] = useState({});
@@ -245,6 +249,37 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
     ladeGefilterteSammlung(filters, selectedAlbum);
   };
 
+  // Sucht eine Karte über Scryfall und legt sie im aktuell geöffneten Ordner ab.
+  // Nutzt denselben erprobten Flow wie die Wunschliste, nur mit dem Zielalbum.
+  const addCardToAlbum = async () => {
+    if (!albumCardSearch.trim() || !selectedAlbum) return;
+    setIsAlbumAdding(true);
+    try {
+      const res = await fetch(`/api/suche/${encodeURIComponent(albumCardSearch.trim())}?benutzername=${currentUser}`);
+      const data = await res.json();
+      if (data && data.error) {
+        alert("Karte nicht gefunden. Bitte Namen prüfen.");
+      } else if (data && Array.isArray(data.prints) && data.prints.length > 0) {
+        const actP = data.prints[0];
+        const preis = (actP?.preis && actP.preis !== "N/A" && parseFloat(actP.preis) > 0)
+          ? String(actP.preis)
+          : (data.marktwert || "0.00");
+        await fetch(`/api/sammlung/hinzufuegen`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ benutzername: currentUser, karten_name: data.name, album_name: selectedAlbum, bild_url: actP?.bild_url || "", preis })
+        });
+        setAlbumCardSearch("");
+        await ladeSammlung();
+        await ladeGefilterteSammlung(activeFilters, selectedAlbum);
+      } else {
+        alert("Fehler: Es wurden keine Druck-Versionen für diese Karte geliefert.");
+      }
+    } catch (e) {
+      alert("Verbindungsfehler.");
+    }
+    setIsAlbumAdding(false);
+  };
+
   return (
     <div className="apple-main-container">
       <h2>Sammlung & Inventar.</h2>
@@ -271,7 +306,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                 flexWrap: 'wrap'
               }}>
                 <div style={{display: 'flex', gap: '15px', maxWidth: '500px', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexGrow: 1}}>
-                  <input id="new-album-input" placeholder="Neuer Ordnername..." value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} style={{background: 'var(--input-bg)', border: 'none', padding: '10px 14px', flexGrow: 1, borderRadius: '8px', color: 'white'}} />
+                  <input id="new-album-input" placeholder="Neuer Ordnername..." value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} onKeyDown={e => e.key === 'Enter' && erstelleLeeresAlbum()} style={{background: 'var(--input-bg)', border: 'none', padding: '10px 14px', flexGrow: 1, borderRadius: '8px', color: 'var(--text-main)'}} />
                   <button className="primary-btn" onClick={erstelleLeeresAlbum} style={{padding: '10px 20px'}}>Erstellen</button>
                 </div>
                 
@@ -657,11 +692,31 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                 </div>
               </div>
 
+              {/* Karte direkt in diesen Ordner hinzufügen */}
+              <div style={{
+                display: 'flex', gap: '12px', maxWidth: '600px', marginBottom: '25px',
+                background: 'var(--bg-card)', padding: '15px 20px', borderRadius: '16px',
+                border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)',
+                flexWrap: 'wrap'
+              }}>
+                <input
+                  placeholder="Karte suchen und in diesen Ordner legen (z.B. Sol Ring)..."
+                  value={albumCardSearch}
+                  onChange={e => setAlbumCardSearch(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addCardToAlbum()}
+                  style={{ background: 'var(--input-bg)', border: '1px solid var(--border-color)', padding: '10px 14px', flexGrow: 1, minWidth: '220px', borderRadius: '8px', color: 'var(--text-main)' }}
+                />
+                <button className="primary-btn" onClick={addCardToAlbum} disabled={isAlbumAdding} style={{ padding: '10px 20px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {isAlbumAdding ? <div className="spinner" style={{ width: '12px', height: '12px', borderWidth: '2px', margin: 0 }}></div> : <Plus size={16} />}
+                  {isAlbumAdding ? "Fügt hinzu..." : "Hinzufügen"}
+                </button>
+              </div>
+
               {/* Collection Filters Panel */}
-              <CollectionFilters 
-                currentUser={currentUser} 
-                selectedAlbum={selectedAlbum} 
-                onFilterChange={handleFilterChange} 
+              <CollectionFilters
+                currentUser={currentUser}
+                selectedAlbum={selectedAlbum}
+                onFilterChange={handleFilterChange}
               />
 
               {/* Collection Grid */}

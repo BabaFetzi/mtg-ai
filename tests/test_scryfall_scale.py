@@ -360,3 +360,23 @@ async def test_network_error_is_retried_once_not_fanned_out():
     assert result == {}
     # 2 Batch-Versuche + max. 2 Fallback-Versuche (fuzzy/multilang) fuer die 1 Karte
     assert attempts <= 6, f"{attempts} Versuche -- keine Begrenzung"
+
+
+def test_extract_card_info_includes_rarity_and_set():
+    """Regression (T-2.4): Der Sammlungs-Filter braucht rarity + set. Fehlten sie
+    im card_info, filterten Seltenheit und Edition immer auf 0 Treffer."""
+    card_data = {
+        "name": "Sol Ring",
+        "type_line": "Artifact",
+        "cmc": 1.0,
+        "colors": [],
+        "color_identity": [],
+        "rarity": "uncommon",
+        "set": "c21",
+        "set_name": "Commander 2021",
+        "prices": {"eur": "1.50"},
+    }
+    info = sf._extract_card_info(card_data)
+    assert info["rarity"] == "uncommon"
+    assert info["set"] == "c21"
+    assert info["set_name"] == "Commander 2021"
