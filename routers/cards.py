@@ -142,37 +142,19 @@ async def suche_karte(
                 "die teuersten Karten des neuesten Sets zurück.",
     response_model=TrendsResponse,
 )
-async def get_trends(
-    current_user: str = Depends(get_current_user_optional),
-):
+async def get_trends():
     """
+    Markt-Trends zeigen ECHTE Marktdaten von Scryfall -- die gefragtesten
+    (teuersten) Karten des neuesten physischen Sets, rotierend.
+
+    Bewusst NICHT die eigene Sammlung: Unter der Überschrift "Markt-Trends"
+    wäre die eigene Sammlung irreführend. Die persönliche Sammlungs-Übersicht
+    hat ihren Platz im Sammlungs-Dashboard.
+
     Ablauf:
-    1. Prüfen ob der User eine Sammlung hat → personalisierte Trends
-    2. Fallback: Neuestes Set (Expansion/Core) → Top 5 teuerste Karten
-    3. Notfall-Fallback: Statische Backup-Daten
+    1. Neuestes Set (Expansion/Core) → Top teuerste Karten
+    2. Notfall-Fallback: Statische Backup-Daten (falls Scryfall nicht erreichbar)
     """
-    # --- Personalisierte Trends ---
-    benutzername = current_user or ""
-    has_personalized = False
-    if benutzername:
-        async with get_db_session() as session:
-            res = await session.execute(
-                text(
-                    "SELECT COUNT(*) as count FROM sammlung_alben "
-                    "WHERE benutzername = :name "
-                    "AND karten_name != '__PLACEHOLDER__' "
-                    "AND album_name != 'Wunschliste'"
-                ),
-                {"name": benutzername},
-            )
-            row = res.mappings().first()
-            if row and row["count"] > 0:
-                has_personalized = True
-
-    if has_personalized:
-        return await _personalized_trends(benutzername)
-
-    # --- Fallback: Neuestes Set ---
     return await _newest_set_trends()
 
 
@@ -308,43 +290,6 @@ def _cache_individual_card(data: dict, bild: str) -> None:
     card_name = data.get("name", "")
     if card_name:
         scryfall_cache.set(f"card:{card_name.lower().strip()}", card_info)
-
-
-async def _personalized_trends(benutzername: str) -> dict:
-    """Gibt die 5 neuesten Karten aus der Sammlung des Users als Trends zurück."""
-    async with get_db_session() as session:
-        res = await session.execute(
-            text(
-                "SELECT karten_name, bild_url, preis, album_name "
-                "FROM sammlung_alben "
-                "WHERE benutzername = :name "
-                "AND karten_name != '__PLACEHOLDER__' "
-                "AND album_name != 'Wunschliste' "
-                "ORDER BY id DESC LIMIT 5"
-            ),
-            {"name": benutzername},
-        )
-        rows = res.mappings().all()
-
-    # Live-Preise & Bilder von Scryfall holen
-    unique_names = list(set(row["karten_name"] for row in rows))
-    scryfall_data = await fetch_card_details_cached(unique_names)
-
-    cards = []
-    for r in rows:
-        k_name = r["karten_name"]
-        card_info = scryfall_data.get(k_name.lower().strip())
-        live_p = card_info.get("price", r["preis"]) if card_info else r["preis"]
-        live_img = card_info.get("image", r["bild_url"]) if card_info else r["bild_url"]
-        cards.append({
-            "id": k_name,
-            "name": k_name,
-            "image_uris": {"normal": live_img},
-            "prices": {"eur": live_p},
-            "album_name": r["album_name"],
-        })
-
-    return {"erfolg": True, "personalized": True, "data": cards}
 
 
 async def _newest_set_trends() -> dict:
