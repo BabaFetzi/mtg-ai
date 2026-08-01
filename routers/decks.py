@@ -595,6 +595,11 @@ async def remove_card_from_deck(req: DeckRemoveCardReq, current_user: str = Depe
             deck_liste = deck["liste"] or ""
             lines = deck_liste.strip().split('\n') if deck_liste.strip() else []
 
+            # Namen genauso normalisieren wie beim Hinzufügen (clean_card_name),
+            # sonst schlägt der Vergleich fehl, wenn der gespeicherte Name und der
+            # vom Visualizer aufgelöste Name minimal abweichen -- dann fand das
+            # "Verringern" die Karte nie (T-4.1).
+            target = clean_card_name(req.card_name).lower()
             card_found = False
             updated_lines = []
             for line in lines:
@@ -606,15 +611,15 @@ async def remove_card_from_deck(req: DeckRemoveCardReq, current_user: str = Depe
                 if match:
                     count = int(match.group(1))
                     name = match.group(2).strip()
-                    if name.lower() == req.card_name.lower():
+                    if not card_found and clean_card_name(name).lower() == target:
                         card_found = True
                         count -= 1
                         if count > 0:
-                            updated_lines.append(f"{count} {name}")
+                            updated_lines.append(f"{count}x {name}")
                     else:
                         updated_lines.append(line)
                 else:
-                    if line_stripped.lower() == req.card_name.lower():
+                    if not card_found and clean_card_name(line_stripped).lower() == target:
                         card_found = True
                     else:
                         updated_lines.append(line)

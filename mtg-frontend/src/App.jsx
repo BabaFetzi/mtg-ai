@@ -9,6 +9,7 @@ import AppleHeader from './components/layout/AppleHeader'
 import EntdeckenHub from './components/entdecken/EntdeckenHub'
 import MeineSammlung from './components/sammlung/MeineSammlung'
 import DecksView from './components/decks/DecksView'
+import SharedDeckView from './components/decks/SharedDeckView'
 import PremiumPage from './components/premium/PremiumPage'
 import JudgeWidget from './components/layout/JudgeWidget'
 import PremiumUpgradeModal from './components/premium/PremiumUpgradeModal'
@@ -587,6 +588,19 @@ function App() {
   }, [location, currentUser, navigate]);
 
   const isCameraView = location.pathname.startsWith('/playfield/camera/');
+  // Geteilte Decks sind öffentlich (read-only) und dürfen ohne Login geöffnet werden.
+  const isSharedDeckView = location.pathname.startsWith('/shared/decks/');
+
+  if (isSharedDeckView) {
+    return (
+      <>
+        <style>{globalStyles}</style>
+        <Routes>
+          <Route path="/shared/decks/:id" element={<SharedDeckView />} />
+        </Routes>
+      </>
+    );
+  }
 
   if (!currentUser && !isCameraView) {
     return (

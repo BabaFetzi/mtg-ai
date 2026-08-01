@@ -242,3 +242,36 @@ async def test_deck_save_and_load_roundtrip_against_real_schema(mock_check_premi
         assert decks[0]["price"] == "1.45"
         assert decks[0]["updated_at"] is not None
 
+
+@pytest.mark.asyncio
+@patch('routers.decks.check_user_premium')
+async def test_remove_card_decrements_even_with_case_and_x_format(mock_check_premium, real_db_session_factory):
+    """Regression (T-4.1): Verringern schlug fehl, weil remove-card exakt
+    verglich, während add-card über clean_card_name normalisiert. Ein '2x'-Eintrag
+    muss auch bei abweichender Groß-/Kleinschreibung auf '1x' dekrementiert werden."""
+    mock_check_premium.return_value = True
+    with patch('routers.decks.get_db_session', _real_get_db_session(real_db_session_factory)):
+        create_resp = client.post(
+            "/api/decks/erstellen",
+            json={
+                "benutzername": "remover",
+                "deck_name": "Remove Test",
+                "deck_liste": "2x Sol Ring",
+                "format": "commander",
+            },
+            headers=_auth_headers("remover"),
+        )
+        assert create_resp.status_code == 200
+        deck_id = client.get("/api/decks/remover", headers=_auth_headers("remover")).json()[0]["id"]
+
+        # Andere Schreibweise als gespeichert -> muss trotzdem greifen.
+        resp = client.post(
+            "/api/deck/remove-card",
+            json={"deck_id": deck_id, "card_name": "sol ring"},
+            headers=_auth_headers("remover"),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["erfolg"] is True, body
+        assert body["deck_liste"].strip() == "1x Sol Ring"
+

@@ -517,9 +517,12 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         const j = Math.floor(Math.random() * (i + 1));
         [deckArray[i], deckArray[j]] = [deckArray[j], deckArray[i]];
     }
-    setPlaytest({ hand: deckArray.slice(0, 7), library: deckArray.slice(7), mulligans: 0 });
+    setPlaytest({ hand: deckArray.slice(0, 7), library: deckArray.slice(7), mulligans: 0, mustBottom: 0, selectedBottom: [] });
   };
 
+  // London-Mulligan (offizielle Turnierregel): Bei jedem Mulligan ziehst du wieder
+  // eine volle 7-Karten-Hand, musst danach aber so viele Karten unter die
+  // Bibliothek legen, wie du Mulligans genommen hast.
   const doMulligan = () => {
     let deckArray = [];
     visualDeck.forEach(k => { if(k && k.name && !k.name.includes("(Nicht gefunden)")) { for(let i=0; i<(k.count||1); i++) deckArray.push(k); }});
@@ -528,15 +531,53 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         [deckArray[i], deckArray[j]] = [deckArray[j], deckArray[i]];
     }
     const nextMulligans = playtest.mulligans + 1;
-    const drawCount = Math.max(0, 7 - nextMulligans);
-    setPlaytest({ hand: deckArray.slice(0, drawCount), library: deckArray.slice(drawCount), mulligans: nextMulligans });
+    // Mehr Mulligans als Handkarten möglich sind, sind sinnlos.
+    const mustBottom = Math.min(nextMulligans, 7);
+    setPlaytest({ hand: deckArray.slice(0, 7), library: deckArray.slice(7), mulligans: nextMulligans, mustBottom, selectedBottom: [] });
+  };
+
+  // Karte in der Hand für "unter die Bibliothek legen" an-/abwählen.
+  const toggleBottomCard = (index) => {
+    if(!playtest || !playtest.mustBottom) return;
+    const already = playtest.selectedBottom.includes(index);
+    let next;
+    if(already) {
+      next = playtest.selectedBottom.filter(i => i !== index);
+    } else {
+      if(playtest.selectedBottom.length >= playtest.mustBottom) return; // nicht mehr als nötig
+      next = [...playtest.selectedBottom, index];
+    }
+    setPlaytest({ ...playtest, selectedBottom: next });
+  };
+
+  // Ausgewählte Karten unter die Bibliothek legen und den Mulligan abschließen.
+  const confirmBottom = () => {
+    if(!playtest || playtest.selectedBottom.length !== playtest.mustBottom) return;
+    const bottomSet = new Set(playtest.selectedBottom);
+    const keep = playtest.hand.filter((_, i) => !bottomSet.has(i));
+    const toBottom = playtest.hand.filter((_, i) => bottomSet.has(i));
+    setPlaytest({ ...playtest, hand: keep, library: [...playtest.library, ...toBottom], mustBottom: 0, selectedBottom: [] });
   };
 
   const drawCard = () => {
     if(!playtest || !playtest.library || playtest.library.length === 0) return;
+    if(playtest.mustBottom) return; // erst Mulligan abschließen
     const newHand = [...playtest.hand, playtest.library[0]];
     const newLibrary = playtest.library.slice(1);
-    setPlaytest({ hand: newHand, library: newLibrary, mulligans: playtest.mulligans });
+    setPlaytest({ ...playtest, hand: newHand, library: newLibrary });
+  };
+
+  // Öffentlichen Teilen-Link erzeugen und in die Zwischenablage legen.
+  const teileDeck = async () => {
+    if (!selectedDeck?.id) return;
+    const link = `${window.location.origin}/shared/decks/${selectedDeck.id}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      alert(`Teilen-Link kopiert:\n${link}\n\nJeder mit diesem Link kann dein Deck ansehen (schreibgeschützt).`);
+    } catch {
+      // Clipboard nicht verfügbar (z.B. ohne HTTPS): Link trotzdem anzeigen.
+      window.prompt('Teilen-Link (kopieren mit Strg+C):', link);
+    }
   };
 
   const holeAlleProxyKarten = () => {
@@ -1255,7 +1296,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
               ) : (
                 <>
                   {renderDeckStatsStreifen()}
-                  <div style={{textAlign: 'right', marginBottom: '20px'}}>
+                  <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginBottom: '20px', flexWrap: 'wrap'}}>
+                    <button className="secondary-btn" style={{padding: '16px 24px', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={teileDeck}>
+                       <Icons.Share /> Deck teilen
+                    </button>
                     <button className="primary-btn" style={{padding: '16px 30px', fontSize: '1.1rem'}} onClick={startPlaytest}>
                        <Icons.Sparkles /> Starthand Simulator starten
                     </button>
@@ -2010,29 +2054,59 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
             <button className="close-btn" onClick={() => setPlaytest(null)}>✕</button>
             
             <h2 style={{marginBottom: '5px', fontSize: '2.5rem', textAlign: 'center'}}>Starthand Simulator</h2>
-            <p style={{textAlign: 'center', color: 'var(--text-muted)', marginBottom: '40px'}}>
+            <p style={{textAlign: 'center', color: 'var(--text-muted)', marginBottom: playtest.mustBottom ? '15px' : '40px'}}>
                Karten in der Bibliothek: <strong style={{color: 'var(--text-main)'}}>{(playtest.library || []).length}</strong> | Genommene Mulligans: <strong style={{color: 'var(--danger-color)'}}>{playtest.mulligans}</strong>
             </p>
 
+            {playtest.mustBottom > 0 && (
+              <p style={{textAlign: 'center', color: 'var(--accent-color)', fontWeight: 600, marginBottom: '25px'}}>
+                London-Mulligan: Wähle {playtest.mustBottom} {playtest.mustBottom === 1 ? 'Karte' : 'Karten'}, die du unter die Bibliothek legst
+                ({playtest.selectedBottom.length}/{playtest.mustBottom} gewählt).
+              </p>
+            )}
+
             <div className="playtest-hand-container">
-              {(playtest.hand || []).map((k, i) => (
-                <img 
-                  key={i} 
-                  src={k?.image || getFallbackCardImage(k?.name, k?.type)} 
-                  alt={k?.name || "Unbekannt"} 
-                  className={`playtest-card fade-in-img ${loadedImages[k?.image] ? 'loaded' : ''}`} 
+              {(playtest.hand || []).map((k, i) => {
+                const marked = playtest.selectedBottom?.includes(i);
+                return (
+                <img
+                  key={i}
+                  src={k?.image || getFallbackCardImage(k?.name, k?.type)}
+                  alt={k?.name || "Unbekannt"}
+                  className={`playtest-card fade-in-img ${loadedImages[k?.image] ? 'loaded' : ''}`}
                   onLoad={() => setLoadedImages(prev => ({ ...prev, [k?.image]: true }))}
-                  style={{zIndex: i}} 
+                  onClick={() => toggleBottomCard(i)}
+                  style={{
+                    zIndex: i,
+                    cursor: playtest.mustBottom ? 'pointer' : 'default',
+                    outline: marked ? '4px solid var(--accent-color)' : 'none',
+                    transform: marked ? 'translateY(-18px)' : 'none',
+                    opacity: (playtest.mustBottom && !marked && playtest.selectedBottom.length >= playtest.mustBottom) ? 0.55 : 1,
+                    transition: 'transform 0.15s, outline 0.15s, opacity 0.15s'
+                  }}
                   loading="lazy"
                   onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k?.name, k?.type); }}
                 />
-              ))}
+              );})}
               {(!playtest.hand || playtest.hand.length === 0) && <p style={{color: 'var(--text-muted)'}}>Keine Karten mehr in der Hand.</p>}
             </div>
-            
-            <div style={{textAlign: 'center', marginTop: '60px', display: 'flex', gap: '20px', justifyContent: 'center'}}>
-              <button className="secondary-btn" style={{padding: '16px 30px', fontSize: '1.1rem'}} onClick={doMulligan}>Mulligan nehmen</button>
-              <button className="primary-btn" style={{padding: '16px 30px', fontSize: '1.1rem'}} onClick={drawCard}>Karte ziehen</button>
+
+            <div style={{textAlign: 'center', marginTop: '60px', display: 'flex', gap: '20px', justifyContent: 'center', flexWrap: 'wrap'}}>
+              {playtest.mustBottom > 0 ? (
+                <button
+                  className="primary-btn"
+                  style={{padding: '16px 30px', fontSize: '1.1rem'}}
+                  onClick={confirmBottom}
+                  disabled={playtest.selectedBottom.length !== playtest.mustBottom}
+                >
+                  {playtest.selectedBottom.length} unter Bibliothek legen
+                </button>
+              ) : (
+                <>
+                  <button className="secondary-btn" style={{padding: '16px 30px', fontSize: '1.1rem'}} onClick={doMulligan}>Mulligan nehmen</button>
+                  <button className="primary-btn" style={{padding: '16px 30px', fontSize: '1.1rem'}} onClick={drawCard}>Karte ziehen</button>
+                </>
+              )}
             </div>
           </div>
         </div>
