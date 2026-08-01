@@ -17,6 +17,15 @@ class LoginData(BaseModel):
     passwort: str = Field(..., min_length=1)
 
 
+class RegisterData(BaseModel):
+    benutzername: str = Field(..., min_length=1, max_length=50)
+    passwort: str = Field(..., min_length=1)
+    # E-Mail wird für die Registrierung erfasst (nötig für späteres
+    # "Passwort vergessen"). Format wird im Endpunkt geprüft, damit keine
+    # zusätzliche email-validator-Abhängigkeit nötig ist.
+    email: str = Field(..., min_length=3, max_length=255)
+
+
 class UpdateRoleReq(BaseModel):
     benutzername: str
     rolle: str = "free"

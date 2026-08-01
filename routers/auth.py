@@ -41,7 +41,7 @@ from auth import (
     record_login_attempt,
     get_current_user
 )
-from schemas.models import LoginData, UpdateRoleReq
+from schemas.models import LoginData, RegisterData, UpdateRoleReq
 
 # ======================================================================
 # OAuth Konfiguration aus Umgebungsvariablen
@@ -71,22 +71,34 @@ router = APIRouter(
     "/register",
     summary="Registriert einen neuen Benutzer",
 )
-async def register(data: LoginData):
+async def register(data: RegisterData):
+    email = (data.email or "").strip().lower()
+    # Einfache, robuste Format-Prüfung ohne zusätzliche Abhängigkeit.
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return {"erfolg": False, "error": "Bitte gib eine gültige E-Mail-Adresse ein."}
     try:
         async with get_db_session() as session:
-            # Prüfen, ob Benutzer bereits existiert
+            # Prüfen, ob Benutzername bereits existiert
             res = await session.execute(
                 text("SELECT benutzername FROM nutzer WHERE benutzername = :name"),
                 {"name": data.benutzername}
             )
             if res.first():
                 return {"erfolg": False, "error": "Benutzername schon vergeben."}
-            
+
+            # Prüfen, ob die E-Mail bereits verwendet wird (Spalte ist unique)
+            res_email = await session.execute(
+                text("SELECT benutzername FROM nutzer WHERE email = :email"),
+                {"email": email}
+            )
+            if res_email.first():
+                return {"erfolg": False, "error": "Diese E-Mail-Adresse wird bereits verwendet."}
+
             # Passwort per bcrypt hashen (legacy SHA-256 wird beim Login migriert)
             hashed = bcrypt_hash(data.passwort)
             await session.execute(
-                text("INSERT INTO nutzer (benutzername, passwort_hash, rolle) VALUES (:name, :pwhash, :role)"),
-                {"name": data.benutzername, "pwhash": hashed, "role": "free"}
+                text("INSERT INTO nutzer (benutzername, email, passwort_hash, rolle) VALUES (:name, :email, :pwhash, :role)"),
+                {"name": data.benutzername, "email": email, "pwhash": hashed, "role": "free"}
             )
         return {"erfolg": True}
     except Exception as e:
