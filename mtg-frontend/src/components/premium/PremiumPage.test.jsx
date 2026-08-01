@@ -80,9 +80,12 @@ describe('PremiumPage – Status-Anzeige je nach Rolle', () => {
 
     await user.click(screen.getByRole('button', { name: 'Abo kündigen' }));
 
+    // Persistente, eindeutige Rückmeldung im UI (statt eines flüchtigen Popups):
     await waitFor(() => {
-      expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('gekündigt'));
+      expect(screen.getByText(/Abo gekündigt/i)).toBeInTheDocument();
     });
+    // Der Kündigungs-Button verschwindet, sodass das Ergebnis unmissverständlich ist.
+    expect(screen.queryByRole('button', { name: 'Abo kündigen' })).not.toBeInTheDocument();
     // Der Kündigungs-Endpoint wurde aufgerufen ...
     expect(global.fetch).toHaveBeenCalledWith('/api/checkout/cancel-subscription', { method: 'POST' });
     // ... aber Premium bleibt bis zum Periodenende aktiv -- das Downgrade

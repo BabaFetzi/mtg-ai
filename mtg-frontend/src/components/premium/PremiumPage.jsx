@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import usePremiumPrice from './usePremiumPrice';
 
@@ -17,6 +18,9 @@ const LockIcon = ({ color = "var(--text-muted)", size = 18 }) => (
 function PremiumPage({ currentUser, userRole, setUserRole }) {
   const navigate = useNavigate();
   const { preisText, loading: preisLoading } = usePremiumPrice();
+  // Persistente Rückmeldung nach einer Kündigung, damit das Ergebnis eindeutig
+  // sichtbar ist (statt nur eines kurzen alert()-Popups, das übersehen wird).
+  const [cancelInfo, setCancelInfo] = useState(null); // { bis: "TT.MM.JJJJ" | null } oder "downgraded"
 
   return (
     <div className="apple-main-container" style={{ paddingTop: '20px' }}>
@@ -215,6 +219,22 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                   <div style={{ color: 'var(--price-color)', fontSize: '1.05rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '15px' }}>
                     <CheckIcon color="var(--price-color)" size={20} /> Premium Aktiv
                   </div>
+                  {cancelInfo ? (
+                    <div style={{
+                      background: 'var(--btn-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '12px',
+                      padding: '14px 18px',
+                      fontSize: '0.92rem',
+                      color: 'var(--text-main)',
+                      lineHeight: 1.5
+                    }}>
+                      ✓ Abo gekündigt.{' '}
+                      {cancelInfo.bis
+                        ? `Premium bleibt noch bis zum ${cancelInfo.bis} aktiv, danach wird nichts mehr abgebucht.`
+                        : 'Premium bleibt bis zum Ende der bezahlten Periode aktiv, danach wird nichts mehr abgebucht.'}
+                    </div>
+                  ) : (
                   <button
                     className="secondary-btn"
                     onClick={async () => {
@@ -235,10 +255,8 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                           const bis = data.laeuft_bis
                             ? new Date(data.laeuft_bis * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
                             : null;
-                          alert(
-                            "Dein Abo ist gekündigt." +
-                            (bis ? `\nPremium bleibt noch bis zum ${bis} aktiv.` : "\nPremium bleibt bis zum Ende der bezahlten Periode aktiv.")
-                          );
+                          // Persistente, eindeutige Rückmeldung statt nur eines Popups.
+                          setCancelInfo({ bis });
                           return;
                         }
 
@@ -281,11 +299,12 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                   >
                     Abo kündigen
                   </button>
+                  )}
                 </div>
               ) : (
                 <div>
-                  <button 
-                    className="primary-btn" 
+                  <button
+                    className="primary-btn"
                     onClick={async () => {
                       try {
                         const res = await fetch('/api/checkout/create-session', {
