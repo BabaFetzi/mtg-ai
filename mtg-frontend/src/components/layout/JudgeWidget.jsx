@@ -37,7 +37,7 @@ function JudgeWidget({ open, setOpen, currentUser, userRole, onShowPremiumModal 
         <Icons.Chat />
       </button>
       {open && (
-        <div className="judge-chat-window" style={{position: 'relative'}}>
+        <div className="judge-chat-window">
           {userRole !== 'premium' && <PremiumOverlay onShowPremiumModal={onShowPremiumModal} />}
           <div className="judge-header">
             <span>Rules Judge</span>
