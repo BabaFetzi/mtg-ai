@@ -117,6 +117,11 @@ class CheckoutReq(BaseModel):
     host_url: str = "http://localhost:5173"
 
 
+class VerifySessionReq(BaseModel):
+    """Serverseitige Bestätigung einer abgeschlossenen Checkout-Session."""
+    session_id: str = Field(..., min_length=1)
+
+
 # ======================================================================
 # KARTEN-SUCHE (Cards) – Response-Schemas für Dokumentation
 # ======================================================================

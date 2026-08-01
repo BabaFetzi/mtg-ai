@@ -290,3 +290,85 @@ async def test_checkout_price_fallback_handles_comma_decimal(monkeypatch):
     response = client.get("/api/checkout/price")
 
     assert response.json()["betrag"] == 4.50
+
+
+# ======================================================================
+# verify-session (T-8.3): serverseitige Bestätigung als Webhook-Fallback
+# ======================================================================
+@pytest.mark.asyncio
+@patch('routers.payments.get_db_session')
+async def test_verify_session_grants_premium_when_paid_and_owned(mock_get_db, monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    mock_db = AsyncMock()
+    mock_get_db.return_value.__aenter__.return_value = mock_db
+
+    fake_session = {
+        "payment_status": "paid",
+        "status": "complete",
+        "customer": "cus_abc",
+        "subscription": "sub_abc",
+        "metadata": {"benutzername": "premium_user"},
+    }
+    with patch("routers.payments.stripe.checkout.Session.retrieve", return_value=fake_session):
+        resp = client.post(
+            "/api/checkout/verify-session",
+            json={"session_id": "cs_test_123"},
+            headers=_auth_headers("premium_user"),
+        )
+    assert resp.status_code == 200
+    assert resp.json()["erfolg"] is True
+    sql_arg = mock_db.execute.call_args[0][0].text
+    assert "UPDATE nutzer SET rolle='premium'" in sql_arg
+    assert mock_db.execute.call_args[0][1]["name"] == "premium_user"
+
+
+@pytest.mark.asyncio
+@patch('routers.payments.get_db_session')
+async def test_verify_session_rejects_foreign_session(mock_get_db, monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    mock_db = AsyncMock()
+    mock_get_db.return_value.__aenter__.return_value = mock_db
+
+    fake_session = {
+        "payment_status": "paid",
+        "status": "complete",
+        "metadata": {"benutzername": "someone_else"},
+    }
+    with patch("routers.payments.stripe.checkout.Session.retrieve", return_value=fake_session):
+        resp = client.post(
+            "/api/checkout/verify-session",
+            json={"session_id": "cs_test_123"},
+            headers=_auth_headers("attacker"),
+        )
+    assert resp.status_code == 200
+    assert resp.json()["erfolg"] is False
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch('routers.payments.get_db_session')
+async def test_verify_session_rejects_unpaid(mock_get_db, monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    mock_db = AsyncMock()
+    mock_get_db.return_value.__aenter__.return_value = mock_db
+
+    fake_session = {
+        "payment_status": "unpaid",
+        "status": "open",
+        "metadata": {"benutzername": "premium_user"},
+    }
+    with patch("routers.payments.stripe.checkout.Session.retrieve", return_value=fake_session):
+        resp = client.post(
+            "/api/checkout/verify-session",
+            json={"session_id": "cs_test_123"},
+            headers=_auth_headers("premium_user"),
+        )
+    assert resp.status_code == 200
+    assert resp.json()["erfolg"] is False
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_session_requires_auth():
+    resp = client.post("/api/checkout/verify-session", json={"session_id": "cs_test_123"})
+    assert resp.status_code == 401

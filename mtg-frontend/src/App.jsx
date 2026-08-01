@@ -548,15 +548,40 @@ function App() {
       const POLL_INTERVAL_MS = 3000;
       let attempt = 0;
 
+      const finishSuccess = () => {
+        alert("Upgrade erfolgreich durchgeführt! Vielen Dank.");
+        setUserRole("premium");
+        navigate('/premium', { replace: true });
+      };
+
+      // Zuerst serverseitig bei Stripe verifizieren. Das schaltet Premium sofort
+      // frei -- auch ohne (bzw. vor dem) Webhook, was besonders lokal ohne
+      // öffentliche Webhook-URL sonst gar nicht funktionieren würde. Der Server
+      // prüft die Zahlung direkt bei Stripe; dem Client wird nichts geglaubt.
+      fetch('/api/checkout/verify-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      })
+        .then(res => res.json().catch(() => ({})))
+        .then(data => {
+          if (cancelled) return;
+          if (data && data.erfolg) {
+            finishSuccess();
+            return;
+          }
+          // Noch nicht bestätigt -> als Fallback den Webhook-Status pollen.
+          checkRole();
+        })
+        .catch(() => { if (!cancelled) checkRole(); });
+
       const checkRole = () => {
         fetch(`/api/user/role/${user}`)
           .then(res => res.json())
           .then(data => {
             if (cancelled) return;
             if (data && data.rolle === 'premium') {
-              alert("Upgrade erfolgreich durchgeführt! Vielen Dank.");
-              setUserRole("premium");
-              navigate('/premium', { replace: true });
+              finishSuccess();
               return;
             }
             attempt += 1;
@@ -582,7 +607,9 @@ function App() {
           });
       };
 
-      checkRole();
+      // checkRole() wird von der verify-session-Antwort oben als Fallback
+      // gestartet -- hier bewusst KEIN direkter Aufruf, sonst würde doppelt
+      // gepollt.
       return () => { cancelled = true; };
     }
   }, [location, currentUser, navigate]);

@@ -23,7 +23,7 @@ from sqlalchemy import text
 
 from auth import get_current_user
 from database import get_db_session
-from schemas.models import CheckoutReq
+from schemas.models import CheckoutReq, VerifySessionReq
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,58 @@ async def create_checkout_session(req: CheckoutReq, current_user: str = Depends(
         return {"erfolg": True, "url": session.url, "simulated": False}
     except Exception as e:
         return {"erfolg": False, "error": str(e)}
+
+# ======================================================================
+# POST /api/checkout/verify-session – Zahlung serverseitig bestätigen
+# ======================================================================
+@router.post(
+    "/checkout/verify-session",
+    summary="Abgeschlossene Checkout-Session serverseitig verifizieren",
+)
+async def verify_checkout_session(req: VerifySessionReq, current_user: str = Depends(get_current_user)):
+    """
+    Bestätigt eine zurückkehrende Checkout-Session direkt bei Stripe und schaltet
+    Premium frei -- als robuster Fallback zum Webhook.
+
+    Sicherheit: Die Session wird mit dem geheimen Stripe-Key SERVERSEITIG bei
+    Stripe abgefragt (dem Client wird nichts geglaubt). Nur wenn die Zahlung
+    tatsächlich erfolgt ist (payment_status == 'paid' bzw. status == 'complete')
+    UND die Session zum eingeloggten Nutzer gehört (metadata.benutzername), wird
+    die Rolle gesetzt. So kann niemand mit einer fremden/unbezahlten Session
+    Premium erschleichen. Das ist idempotent zum Webhook (setzt denselben Zustand).
+    """
+    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    if not stripe_key:
+        return {"erfolg": False, "error": "Stripe ist auf diesem Server nicht konfiguriert."}
+
+    try:
+        stripe.api_key = stripe_key
+        session = stripe.checkout.Session.retrieve(req.session_id)
+    except Exception as e:
+        logger.exception("Fehler beim Abrufen der Checkout-Session %s", req.session_id)
+        return {"erfolg": False, "error": f"Session konnte nicht geprüft werden: {e}"}
+
+    payment_status = get_stripe_val(session, "payment_status")
+    session_status = get_stripe_val(session, "status")
+    metadata = get_stripe_val(session, "metadata", {}) or {}
+    session_user = get_stripe_val(metadata, "benutzername")
+
+    if session_user != current_user:
+        # Session gehört nicht zum eingeloggten Nutzer -> niemals freischalten.
+        return {"erfolg": False, "error": "Diese Zahlung gehört nicht zu deinem Konto."}
+
+    if payment_status != "paid" and session_status != "complete":
+        return {"erfolg": False, "bezahlt": False, "error": "Die Zahlung ist noch nicht abgeschlossen."}
+
+    customer_id = get_stripe_val(session, "customer")
+    subscription_id = get_stripe_val(session, "subscription")
+    async with get_db_session() as session_db:
+        await session_db.execute(
+            text("UPDATE nutzer SET rolle='premium', stripe_customer_id = :cust_id, stripe_subscription_id = :sub_id WHERE benutzername = :name"),
+            {"cust_id": customer_id, "sub_id": subscription_id, "name": current_user},
+        )
+    logger.info("User %s via verify-session auf Premium gesetzt (Session %s).", current_user, req.session_id)
+    return {"erfolg": True, "rolle": "premium"}
 
 # ======================================================================
 # POST /api/checkout/cancel-subscription – Abo selbst kündigen (Self-Service)
