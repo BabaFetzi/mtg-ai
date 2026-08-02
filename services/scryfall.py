@@ -643,6 +643,27 @@ async def _fetch_uncached(uncached_names: List[str]) -> Dict[str, Dict[str, Any]
     return scryfall_data
 
 
+def _cache_get_many(keys: List[str]) -> Dict[str, Any]:
+    """Holt viele Cache-Keys auf einmal, wenn der Cache das unterstützt.
+
+    Fällt auf Einzelabfragen zurück, damit auch schlanke Cache-Implementierungen
+    (z.B. in Tests) weiterhin funktionieren.
+    """
+    batch_getter = getattr(scryfall_cache, "get_many", None)
+    if callable(batch_getter):
+        try:
+            return batch_getter(keys)
+        except Exception:
+            logger.warning("Batch-Cache-Lookup fehlgeschlagen, nutze Einzelabfragen", exc_info=True)
+
+    found: Dict[str, Any] = {}
+    for key in dict.fromkeys(keys):
+        value = scryfall_cache.get(key)
+        if value is not None:
+            found[key] = value
+    return found
+
+
 async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any]]:
     """
     Löst eine Liste von Kartennamen zu Scryfall-Daten auf.
@@ -661,14 +682,24 @@ async def fetch_card_details_cached(names: List[str]) -> Dict[str, Dict[str, Any
     stale_names: List[str] = []
 
     # --- Phase 1: Cache-Lookup (stale-while-revalidate) ---
+    # Alle Keys in EINEM Zugriff holen. Vorher kostete jede einzelne Karte einen
+    # eigenen Redis-Roundtrip bzw. eine eigene SQLite-Verbindung -- bei großen
+    # Sammlungen war genau das die Hauptursache der langen Ladezeiten.
+    lookup_keys: List[str] = []
+    for name in names:
+        lookup_keys.append(f"card:{name.lower().strip()}")
+        if "//" in name:
+            lookup_keys.append(f"card:{name.split('//')[0].strip().lower()}")
+    cached_map = _cache_get_many(lookup_keys)
+
     for name in names:
         key = name.lower().strip()
-        cached = scryfall_cache.get(f"card:{key}")
+        cached = cached_map.get(f"card:{key}")
 
         if not cached and "//" in name:
             # DFC: Auch unter dem Vorderseiten-Namen suchen
             front_key = name.split("//")[0].strip().lower()
-            cached = scryfall_cache.get(f"card:{front_key}")
+            cached = cached_map.get(f"card:{front_key}")
             if cached:
                 scryfall_data[front_key] = cached
 

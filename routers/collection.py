@@ -193,36 +193,40 @@ router = APIRouter(
 async def get_sammlung(benutzername: str, current_user: str = Depends(get_current_user)):
     if benutzername != current_user:
         raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
+    # Die DB-Session wird bewusst VOR dem Scryfall-Abruf wieder freigegeben.
+    # Vorher blieb die Verbindung während des (langsamen) Netzwerk-Calls belegt --
+    # bei vielen gleichzeitigen Nutzern erschöpft das den Verbindungspool und
+    # blockiert andere Anfragen wie den Login.
     async with get_db_session() as session:
         res = await session.execute(
             text("SELECT * FROM sammlung_alben WHERE benutzername = :name"),
             {"name": current_user}
         )
         rows = res.mappings().all()
-        
-        unique_names = list(set(row["karten_name"] for row in rows if row["karten_name"] != "__PLACEHOLDER__"))
-        scryfall_data = await fetch_card_details_cached(unique_names)
-        
-        alben = {}
-        for row in rows:
-            album = row["album_name"]
-            if album not in alben:
-                alben[album] = []
-            
-            karten_name = row["karten_name"]
-            card_info = scryfall_data.get(karten_name.lower().strip())
-            
-            live_preis = card_info.get("price", row["preis"]) if card_info else row["preis"]
-            live_bild = card_info.get("image", row["bild_url"]) if card_info else row["bild_url"]
-            
-            alben[album].append({
-                "id": row["id"],
-                "name": karten_name,
-                "bild_url": live_bild,
-                "preis": row["preis"],
-                "livePreis": live_preis
-            })
-        return {"erfolg": True, "alben": alben}
+
+    unique_names = list(set(row["karten_name"] for row in rows if row["karten_name"] != "__PLACEHOLDER__"))
+    scryfall_data = await fetch_card_details_cached(unique_names)
+
+    alben = {}
+    for row in rows:
+        album = row["album_name"]
+        if album not in alben:
+            alben[album] = []
+
+        karten_name = row["karten_name"]
+        card_info = scryfall_data.get(karten_name.lower().strip())
+
+        live_preis = card_info.get("price", row["preis"]) if card_info else row["preis"]
+        live_bild = card_info.get("image", row["bild_url"]) if card_info else row["bild_url"]
+
+        alben[album].append({
+            "id": row["id"],
+            "name": karten_name,
+            "bild_url": live_bild,
+            "preis": row["preis"],
+            "livePreis": live_preis
+        })
+    return {"erfolg": True, "alben": alben}
 
 # ======================================================================
 # POST /api/sammlung/hinzufuegen – Karte hinzufügen

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const colorSymbols = {
   "W": "https://svgs.scryfall.io/card-symbols/W.svg",
@@ -36,18 +36,36 @@ function CollectionFilters({ currentUser, selectedAlbum, onFilterChange }) {
     }
   }, [currentUser, selectedAlbum]);
 
-  // Propagate filters up
+  // Filter nach oben melden -- entprellt.
+  //
+  // Vorher löste JEDER Tastendruck in der Suche und JEDE Bewegung der
+  // Manawert-Slider sofort eine vollständige Server-Anfrage aus (inklusive
+  // Scryfall-Auflösung der ganzen Sammlung). "Lightning Bolt" zu tippen
+  // erzeugte so 14 Anfragen, von denen nur die letzte zählte -- die
+  // Hauptursache für die trägen Ladezeiten in der Sammlung.
+  //
+  // Zusätzlich wird der Aufruf beim ersten Rendern übersprungen: die
+  // Erstbefüllung übernimmt bereits die Album-Auswahl in MeineSammlung,
+  // sonst lief jede Album-Öffnung doppelt.
+  const istErstesRendern = useRef(true);
+
   useEffect(() => {
-    const filters = {
-      farbe: selectedColor || undefined,
-      seltenheit: rarity || undefined,
-      edition: edition || undefined,
-      manakosten_min: minCmc,
-      manakosten_max: maxCmc,
-      typ: cardType || undefined,
-      suche: search.trim() || undefined
-    };
-    onFilterChange(filters);
+    if (istErstesRendern.current) {
+      istErstesRendern.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      onFilterChange({
+        farbe: selectedColor || undefined,
+        seltenheit: rarity || undefined,
+        edition: edition || undefined,
+        manakosten_min: minCmc,
+        manakosten_max: maxCmc,
+        typ: cardType || undefined,
+        suche: search.trim() || undefined
+      });
+    }, 350);
+    return () => clearTimeout(timer);
   }, [search, selectedColor, rarity, edition, minCmc, maxCmc, cardType]);
 
   const handleReset = () => {
