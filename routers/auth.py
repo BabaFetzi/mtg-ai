@@ -147,10 +147,18 @@ async def login(data: LoginData, request: Request):
                 
         if not is_valid:
             try:
-                record_login_attempt(ip, data.benutzername, success=False)
+                verbleibend = record_login_attempt(ip, data.benutzername, success=False)
             except HTTPException as block_exc:
                 return {"erfolg": False, "error": block_exc.detail}
-            return {"erfolg": False, "error": "Falscher Benutzername oder Passwort."}
+            # Vor der Sperre warnen, statt den Nutzer unangekündigt für 15
+            # Minuten auszusperren.
+            fehler = "Falscher Benutzername oder Passwort."
+            if verbleibend <= 2:
+                fehler += (
+                    f" Noch {verbleibend} Versuch{'e' if verbleibend != 1 else ''}, "
+                    "danach wird der Login vorübergehend gesperrt."
+                )
+            return {"erfolg": False, "error": fehler}
             
         # Hash zu bcrypt migrieren
         if migrate_hash:

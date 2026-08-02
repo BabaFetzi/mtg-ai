@@ -42,6 +42,11 @@ _attempt_seen: Dict[Tuple[str, str], float] = {}
 LOGIN_ATTEMPT_TTL_SECONDS = 3600
 _MAX_TRACKED_ATTEMPTS = 10000
 
+# Brute-Force-Schutz: nach MAX_LOGIN_ATTEMPTS Fehlversuchen wird die Kombination
+# aus IP und Benutzername für LOGIN_BLOCK_SECONDS gesperrt.
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_BLOCK_SECONDS = 900  # 15 Minuten
+
 
 def _prune_login_attempts(now: float) -> None:
     """Entfernt abgelaufene Fehlversuchs-Einträge (nicht mehr gesperrt und älter
@@ -62,16 +67,28 @@ def check_login_rate_limit(ip: str, username: str) -> None:
     if key in login_attempts:
         attempts, block_until = login_attempts[key]
         if now < block_until:
-            wait_time = int(block_until - now)
+            wait_seconds = int(block_until - now)
+            # In Minuten runden: "Bitte warte 843 Sekunden" ist für Nutzer
+            # schwer einzuordnen.
+            wait_minutes = max(1, round(wait_seconds / 60))
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Zu viele Fehlversuche. Bitte warte {wait_time} Sekunden."
+                detail=(
+                    f"Zu viele Fehlversuche. Dieser Zugang ist noch etwa "
+                    f"{wait_minutes} Minute{'n' if wait_minutes != 1 else ''} gesperrt."
+                )
             )
         # Reset limit if block time has expired
-        if now > block_until and attempts >= 5:
+        if now > block_until and attempts >= MAX_LOGIN_ATTEMPTS:
             login_attempts[key] = (0, 0.0)
             
-def record_login_attempt(ip: str, username: str, success: bool) -> None:
+def record_login_attempt(ip: str, username: str, success: bool) -> int:
+    """Protokolliert einen Login-Versuch.
+
+    Returns:
+        Anzahl der noch verbleibenden Versuche vor der Sperre (bei Erfolg: MAX).
+        Wird die Sperre ausgelöst, wird stattdessen eine HTTPException geworfen.
+    """
     key = (ip, username)
     now = time.time()
 
@@ -83,19 +100,23 @@ def record_login_attempt(ip: str, username: str, success: bool) -> None:
     if success:
         login_attempts.pop(key, None)
         _attempt_seen.pop(key, None)
-    else:
-        attempts, block_until = login_attempts.get(key, (0, 0.0))
-        attempts += 1
-        _attempt_seen[key] = now
-        if attempts >= 5:
-            block_until = now + 900 # 15 minutes block
-            login_attempts[key] = (attempts, block_until)
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Zu viele Fehlversuche. Login für 15 Minuten gesperrt."
+        return MAX_LOGIN_ATTEMPTS
+
+    attempts, block_until = login_attempts.get(key, (0, 0.0))
+    attempts += 1
+    _attempt_seen[key] = now
+    if attempts >= MAX_LOGIN_ATTEMPTS:
+        block_until = now + LOGIN_BLOCK_SECONDS
+        login_attempts[key] = (attempts, block_until)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Zu viele Fehlversuche. Der Login ist für "
+                f"{LOGIN_BLOCK_SECONDS // 60} Minuten gesperrt."
             )
-        else:
-            login_attempts[key] = (attempts, block_until)
+        )
+    login_attempts[key] = (attempts, block_until)
+    return MAX_LOGIN_ATTEMPTS - attempts
 
 # Hashing utilities
 def hash_passwort(password: str) -> str:

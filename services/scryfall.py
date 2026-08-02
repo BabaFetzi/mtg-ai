@@ -204,6 +204,76 @@ def clean_card_name(name: str) -> str:
     return re.sub(r'\s+', ' ', name).strip()
 
 
+# Häufige groß geschriebene Wörter, die im Deutschen am Satzanfang oder als
+# Substantiv auftauchen, aber nie ein Kartenname sind. Verhindert unnötige
+# Scryfall-Abfragen bei jeder Judge-Frage.
+_NON_CARD_WORDS = {
+    "was", "wie", "wenn", "wer", "wo", "warum", "wieso", "welche", "welcher", "welches",
+    "kann", "darf", "muss", "ist", "sind", "hat", "habe", "haben", "wird", "werden",
+    "der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem", "eines",
+    "ich", "du", "er", "sie", "es", "wir", "ihr", "man", "mein", "meine", "meinem",
+    "karte", "karten", "kartentext", "regel", "regeln", "regelfrage", "frage",
+    "spieler", "gegner", "zug", "phase", "stapel", "friedhof", "bibliothek", "hand",
+    "schlachtfeld", "spiel", "runde", "effekt", "effekte", "fähigkeit", "fähigkeiten",
+    "kreatur", "kreaturen", "zauber", "zauberspruch", "instant", "sorcery",
+    "und", "oder", "aber", "auch", "noch", "dann", "also", "wenn", "damit", "dass",
+    "magic", "gathering", "mtg", "commander", "standard", "modern", "legacy", "pioneer",
+}
+
+
+def extract_card_name_candidates(text: str, max_candidates: int = 4) -> List[str]:
+    """
+    Extrahiert mögliche Kartennamen aus einer Freitext-Frage (z.B. an den Judge).
+
+    Zweck: Die KI soll ihre Antwort an ECHTEN Kartentexten festmachen statt sie zu
+    erfinden. Dafür braucht sie erst Kandidaten, die dann bei Scryfall aufgelöst
+    werden. Falsch geratene Kandidaten sind unkritisch -- sie werden bei Scryfall
+    schlicht nicht gefunden (und negativ gecacht).
+
+    Erkannt werden:
+    - Namen in Anführungszeichen ("Sol Ring", „Sol Ring")
+    - Folgen groß geschriebener Wörter (auch mit Verbindern wie "of", "the", "von"
+      und mit Komma, z.B. "Krenko, Mob Boss")
+
+    Die Anzahl ist bewusst begrenzt (max_candidates), damit eine einzelne Frage
+    nie viele Scryfall-Abfragen auslöst.
+    """
+    if not text:
+        return []
+
+    candidates: List[str] = []
+
+    def _add(raw: str) -> None:
+        cleaned = re.sub(r"\s+", " ", raw).strip(" ,.;:!?-")
+        if len(cleaned) < 3 or len(cleaned) > 80:
+            return
+        # Einzelwörter, die offensichtlich keine Kartennamen sind, verwerfen.
+        if " " not in cleaned and cleaned.lower() in _NON_CARD_WORDS:
+            return
+        if cleaned.lower() in {c.lower() for c in candidates}:
+            return
+        candidates.append(cleaned)
+
+    # 1. Explizit in Anführungszeichen genannte Namen (stärkstes Signal)
+    for quoted in re.findall(r'["„»\'`]([^"“«\'`]{3,60})["“«\'`]', text):
+        _add(quoted)
+
+    # 2. Folgen groß geschriebener Wörter, inkl. typischer Verbinder
+    connector = r"(?:of|the|and|von|der|die|das|und|zu|des)"
+    word = r"[A-ZÄÖÜ][\wäöüß'’-]+"
+    pattern = rf"\b({word}(?:(?:,?\s+(?:{connector}\s+)?){word})*)"
+    for match in re.findall(pattern, text):
+        _add(match)
+        # Beginnt die Folge mit einem klar generischen Wort ("Effekt Loot der
+        # Pfadfinder"), zusätzlich die Variante ohne dieses Wort anbieten --
+        # deutsche Sätze hängen solche Wörter oft direkt vor den Kartennamen.
+        teile = match.split()
+        if len(teile) > 1 and teile[0].lower() in _NON_CARD_WORDS:
+            _add(" ".join(teile[1:]))
+
+    return candidates[:max_candidates]
+
+
 def parse_decklist(deck_liste: str) -> List[Dict[str, Any]]:
     """
     Parst eine Deckliste im Format "1x Sol Ring" oder "1 Sol Ring".

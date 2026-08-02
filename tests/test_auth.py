@@ -71,3 +71,46 @@ def test_login_rate_limiting():
     login_attempts[key] = (0, 0.0)
     record_login_attempt(ip, user, success=True)
     assert key not in login_attempts
+
+
+def test_login_attempts_warn_before_lockout():
+    """T-1.4: Vor der 15-Minuten-Sperre muss gewarnt werden, statt den Nutzer
+    unangekündigt auszusperren. record_login_attempt liefert dafür die Anzahl
+    der verbleibenden Versuche."""
+    from auth import (
+        record_login_attempt,
+        login_attempts,
+        MAX_LOGIN_ATTEMPTS,
+    )
+
+    ip, user = "10.0.0.99", "warnuser"
+    login_attempts.pop((ip, user), None)
+
+    verbleibend = [record_login_attempt(ip, user, success=False)
+                   for _ in range(MAX_LOGIN_ATTEMPTS - 1)]
+
+    # Streng absteigend bis 1 -- der letzte Fehlversuch vor der Sperre.
+    assert verbleibend == list(range(MAX_LOGIN_ATTEMPTS - 1, 0, -1))
+
+    # Der nächste Fehlversuch löst die Sperre aus.
+    with pytest.raises(HTTPException) as exc:
+        record_login_attempt(ip, user, success=False)
+    assert exc.value.status_code == 429
+    assert "gesperrt" in exc.value.detail
+
+    login_attempts.pop((ip, user), None)
+
+
+def test_lockout_message_is_in_minutes_not_raw_seconds():
+    """Die Wartezeit wird in Minuten kommuniziert (nicht '843 Sekunden')."""
+    from auth import check_login_rate_limit, login_attempts, LOGIN_BLOCK_SECONDS
+
+    ip, user = "10.0.0.98", "blockeduser"
+    login_attempts[(ip, user)] = (5, time.time() + LOGIN_BLOCK_SECONDS)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            check_login_rate_limit(ip, user)
+        assert "Minute" in exc.value.detail
+        assert "Sekunden" not in exc.value.detail
+    finally:
+        login_attempts.pop((ip, user), None)

@@ -33,7 +33,7 @@ from services.ai_service import model_lite
 from services.combos import detect_local_combos
 from services.combo_validation import validate_combos
 from services.limiter import limiter
-from services.scryfall import parse_decklist
+from services.scryfall import parse_decklist, extract_card_name_candidates, fetch_card_details_cached
 from services.synergies import detect_synergies
 from services.usage_limiter import check_and_increment_ai_usage
 
@@ -86,12 +86,88 @@ async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str 
 
     if model_lite:
         try:
-            response = model_lite.generate_content(f"Beantworte diese Magic The Gathering Regelfrage kurz auf Deutsch: {req.frage}")
+            prompt = await _build_judge_prompt(req.frage)
+            response = model_lite.generate_content(prompt)
             return {"antwort": response.text}
         except Exception:
             logger.exception("Error calling judge model")
 
     return {"antwort": "Der KI-Judge ist momentan beschäftigt oder nicht eingerichtet. Bitte überprüfe deinen API Key."}
+
+
+async def _build_judge_prompt(frage: str) -> str:
+    """
+    Baut den Judge-Prompt und erdet ihn an ECHTEN Kartendaten von Scryfall.
+
+    Hintergrund: Zuvor ging die Frage ohne jeden Kontext an das Modell. Bei
+    Karten, die es nicht sicher kennt (z.B. deutsche Kartennamen), hat es
+    Kartentexte schlicht erfunden. Jetzt werden in der Frage genannte Karten
+    zuerst bei Scryfall aufgelöst und ihr echter Regeltext mitgegeben; zusätzlich
+    wird das Modell angewiesen, nichts zu erfinden und Unsicherheit zuzugeben.
+    """
+    karten_block = ""
+    nicht_gefunden: list[str] = []
+
+    try:
+        kandidaten = extract_card_name_candidates(frage)
+        if kandidaten:
+            treffer = await fetch_card_details_cached(kandidaten)
+            zeilen = []
+            gefundene_namen = set()
+            for info in treffer.values():
+                name = info.get("name", "")
+                if not name or name in gefundene_namen:
+                    continue
+                gefundene_namen.add(name)
+                zeilen.append(
+                    f"- {name} ({info.get('type', '')})\n"
+                    f"  Regeltext: {info.get('oracle_text') or '(kein Regeltext)'}"
+                )
+            if zeilen:
+                karten_block = "\n".join(zeilen)
+            # Kandidaten, die Scryfall nicht kennt, explizit benennen, damit das
+            # Modell nachfragt statt zu raten.
+            for kandidat in kandidaten:
+                if kandidat.lower().strip() not in treffer:
+                    nicht_gefunden.append(kandidat)
+    except Exception:
+        # Kartenerdung ist eine Verbesserung, kein Muss: schlägt Scryfall fehl,
+        # antwortet der Judge weiterhin -- nur ohne Kartenkontext.
+        logger.warning("Kartenerdung für Judge-Frage fehlgeschlagen", exc_info=True)
+
+    teile = [
+        "Du bist ein erfahrener Magic: The Gathering Judge. Beantworte die Regelfrage "
+        "kurz, präzise und auf Deutsch.",
+        "",
+        "WICHTIGE REGELN FÜR DEINE ANTWORT:",
+        "- Erfinde NIEMALS Kartennamen, Kartentexte oder Fähigkeiten.",
+        "- Stütze dich bei genannten Karten ausschließlich auf die unten bestätigten "
+        "Kartendaten.",
+        "- Kennst du eine genannte Karte nicht oder ist sie unten nicht aufgeführt, "
+        "sage das ehrlich und bitte um den genauen (am besten englischen) Kartennamen. "
+        "Rate nicht.",
+        "- Allgemeine Regelmechaniken (Stapel, Priorität, Zustandsbasierte Aktionen usw.) "
+        "darfst du selbstverständlich aus deinem Regelwissen erklären.",
+    ]
+
+    if karten_block:
+        teile += ["", "BESTÄTIGTE KARTENDATEN (live von Scryfall):", karten_block]
+    if nicht_gefunden:
+        teile += [
+            "",
+            "NICHT BEI SCRYFALL GEFUNDEN (Kartentext unbekannt -- hierzu nichts erfinden, "
+            "sondern nachfragen): " + ", ".join(nicht_gefunden),
+        ]
+    if not karten_block:
+        teile += [
+            "",
+            "Hinweis: Zu dieser Frage konnten keine Kartendaten aufgelöst werden. "
+            "Beantworte allgemeine Regelfragen normal; geht es um eine bestimmte Karte, "
+            "frage nach dem genauen Kartennamen.",
+        ]
+
+    teile += ["", f"FRAGE: {frage}"]
+    return "\n".join(teile)
 
 # ======================================================================
 # GET /api/combos/{card_name} – Kombo-Vorschläge für Einzelkarten
