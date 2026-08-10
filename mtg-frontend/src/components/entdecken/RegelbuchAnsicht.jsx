@@ -31,19 +31,19 @@ function RegelbuchAnsicht() {
 
   
   const rulesDatabase = [
-    { id: "101.1.", title: "Die Goldene Regel (The Golden Rule)", text: "Wann immer der Text einer Karte einer Regel widerspricht, hat der Text der Karte Vorrang. Die Karte modifiziert die Regel für diese specific Situation." },
-    { id: "117.1.", title: "Priorität (Priority)", text: "Spieler können Zaubersprüche und Fähigkeiten nur wirken oder aktivieren, wenn sie Priorität haben. Ein Spieler erhält Priorität, nachdem ein Zauberspruch oder eine Fähigkeit verrechnet wurde, oder zu Beginn jedes Segments/jeder Phase (außer Untap und Cleanup)." },
+    { id: "101.1", title: "Die Goldene Regel (The Golden Rule)", text: "Wann immer der Text einer Karte einer Regel widerspricht, hat der Text der Karte Vorrang. Die Karte modifiziert die Regel für diese konkrete Situation." },
+    { id: "117.1", title: "Priorität (Priority)", text: "Spieler können Zaubersprüche und Fähigkeiten nur wirken oder aktivieren, wenn sie Priorität haben. Ein Spieler erhält Priorität, nachdem ein Zauberspruch oder eine Fähigkeit verrechnet wurde, oder zu Beginn jedes Segments/jeder Phase (außer Untap und Cleanup)." },
     { id: "117.3c", title: "Priorität abgeben", text: "Wenn ein Spieler Priorität hat und nichts tun möchte, gibt er die Priorität ab. Wenn alle Spieler nacheinander Priorität abgeben, wird das oberste Objekt auf dem Stapel verrechnet. Ist der Stapel leer, endet das Segment/die Phase." },
-    { id: "400.7.", title: "Zonenwechsel (Zone Changes)", text: "Ein Objekt, das von einer Zone in eine andere wechselt, wird zu einem völlig neuen Objekt. Es hat keine Erinnerung an seine vorherige Existenz in der alten Zone." },
-    { id: "506.1.", title: "Die Kampfphase (Combat Phase)", text: "Die Kampfphase besteht aus fünf Segmenten, in dieser Reihenfolge: Beginn des Kampfes, Angreifer deklarieren, Blocker deklarieren, Kampfschaden und Ende des Kampfes." },
-    { id: "509.1.", title: "Angreifer deklarieren", text: "Der aktive Spieler wählt, welche seiner Kreaturen angreifen. Das Tappen dieser Kreaturen ist Teil der Deklaration. Danach erhalten Spieler Priorität, um Spontanzauber zu wirken." },
-    { id: "509.2.", title: "Blocker deklarieren", text: "Der verteidigende Spieler wählt, welche Kreaturen er zum Blocken einsetzt. Wird ein Angreifer geblockt, bleibt er für den Rest des Kampfes 'geblockt', selbst wenn der Blocker das Spiel verlässt." },
+    { id: "400.7", title: "Zonenwechsel (Zone Changes)", text: "Ein Objekt, das von einer Zone in eine andere wechselt, wird zu einem völlig neuen Objekt. Es hat keine Erinnerung an seine vorherige Existenz in der alten Zone." },
+    { id: "506.1", title: "Die Kampfphase (Combat Phase)", text: "Die Kampfphase besteht aus fünf Segmenten, in dieser Reihenfolge: Beginn des Kampfes, Angreifer deklarieren, Blocker deklarieren, Kampfschaden und Ende des Kampfes." },
+    { id: "508.1", title: "Angreifer deklarieren", text: "Der aktive Spieler wählt, welche seiner Kreaturen angreifen. Das Tappen dieser Kreaturen ist Teil der Deklaration. Danach erhalten Spieler Priorität, um Spontanzauber zu wirken." },
+    { id: "509.1", title: "Blocker deklarieren", text: "Der verteidigende Spieler wählt, welche Kreaturen er zum Blocken einsetzt. Wird ein Angreifer geblockt, bleibt er für den Rest des Kampfes 'geblockt', selbst wenn der Blocker das Spiel verlässt." },
     { id: "608.2b", title: "Verrechnung von Sprüchen (Targets)", text: "Wenn ein Zauberspruch oder eine Fähigkeit Ziele (Targets) benötigt, wird bei der Verrechnung geprüft, ob sie noch legal sind. Sind alle Ziele illegal geworden, verpufft der Spruch ergebnislos ('fizzles')." },
-    { id: "702.8.", title: "Todesberührung (Deathtouch)", text: "Jeder Schaden ungleich null, der von einer Quelle mit Todesberührung einer Kreatur zugefügt wird, ist tödlicher Schaden, ungeachtet der Widerstandskraft der Kreatur." },
-    { id: "702.10.", title: "Doppelschlag (Double Strike)", text: "Kreaturen mit Doppelschlag fügen ihren Kampfschaden in einem zusätzlichen, vorgezogenen Kampfschadens-Segment zu (gleichzeitig mit Erstschlag), und dann noch einmal im regulären Kampfschadens-Segment." },
-    { id: "702.12.", title: "Trampelschaden (Trample)", text: "Überschüssiger Kampfschaden einer angreifenden Kreatur mit Trampelschaden, der nicht benötigt wird, um alle ihre Blocker tödlich zu verletzen, kann stattdessen dem verteidigenden Spieler oder Planeswalker zugefügt werden." },
-    { id: "702.14.", title: "Fluchsicher (Hexproof)", text: "Ein permanent oder Spieler mit Fluchsicher kann nicht das Ziel von Zaubersprüchen oder Fähigkeiten sein, die von einem Gegner kontrolliert werden." },
-    { id: "702.16.", title: "Unzerstörbar (Indestructible)", text: "Kreaturen mit Unzerstörbar können nicht durch 'Zerstöre'-Effekte (Destroy) oder tödlichen Schaden auf den Friedhof gelegt werden. Sie können aber ins Exil geschickt (Exile) oder geopfert (Sacrifice) werden." },
+    { id: "702.2", title: "Todesberührung (Deathtouch)", text: "Jeder Schaden ungleich null, der von einer Quelle mit Todesberührung einer Kreatur zugefügt wird, ist tödlicher Schaden, ungeachtet der Widerstandskraft der Kreatur." },
+    { id: "702.4", title: "Doppelschlag (Double Strike)", text: "Kreaturen mit Doppelschlag fügen ihren Kampfschaden in einem zusätzlichen, vorgezogenen Kampfschadens-Segment zu (gleichzeitig mit Erstschlag), und dann noch einmal im regulären Kampfschadens-Segment." },
+    { id: "702.19", title: "Trampelschaden (Trample)", text: "Überschüssiger Kampfschaden einer angreifenden Kreatur mit Trampelschaden, der nicht benötigt wird, um alle ihre Blocker tödlich zu verletzen, kann stattdessen dem verteidigenden Spieler oder Planeswalker zugefügt werden." },
+    { id: "702.11", title: "Fluchsicher (Hexproof)", text: "Ein permanent oder Spieler mit Fluchsicher kann nicht das Ziel von Zaubersprüchen oder Fähigkeiten sein, die von einem Gegner kontrolliert werden." },
+    { id: "702.12", title: "Unzerstörbar (Indestructible)", text: "Kreaturen mit Unzerstörbar können nicht durch 'Zerstöre'-Effekte (Destroy) oder tödlichen Schaden auf den Friedhof gelegt werden. Sie können aber ins Exil geschickt (Exile) oder geopfert (Sacrifice) werden." },
     { id: "704.5f", title: "State-Based Actions (Toughness 0)", text: "Wenn die Widerstandskraft (Toughness) einer Kreatur 0 oder weniger beträgt, wird sie auf den Friedhof ihres Besitzers gelegt. Dies ist kein 'Zerstören' und umgeht Unzerstörbar." }
   ];
 
@@ -111,7 +111,7 @@ function RegelbuchAnsicht() {
           </div>
         )}
 
-        {ruleSearch.trim().length < 3 && filteredRules.length === 0 && (
+        {ruleSearch.trim().length > 0 && ruleSearch.trim().length < 3 && (
           <p style={{color: 'var(--text-muted)'}}>Gib mindestens drei Zeichen ein, um die offiziellen Regeln zu durchsuchen.</p>
         )}
       </div>
