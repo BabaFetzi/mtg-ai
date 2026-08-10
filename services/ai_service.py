@@ -18,6 +18,7 @@ hartcodiert). Judge und Synergie-Scanner nutzen dieselbe Variable, da beide
 
 import logging
 import os
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -66,34 +67,109 @@ def _to_config(generation_config):
     return generation_config
 
 
+def _extract_usage(response):
+    """Liest Tokenzahlen aus der Antwort, falls das SDK sie mitliefert."""
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return None, None, None
+    prompt_tokens = getattr(usage, "prompt_token_count", None)
+    antwort_tokens = getattr(usage, "candidates_token_count", None)
+    gesamt = getattr(usage, "total_token_count", None)
+    if gesamt is None and (prompt_tokens or antwort_tokens):
+        gesamt = (prompt_tokens or 0) + (antwort_tokens or 0)
+    return prompt_tokens, antwort_tokens, gesamt
+
+
+def _beschreibe_fehler(e: Exception) -> str:
+    code = getattr(e, "code", None) or getattr(e, "status_code", None)
+    status = getattr(e, "status", None)
+    message = getattr(e, "message", None) or str(e)
+    return f"http_status={code} status={status}: {message}"
+
+
 class _GeminiModel:
     """Dünner Adapter, der die bisherige `.generate_content(...)`-Schnittstelle
     (inkl. `response.text`) auf das neue google-genai SDK abbildet. So bleiben
     alle Aufrufstellen (Judge, Scanner, Deck-Analyse/Roast, Kartenübersetzung,
-    Vision) unverändert."""
+    Vision) unverändert.
 
-    def __init__(self, client, model_name: str):
+    Zusätzlich:
+    - Ersatzmodell: Fällt das Hauptmodell aus (z.B. 404 abgeschaltetes Modell,
+      503 Überlastung), wird EINMAL mit dem Ersatzmodell wiederholt, statt die
+      Funktion für den Nutzer ausfallen zu lassen.
+    - Protokoll: Modell, Tokens, Latenz, Kosten und Erfolg jeder Anfrage werden
+      erfasst (gepuffert, ohne die Antwort zu verzögern).
+    """
+
+    def __init__(self, client, model_name: str, fallback_model_name: str = None):
         self._client = client
         self._model = model_name
+        self._fallback_model = fallback_model_name
 
-    def generate_content(self, contents, generation_config=None):
-        try:
-            return self._client.models.generate_content(
-                model=self._model,
-                contents=_normalize_contents(contents),
-                config=_to_config(generation_config),
+    def _aufruf(self, model_name, contents, generation_config):
+        return self._client.models.generate_content(
+            model=model_name,
+            contents=_normalize_contents(contents),
+            config=_to_config(generation_config),
+        )
+
+    def generate_content(self, contents, generation_config=None, feature="unbekannt", benutzername=None):
+        # Modellkette: Hauptmodell, danach (falls konfiguriert und abweichend)
+        # das Ersatzmodell.
+        kette = [self._model]
+        if self._fallback_model and self._fallback_model != self._model:
+            kette.append(self._fallback_model)
+
+        letzter_fehler = None
+        for index, model_name in enumerate(kette):
+            start = time.perf_counter()
+            try:
+                response = self._aufruf(model_name, contents, generation_config)
+            except Exception as e:
+                dauer_ms = int((time.perf_counter() - start) * 1000)
+                letzter_fehler = e
+                beschreibung = _beschreibe_fehler(e)
+                logger.warning("Gemini-Aufruf fehlgeschlagen (model=%s): %s", model_name, beschreibung)
+                _protokolliere(
+                    funktion=feature, modell=model_name, erfolg=False,
+                    latenz_ms=dauer_ms, fehler=beschreibung, benutzername=benutzername,
+                    frage=_als_text(contents),
+                )
+                if index + 1 < len(kette):
+                    logger.info("Wechsle auf Ersatzmodell %s.", kette[index + 1])
+                continue
+
+            dauer_ms = int((time.perf_counter() - start) * 1000)
+            prompt_tokens, antwort_tokens, gesamt = _extract_usage(response)
+            _protokolliere(
+                funktion=feature, modell=model_name, erfolg=True, latenz_ms=dauer_ms,
+                prompt_tokens=prompt_tokens, antwort_tokens=antwort_tokens,
+                gesamt_tokens=gesamt, benutzername=benutzername,
+                frage=_als_text(contents), antwort=getattr(response, "text", None),
             )
-        except Exception as e:
-            # Echten Gemini-Statuscode/Meldung loggen, damit die Ursache (z.B.
-            # 400 ungültiger Key, 403 Key ohne Zugriff, 429 Quota) sichtbar ist.
-            code = getattr(e, "code", None) or getattr(e, "status_code", None)
-            status = getattr(e, "status", None)
-            message = getattr(e, "message", None) or str(e)
-            logger.warning(
-                "Gemini-Aufruf fehlgeschlagen (model=%s, http_status=%s, status=%s): %s",
-                self._model, code, status, message,
-            )
-            raise
+            if index > 0:
+                logger.info("Ersatzmodell %s hat die Anfrage beantwortet.", model_name)
+            return response
+
+        raise letzter_fehler
+
+
+def _als_text(contents):
+    """Reduziert `contents` auf reinen Text (Bilddaten werden nie protokolliert)."""
+    if isinstance(contents, str):
+        return contents
+    if isinstance(contents, (list, tuple)):
+        return "\n".join(c for c in contents if isinstance(c, str)) or None
+    return None
+
+
+def _protokolliere(**kwargs):
+    """Schreibt einen Protokolleintrag; Fehler dabei dürfen die KI nie stören."""
+    try:
+        from services.ai_usage_log import record
+        record(**kwargs)
+    except Exception:
+        logger.debug("KI-Protokolleintrag fehlgeschlagen", exc_info=True)
 
 
 # --- Modelle initialisieren (Kosten-Tiering, siehe KI-Kosten-Audit) ---
@@ -109,6 +185,13 @@ class _GeminiModel:
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 MODEL_LITE_NAME = os.getenv("GEMINI_MODEL_LITE", "gemini-flash-lite-latest")
 
+# Ersatzmodelle: Fällt das Hauptmodell aus (abgeschaltetes Modell, Überlastung,
+# regionale Störung), wird EINMAL mit diesem Modell wiederholt. Standardmäßig
+# stützt sich das teure Modell auf das günstige und umgekehrt -- so bleibt die
+# Funktion verfügbar, statt für den Nutzer komplett auszufallen.
+MODEL_FALLBACK_NAME = os.getenv("GEMINI_MODEL_FALLBACK", MODEL_LITE_NAME)
+MODEL_LITE_FALLBACK_NAME = os.getenv("GEMINI_MODEL_LITE_FALLBACK", MODEL_NAME)
+
 model = None
 model_lite = None
 api_key = os.getenv(GEMINI_API_KEY_ENV)
@@ -118,9 +201,12 @@ if KI_VERFUEGBAR and api_key:
         # api_key=... spricht den nativen Gemini Developer API-Endpoint an
         # (generativelanguage.googleapis.com), passend für AIza- UND AQ.-Keys.
         client = genai.Client(api_key=api_key)
-        model = _GeminiModel(client, MODEL_NAME)
-        model_lite = _GeminiModel(client, MODEL_LITE_NAME)
-        logger.info("Gemini (google-genai SDK) initialisiert: %s / %s.", MODEL_NAME, MODEL_LITE_NAME)
+        model = _GeminiModel(client, MODEL_NAME, MODEL_FALLBACK_NAME)
+        model_lite = _GeminiModel(client, MODEL_LITE_NAME, MODEL_LITE_FALLBACK_NAME)
+        logger.info(
+            "Gemini (google-genai SDK) initialisiert: %s (Ersatz: %s) / %s (Ersatz: %s).",
+            MODEL_NAME, MODEL_FALLBACK_NAME, MODEL_LITE_NAME, MODEL_LITE_FALLBACK_NAME,
+        )
     except Exception:
         logger.exception("FEHLER beim Initialisieren des Gemini-Clients")
 elif KI_VERFUEGBAR and not api_key:

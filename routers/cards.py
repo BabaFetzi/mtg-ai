@@ -199,7 +199,7 @@ def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzername: str
                 "'Tappen', 'Verursacht Trampelschaden', 'Erzeuge', etc.). "
                 f"Antworte NUR mit dem übersetzten Text:\n{oracle_text}"
             )
-            response = model_lite.generate_content(prompt)
+            response = model_lite.generate_content(prompt, feature="kartentext_uebersetzung", benutzername=benutzername)
             return response.text.strip()
         except Exception:
             return f"Originaltext (Englisch):\n{oracle_text}"

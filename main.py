@@ -30,6 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from database import init_db
+from services import ai_usage_log
 from services.limiter import limiter
 from routers import cards, auth, collection, decks, ai, payments, vision
 
@@ -65,6 +66,8 @@ def get_allowed_origins() -> list[str]:
 # Lifespan Events (Datenbank-Initialisierung beim Startup)
 # ======================================================================
 MAINTENANCE_INTERVAL_SECONDS = int(os.getenv("MAINTENANCE_INTERVAL_SECONDS", "1800"))
+# Takt, in dem das gepufferte KI-Protokoll in die Datenbank geschrieben wird.
+AI_LOG_FLUSH_SECONDS = int(os.getenv("AI_LOG_FLUSH_SECONDS", "30"))
 JOB_RETENTION_HOURS = int(os.getenv("JOB_RETENTION_HOURS", "24"))
 
 
@@ -105,11 +108,32 @@ async def _run_maintenance() -> None:
     except Exception:
         logger.warning("Cache-Aufräumen fehlgeschlagen", exc_info=True)
 
+    try:
+        geloescht = await ai_usage_log.purge_old()
+        if geloescht:
+            logger.info("KI-Protokoll: %d Einträge über der Aufbewahrungsfrist entfernt.", geloescht)
+    except Exception:
+        logger.warning("Aufräumen des KI-Protokolls fehlgeschlagen", exc_info=True)
+
 
 async def _maintenance_loop() -> None:
     while True:
         await asyncio.sleep(MAINTENANCE_INTERVAL_SECONDS)
         await _run_maintenance()
+
+
+async def _ai_log_flush_loop() -> None:
+    """Schreibt das gepufferte KI-Protokoll regelmäßig weg.
+
+    Eigene Aufgabe mit kurzem Takt: Der Puffer soll zeitnah in der Datenbank
+    landen, während die Wartung (Aufräumen) nur alle 30 Minuten läuft.
+    """
+    while True:
+        await asyncio.sleep(AI_LOG_FLUSH_SECONDS)
+        try:
+            await ai_usage_log.flush()
+        except Exception:
+            logger.warning("KI-Protokoll-Flush fehlgeschlagen", exc_info=True)
 
 
 @asynccontextmanager
@@ -122,14 +146,21 @@ async def lifespan(app: FastAPI):
         logger.exception("FEHLER bei der Datenbankinitialisierung")
 
     wartung = asyncio.create_task(_maintenance_loop())
+    ki_protokoll = asyncio.create_task(_ai_log_flush_loop())
     try:
         yield
     finally:
-        wartung.cancel()
+        for aufgabe in (wartung, ki_protokoll):
+            aufgabe.cancel()
+            try:
+                await aufgabe
+            except (asyncio.CancelledError, Exception):
+                pass
+        # Restpuffer beim Herunterfahren noch wegschreiben.
         try:
-            await wartung
-        except (asyncio.CancelledError, Exception):
-            pass
+            await ai_usage_log.flush()
+        except Exception:
+            logger.warning("Abschließender KI-Protokoll-Flush fehlgeschlagen", exc_info=True)
 
 # ======================================================================
 # FastAPI App Setup

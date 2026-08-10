@@ -447,7 +447,7 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
                 + _fakten_abschnitt(fakten, nicht_gefunden)
                 + f"Deckliste:\n{req.deck_liste}"
             )
-            response = model.generate_content(prompt)
+            response = model.generate_content(prompt, feature="deck_analyse", benutzername=current_user)
             text_resp = response.text
             match = re.search(r'\{.*\}', text_resp, re.DOTALL)
             if match:
@@ -513,7 +513,7 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
                 + _fakten_abschnitt(fakten, nicht_gefunden)
                 + f"Deckliste:\n{req.deck_liste}"
             )
-            response = model_lite.generate_content(prompt)
+            response = model_lite.generate_content(prompt, feature="deck_roast", benutzername=current_user)
             text_resp = response.text
             match = re.search(r'\{.*\}', text_resp, re.DOTALL)
             if match:

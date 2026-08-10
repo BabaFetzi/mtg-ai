@@ -103,6 +103,32 @@ class ImportJob(Base):
     error = Column(Text, nullable=True)
     erstellt_am = Column(DateTime, default=datetime.utcnow)
 
+class AiCall(Base):
+    """Protokoll jeder KI-Anfrage: Modell, Tokens, Latenz, Kosten, Erfolg.
+
+    Ohne dieses Protokoll lässt sich die Antwortqualität nur raten -- man sieht
+    weder, welche Funktion wie oft fehlschlägt, noch was sie kostet.
+
+    Datenschutz: Frage- und Antworttext werden NUR gespeichert, wenn
+    AI_LOG_CONTENT=true gesetzt ist (Standard: aus). Ohne das Flag enthält die
+    Tabelle reine Betriebskennzahlen.
+    """
+    __tablename__ = 'ai_calls'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    benutzername = Column(String(50), index=True, nullable=True)
+    funktion = Column(String(50), index=True)      # 'judge', 'deck_analyse', ...
+    modell = Column(String(80))
+    erfolg = Column(Boolean, default=True)
+    fehler = Column(Text, nullable=True)
+    prompt_tokens = Column(Integer, nullable=True)
+    antwort_tokens = Column(Integer, nullable=True)
+    gesamt_tokens = Column(Integer, nullable=True)
+    latenz_ms = Column(Integer, nullable=True)
+    kosten_usd = Column(Numeric(12, 6), nullable=True)  # NULL, wenn keine Preise konfiguriert sind
+    frage = Column(Text, nullable=True)            # nur mit AI_LOG_CONTENT=true
+    antwort = Column(Text, nullable=True)          # nur mit AI_LOG_CONTENT=true
+    erstellt_am = Column(DateTime, default=datetime.utcnow, index=True)
+
 async def init_db():
     async with engine.begin() as conn:
         # Create tables if they do not exist

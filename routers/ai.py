@@ -87,7 +87,7 @@ async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str 
     if model_lite:
         try:
             prompt = await _build_judge_prompt(req.frage)
-            response = model_lite.generate_content(prompt)
+            response = model_lite.generate_content(prompt, feature="judge", benutzername=current_user)
             return {"antwort": response.text}
         except Exception:
             logger.exception("Error calling judge model")
@@ -415,7 +415,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
             )
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt))
+                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt, feature="combo_fallback", benutzername=benutzername))
                 text_resp = response.text
                 match = re.search(r'\{.*\}', text_resp, re.DOTALL)
                 if match:
@@ -552,7 +552,7 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
             )
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt))
+                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt, feature="combo_fallback", benutzername=benutzername))
                 text_resp = response.text
                 match = re.search(r'\{.*\}', text_resp, re.DOTALL)
                 if match:
