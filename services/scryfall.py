@@ -356,6 +356,9 @@ def _extract_card_info(card_data: dict) -> Dict[str, Any]:
         "image": img,
         "type": card_data.get("type_line", ""),
         "oracle_text": oracle_text,
+        # Manasymbole ("{2}{R}") -- für die Deck-Analyse aussagekräftiger als der
+        # reine Manawert, weil daraus die Farbanforderungen hervorgehen.
+        "mana_cost": card_data.get("mana_cost", ""),
         "cmc": card_data.get("cmc", 0.0),
         "colors": card_data.get("colors", []),
         "color_identity": card_data.get("color_identity", []),
@@ -641,6 +644,60 @@ async def _fetch_uncached(uncached_names: List[str]) -> Dict[str, Dict[str, Any]
                     scryfall_data[card_info["name"].lower().strip()] = card_info
 
     return scryfall_data
+
+
+async def build_deck_card_facts(deck_liste: str, max_cards: int = 100) -> tuple:
+    """
+    Löst eine Deckliste zu BESTÄTIGTEN Kartendaten auf (Scryfall).
+
+    Zweck: Die KI-Deck-Analyse bekam bisher nur die nackte Namensliste und musste
+    jeden Kartentext aus dem Gedächtnis rekonstruieren -- bei neuen oder
+    lokalisierten Karten hat sie ihn schlicht erfunden. Mit den echten Daten
+    begründet das Modell auf Fakten statt auf Erinnerung.
+
+    Args:
+        deck_liste: Rohe Deckliste ("4x Lightning Bolt\n1 Sol Ring").
+        max_cards: Obergrenze verschiedener Karten (Token- und Kostenschutz).
+
+    Returns:
+        (fakten_block, nicht_gefunden)
+        fakten_block: mehrzeiliger Text mit Anzahl, Name, Typ, Manakosten und Regeltext
+        nicht_gefunden: Namen, die Scryfall nicht auflösen konnte
+    """
+    eintraege = parse_decklist(deck_liste or "")
+    if not eintraege:
+        return "", []
+
+    # Mengen je Kartenname zusammenfassen, Reihenfolge der Liste beibehalten.
+    mengen: Dict[str, int] = {}
+    for eintrag in eintraege:
+        name = (eintrag.get("name") or "").strip()
+        if name:
+            mengen[name] = mengen.get(name, 0) + int(eintrag.get("count") or 1)
+
+    namen = list(mengen.keys())[:max_cards]
+    if not namen:
+        return "", []
+
+    treffer = await fetch_card_details_cached(namen)
+
+    zeilen: List[str] = []
+    nicht_gefunden: List[str] = []
+    for name in namen:
+        info = treffer.get(name.lower().strip())
+        if not info:
+            nicht_gefunden.append(name)
+            continue
+        anzahl = mengen[name]
+        kosten = info.get("mana_cost") or ""
+        kopf = f"{anzahl}x {info.get('name', name)} — {info.get('type', '')}"
+        if kosten:
+            kopf += f" — {kosten}"
+        kopf += f" — MW {info.get('cmc', 0)}"
+        regeltext = (info.get("oracle_text") or "").replace("\n", " ").strip()
+        zeilen.append(f"{kopf}\n  Regeltext: {regeltext or '(kein Regeltext)'}")
+
+    return "\n".join(zeilen), nicht_gefunden
 
 
 def _cache_get_many(keys: List[str]) -> Dict[str, Any]:

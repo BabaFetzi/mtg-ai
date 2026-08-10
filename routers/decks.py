@@ -36,7 +36,7 @@ from sqlalchemy import text
 from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
-from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist
+from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist, build_deck_card_facts
 from services.ai_service import model, model_lite
 from services.limiter import limiter
 from services.usage_limiter import check_and_increment_ai_usage
@@ -366,6 +366,40 @@ async def deck_wert(req: DeckAnalyseReq, request: Request, current_user: str = D
     return {"gesamt_wert": f"{total_value:.2f}"}
 
 # ======================================================================
+# Kartenerdung für die KI-Deck-Funktionen
+# ======================================================================
+async def _deck_fakten(deck_liste: str):
+    """Holt bestätigte Kartendaten zur Deckliste.
+
+    Die Erdung ist eine Verbesserung, kein Muss: Fällt Scryfall aus, läuft die
+    Analyse weiter -- nur ohne Faktenblock, statt komplett zu scheitern.
+    """
+    try:
+        return await build_deck_card_facts(deck_liste)
+    except Exception:
+        logger.warning("Kartenerdung für Deck-Funktion fehlgeschlagen", exc_info=True)
+        return "", []
+
+
+def _fakten_abschnitt(fakten: str, nicht_gefunden: list) -> str:
+    """Baut den Prompt-Abschnitt mit den bestätigten Kartendaten."""
+    if not fakten and not nicht_gefunden:
+        return ""
+    teile = [
+        "WICHTIG: Stütze dich bei Kartenfähigkeiten AUSSCHLIESSLICH auf die folgenden "
+        "bestätigten Kartendaten. Erfinde keine Kartentexte.",
+    ]
+    if fakten:
+        teile.append("\nBESTÄTIGTE KARTENDATEN (live von Scryfall):\n" + fakten)
+    if nicht_gefunden:
+        teile.append(
+            "\nNICHT AUFLÖSBAR (keine Aussagen zu deren Fähigkeiten treffen): "
+            + ", ".join(nicht_gefunden)
+        )
+    return "\n".join(teile) + "\n\n"
+
+
+# ======================================================================
 # POST /api/deck/analyse – KI-gestützte Deck-Analyse (Premium)
 # ======================================================================
 @router.post(
@@ -388,6 +422,10 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
 
     if model and check_and_increment_ai_usage(current_user):
         try:
+            # Echte Kartendaten beschaffen. Ohne sie musste das Modell jeden
+            # Kartentext aus dem Gedächtnis rekonstruieren und hat ihn bei
+            # unbekannten Karten erfunden.
+            fakten, nicht_gefunden = await _deck_fakten(req.deck_liste)
             prompt = (
                 f"Analysiere dieses Magic the Gathering Deck auf Deutsch unter Berücksichtigung des Formats: '{req.format}'.\n"
                 f"Format-Spezifikationen:\n"
@@ -406,7 +444,8 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
                 f"- 'verbesserungen' (array of objects mit Schlüsseln: 'rein' (string), 'raus' (string oder null), 'grund' (string))\n"
                 f"- 'format_kontext' (string)\n"
                 f"- 'power_level' (int, 1-10)\n\n"
-                f"Deckliste:\n{req.deck_liste}"
+                + _fakten_abschnitt(fakten, nicht_gefunden)
+                + f"Deckliste:\n{req.deck_liste}"
             )
             response = model.generate_content(prompt)
             text_resp = response.text
@@ -462,6 +501,7 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
 
     if model_lite and check_and_increment_ai_usage(current_user):
         try:
+            fakten, nicht_gefunden = await _deck_fakten(req.deck_liste)
             prompt = (
                 f"Roaste dieses Magic the Gathering Deck auf Deutsch unter Berücksichtigung des Formats: '{req.format}'.\n"
                 f"Sei extrem sarkastisch, humorvoll, gemein aber augenzwinkernd. Nutze typischen Magic-Slang (z.B. Salz, Jank, Mana-Flooded, Netdecker, Comboplayer, Casual, etc.).\n"
@@ -470,7 +510,8 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
                 f"- 'roast' (string, ausführlicher humorvoller Text, mind. 120 Wörter)\n"
                 f"- 'salt_score' (int, Wert von 1-100 wie 'salzig' / nervig das Deck ist)\n"
                 f"- 'verdict' (string, eine kurze, witzige Zusammenfassung / Urteil, z.B. 'Der wandelnde Salzstreuer')\n\n"
-                f"Deckliste:\n{req.deck_liste}"
+                + _fakten_abschnitt(fakten, nicht_gefunden)
+                + f"Deckliste:\n{req.deck_liste}"
             )
             response = model_lite.generate_content(prompt)
             text_resp = response.text
