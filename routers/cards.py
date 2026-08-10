@@ -13,6 +13,7 @@ Abhängigkeiten:
 - database             → get_db_session(), check_user_premium()
 """
 
+import asyncio
 import logging
 import urllib.parse
 from typing import Optional
@@ -108,7 +109,7 @@ async def suche_karte(
         oracle_text = _get_oracle_text(data)
 
         # --- Deutsche Übersetzung (Premium + KI) ---
-        text_de = _translate_oracle_text(oracle_text, is_premium, benutzername)
+        text_de = await _translate_oracle_text(oracle_text, is_premium, benutzername)
 
         # --- Alle Prints/Auflagen laden ---
         prints = await _fetch_prints(client, data, bild)
@@ -180,7 +181,7 @@ def _get_oracle_text(data: dict) -> str:
     return oracle_text
 
 
-def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzername: str = "") -> str:
+async def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzername: str = "") -> str:
     """
     Übersetzt den Oracle-Text ins Deutsche.
 
@@ -199,7 +200,10 @@ def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzername: str
                 "'Tappen', 'Verursacht Trampelschaden', 'Erzeuge', etc.). "
                 f"Antworte NUR mit dem übersetzten Text:\n{oracle_text}"
             )
-            response = model_lite.generate_content(prompt, feature="kartentext_uebersetzung", benutzername=benutzername)
+            # In einem Thread, sonst blockiert die Übersetzung den Event-Loop.
+            response = await asyncio.to_thread(
+                model_lite.generate_content, prompt, None, "kartentext_uebersetzung", benutzername
+            )
             return response.text.strip()
         except Exception:
             return f"Originaltext (Englisch):\n{oracle_text}"

@@ -4,9 +4,10 @@ from unittest.mock import MagicMock, patch
 import routers.cards
 
 
-def test_translate_oracle_text_free_user_no_gemini_call():
+@pytest.mark.asyncio
+async def test_translate_oracle_text_free_user_no_gemini_call():
     with patch('routers.cards.model_lite') as mock_model_lite:
-        result = routers.cards._translate_oracle_text("Flying, vigilance.", is_premium=False, benutzername="free_user")
+        result = await routers.cards._translate_oracle_text("Flying, vigilance.", is_premium=False, benutzername="free_user")
         mock_model_lite.generate_content.assert_not_called()
         assert "Premium-Feature" in result
         assert "Flying, vigilance." in result
@@ -14,7 +15,8 @@ def test_translate_oracle_text_free_user_no_gemini_call():
 
 @patch('routers.cards.check_and_increment_ai_usage')
 @patch('routers.cards.model_lite')
-def test_translate_oracle_text_premium_uses_model_lite(mock_model_lite, mock_usage):
+@pytest.mark.asyncio
+async def test_translate_oracle_text_premium_uses_model_lite(mock_model_lite, mock_usage):
     """Regressionstest fürs Modell-Tiering: Kartenübersetzung muss über
     model_lite laufen, nicht über das teurere model (Gemini 2.5 Flash)."""
     mock_usage.return_value = True
@@ -22,7 +24,7 @@ def test_translate_oracle_text_premium_uses_model_lite(mock_model_lite, mock_usa
     mock_response.text = "Fliegend, Wachsamkeit."
     mock_model_lite.generate_content.return_value = mock_response
 
-    result = routers.cards._translate_oracle_text("Flying, vigilance.", is_premium=True, benutzername="premium_user")
+    result = await routers.cards._translate_oracle_text("Flying, vigilance.", is_premium=True, benutzername="premium_user")
 
     assert result == "Fliegend, Wachsamkeit."
     mock_model_lite.generate_content.assert_called_once()
@@ -31,17 +33,19 @@ def test_translate_oracle_text_premium_uses_model_lite(mock_model_lite, mock_usa
 
 @patch('routers.cards.check_and_increment_ai_usage')
 @patch('routers.cards.model_lite')
-def test_translate_oracle_text_blocked_when_monthly_limit_reached(mock_model_lite, mock_usage):
+@pytest.mark.asyncio
+async def test_translate_oracle_text_blocked_when_monthly_limit_reached(mock_model_lite, mock_usage):
     """Regressionstest fürs Monatslimit: ist es erreicht, wird Gemini nicht
     aufgerufen -- der Originaltext wird stattdessen zurückgegeben."""
     mock_usage.return_value = False
 
-    result = routers.cards._translate_oracle_text("Flying, vigilance.", is_premium=True, benutzername="power_user")
+    result = await routers.cards._translate_oracle_text("Flying, vigilance.", is_premium=True, benutzername="power_user")
 
     mock_model_lite.generate_content.assert_not_called()
     assert "Originaltext (Englisch)" in result
     assert "Flying, vigilance." in result
 
 
-def test_translate_oracle_text_empty_input():
-    assert routers.cards._translate_oracle_text("", is_premium=True, benutzername="x") == "Keine Textbeschreibung vorhanden."
+@pytest.mark.asyncio
+async def test_translate_oracle_text_empty_input():
+    assert await routers.cards._translate_oracle_text("", is_premium=True, benutzername="x") == "Keine Textbeschreibung vorhanden."

@@ -58,12 +58,19 @@ def _normalize_contents(contents):
     return contents
 
 
-def _to_config(generation_config):
-    """Mappt das alte `generation_config`-Dict auf types.GenerateContentConfig."""
-    if not generation_config:
+def _to_config(generation_config, tools=None):
+    """Mappt das alte `generation_config`-Dict auf types.GenerateContentConfig.
+
+    `tools` sind Python-Funktionen, die das Modell selbst aufrufen darf
+    (automatic function calling) -- damit holt es sich Fakten, statt sie zu raten.
+    """
+    if not generation_config and not tools:
         return None
-    if isinstance(generation_config, dict):
-        return types.GenerateContentConfig(**generation_config)
+    if isinstance(generation_config, dict) or generation_config is None:
+        werte = dict(generation_config or {})
+        if tools:
+            werte["tools"] = list(tools)
+        return types.GenerateContentConfig(**werte)
     return generation_config
 
 
@@ -106,14 +113,15 @@ class _GeminiModel:
         self._model = model_name
         self._fallback_model = fallback_model_name
 
-    def _aufruf(self, model_name, contents, generation_config):
+    def _aufruf(self, model_name, contents, generation_config, tools):
         return self._client.models.generate_content(
             model=model_name,
             contents=_normalize_contents(contents),
-            config=_to_config(generation_config),
+            config=_to_config(generation_config, tools),
         )
 
-    def generate_content(self, contents, generation_config=None, feature="unbekannt", benutzername=None):
+    def generate_content(self, contents, generation_config=None, feature="unbekannt",
+                         benutzername=None, tools=None):
         # Modellkette: Hauptmodell, danach (falls konfiguriert und abweichend)
         # das Ersatzmodell.
         kette = [self._model]
@@ -124,7 +132,7 @@ class _GeminiModel:
         for index, model_name in enumerate(kette):
             start = time.perf_counter()
             try:
-                response = self._aufruf(model_name, contents, generation_config)
+                response = self._aufruf(model_name, contents, generation_config, tools)
             except Exception as e:
                 dauer_ms = int((time.perf_counter() - start) * 1000)
                 letzter_fehler = e

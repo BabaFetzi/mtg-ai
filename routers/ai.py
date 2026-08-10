@@ -16,6 +16,7 @@ Abhängigkeiten:
 
 import asyncio
 import hashlib
+import os
 import json
 import logging
 import re
@@ -34,6 +35,7 @@ from services.combos import detect_local_combos
 from services.combo_validation import validate_combos
 from services.limiter import limiter
 from services.scryfall import parse_decklist, extract_card_name_candidates, fetch_card_details_cached
+from services.card_query_tool import karten_suchen
 from services.rules_corpus import suche_regeln
 from services.synergies import detect_synergies
 from services.usage_limiter import check_and_increment_ai_usage
@@ -88,12 +90,50 @@ async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str 
     if model_lite:
         try:
             prompt = await _build_judge_prompt(req.frage)
-            response = model_lite.generate_content(prompt, feature="judge", benutzername=current_user)
-            return {"antwort": response.text}
+            antwort = await _judge_modell_aufrufen(prompt, current_user)
+            return {"antwort": antwort}
         except Exception:
             logger.exception("Error calling judge model")
 
     return {"antwort": "Der KI-Judge ist momentan beschäftigt oder nicht eingerichtet. Bitte überprüfe deinen API Key."}
+
+
+# Das Modell darf die Kartendatenbank selbst abfragen. Über einen Schalter
+# abstellbar, falls das Werkzeug einmal mehr kostet als es nützt.
+JUDGE_CARD_TOOL_ENABLED = os.getenv("JUDGE_CARD_TOOL_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+
+
+async def _judge_modell_aufrufen(prompt: str, benutzername: str) -> str:
+    """Ruft das Judge-Modell auf -- in einem Thread und mit Karten-Werkzeug.
+
+    Zwei Dinge passieren hier bewusst:
+
+    1. `asyncio.to_thread`: Der Gemini-Aufruf ist synchron und dauert Sekunden.
+       Direkt im Endpunkt aufgerufen blockierte er den gesamten Event-Loop, also
+       ALLE gleichzeitigen Anfragen (auch Logins) für diese Zeit.
+    2. Werkzeug mit Rückfallebene: Das Modell darf die Kartendatenbank selbst
+       abfragen. Scheitert der Aufruf MIT Werkzeug (z.B. weil das Modell
+       Function-Calling nicht unterstützt), wird einmal ohne Werkzeug wiederholt
+       -- eine bezahlte, funktionierende Funktion darf dadurch nie ausfallen.
+    """
+    def _mit_werkzeug():
+        return model_lite.generate_content(
+            prompt, feature="judge", benutzername=benutzername, tools=[karten_suchen]
+        )
+
+    def _ohne_werkzeug():
+        return model_lite.generate_content(prompt, feature="judge", benutzername=benutzername)
+
+    if JUDGE_CARD_TOOL_ENABLED:
+        try:
+            return (await asyncio.to_thread(_mit_werkzeug)).text
+        except Exception:
+            logger.warning(
+                "Judge-Aufruf mit Karten-Werkzeug fehlgeschlagen -- wiederhole ohne Werkzeug.",
+                exc_info=True,
+            )
+
+    return (await asyncio.to_thread(_ohne_werkzeug)).text
 
 
 async def _build_judge_prompt(frage: str) -> str:

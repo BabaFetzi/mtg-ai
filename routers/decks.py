@@ -23,6 +23,7 @@ Abhängigkeiten:
     - schemas.models            → DeckErstellenReq, DeckUpdateReq, DeckLoeschenReq, DeckAnalyseReq, ValidateDeckReq
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -447,7 +448,12 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
                 + _fakten_abschnitt(fakten, nicht_gefunden)
                 + f"Deckliste:\n{req.deck_liste}"
             )
-            response = model.generate_content(prompt, feature="deck_analyse", benutzername=current_user)
+            # In einem Thread: der Gemini-Aufruf ist synchron und dauert Sekunden --
+            # direkt im Endpunkt blockierte er den Event-Loop und damit ALLE
+            # anderen gleichzeitigen Anfragen.
+            response = await asyncio.to_thread(
+                model.generate_content, prompt, None, "deck_analyse", current_user
+            )
             text_resp = response.text
             match = re.search(r'\{.*\}', text_resp, re.DOTALL)
             if match:
@@ -513,7 +519,9 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
                 + _fakten_abschnitt(fakten, nicht_gefunden)
                 + f"Deckliste:\n{req.deck_liste}"
             )
-            response = model_lite.generate_content(prompt, feature="deck_roast", benutzername=current_user)
+            response = await asyncio.to_thread(
+                model_lite.generate_content, prompt, None, "deck_roast", current_user
+            )
             text_resp = response.text
             match = re.search(r'\{.*\}', text_resp, re.DOTALL)
             if match:
