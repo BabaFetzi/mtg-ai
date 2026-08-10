@@ -13,3 +13,7 @@ data/card_images/
 # Lokal zwischengespeicherte Comprehensive Rules (Urheberrecht: Wizards of the
 # Coast -- wird beim ersten Gebrauch geladen, nicht mitgeliefert).
 mtg_comprehensive_rules.txt
+
+# SQLite WAL-Begleitdateien
+*.db-shm
+*.db-wal
