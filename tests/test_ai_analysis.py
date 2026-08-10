@@ -118,7 +118,10 @@ async def test_deck_analyse_fallback_on_exception(mock_premium):
             assert response.status_code == 200
             data = response.json()
             assert "error" not in data
-            assert data["strategie"] == "Konnte durch die KI aktuell nicht ausgewertet werden."
-        assert data["power_level"] == 5
+            # Kein erfundenes Ersatz-Ergebnis: ohne KI-Antwort gibt es KEINE
+            # Bewertung, sondern eine als solche gekennzeichnete Fehlanzeige.
+            assert data["nicht_verfuegbar"] is True
+            assert "nicht verfügbar" in data["strategie"]
+        assert data["power_level"] is None
     finally:
         routers.decks.model = original_model

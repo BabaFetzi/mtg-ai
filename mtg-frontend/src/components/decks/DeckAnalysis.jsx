@@ -25,6 +25,19 @@ function DeckAnalysis({ analyse, deckWert, userRole, onShowPremiumModal }) {
     return <p style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Keine Analyse verfügbar.</p>;
   }
 
+  // Die KI konnte nicht antworten. Bewusst KEIN Diagramm rendern: mangels
+  // Werten würde es überall 5/10 anzeigen und wie ein echtes Ergebnis wirken.
+  if (analyse.nicht_verfuegbar) {
+    return (
+      <div className="content-card" style={{ padding: '40px', textAlign: 'center' }}>
+        <h3 style={{ marginBottom: '10px' }}>Analyse momentan nicht verfügbar</h3>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+          {analyse.strategie || 'Die KI-Analyse konnte nicht durchgeführt werden. Bitte versuche es später erneut.'}
+        </p>
+      </div>
+    );
+  }
+
   // --- 1. SVG RADAR CHART MATHEMATICS ---
   const categories = [
     { key: 'card_draw', label: 'Card Draw' },

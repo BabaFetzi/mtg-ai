@@ -1872,6 +1872,12 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                 <div className="spinner"></div>
                 <p style={{marginTop: '20px', color: 'var(--text-muted)', fontStyle: 'italic'}}>Analysiere Deck-Schwächen und typische Spielfehler...</p>
               </div>
+            ) : roastData?.nicht_verfuegbar ? (
+              /* Ehrlicher Hinweis statt eines erfundenen Salt-Scores. */
+              <div className="content-card" style={{ padding: '40px', textAlign: 'center' }}>
+                <h3 style={{ marginBottom: '10px' }}>Roast momentan nicht verfügbar</h3>
+                <p style={{ color: 'var(--text-muted)', margin: 0 }}>{roastData.roast}</p>
+              </div>
             ) : roastData ? (
               <div style={{textAlign: 'left'}}>
                 <div style={{

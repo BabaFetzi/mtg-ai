@@ -275,3 +275,60 @@ async def test_remove_card_decrements_even_with_case_and_x_format(mock_check_pre
         assert body["erfolg"] is True, body
         assert body["deck_liste"].strip() == "1x Sol Ring"
 
+
+
+@pytest.mark.asyncio
+@patch('routers.decks.check_user_premium')
+async def test_analysis_fallback_invents_no_scores(mock_premium):
+    """Ohne KI-Antwort darf KEINE Bewertung erfunden werden. Vorher standen hier
+    überall score 5 und power_level 5 -- im Frontend sah das aus wie ein echtes
+    Ergebnis."""
+    mock_premium.return_value = True
+    with patch('routers.decks.model', None):
+        resp = client.post(
+            "/api/deck/analyse",
+            json={"deck_liste": "1 Sol Ring", "format": "commander"},
+            headers=_auth_headers("premium_user"),
+        )
+    body = resp.json()
+    assert body["nicht_verfuegbar"] is True
+    assert body["power_level"] is None
+    assert body["schwaechen"] == {}
+    assert "nicht verfügbar" in body["strategie"]
+
+
+@pytest.mark.asyncio
+@patch('routers.decks.check_user_premium')
+async def test_roast_fallback_invents_no_salt_score(mock_premium):
+    mock_premium.return_value = True
+    with patch('routers.decks.model_lite', None):
+        resp = client.post(
+            "/api/deck/roast",
+            json={"deck_liste": "1 Sol Ring", "format": "commander"},
+            headers=_auth_headers("premium_user"),
+        )
+    body = resp.json()
+    assert body["nicht_verfuegbar"] is True
+    assert body["salt_score"] is None
+    assert body["verdict"] is None
+
+
+@pytest.mark.asyncio
+async def test_dashboard_counts_real_collection_cards(real_db_session_factory):
+    """Regression: Das Dashboard zeigte dauerhaft 0 Karten, weil es SUM(anzahl)
+    las -- eine Spalte, die von den Roh-SQL-Inserts nie gesetzt wird."""
+    from sqlalchemy import text as sql_text
+    async with real_db_session_factory() as s:
+        await s.execute(sql_text(
+            "INSERT INTO sammlung_alben (benutzername, karten_name, album_name, bild_url, preis) "
+            "VALUES ('u','Sol Ring','A','',' 1.0'), ('u','Lightning Bolt','A','','1.0'), "
+            "       ('u','__PLACEHOLDER__','Leer','','0.00')"
+        ))
+        await s.commit()
+
+    with patch('routers.decks.get_db_session', _real_get_db_session(real_db_session_factory)):
+        resp = client.get("/api/dashboard/stats")
+
+    body = resp.json()
+    assert body["total_collection_cards"] == 2, body
+    assert body["total_albums"] == 2

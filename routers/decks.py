@@ -466,21 +466,19 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
             logger.exception("Error generating deck analysis")
             
     fallback_res = {
-        "strategie": "Konnte durch die KI aktuell nicht ausgewertet werden.",
-        "commander": "Unbekannt",
-        "staerken": ["API oder KI Model offline"],
-        "schwaechen": {
-            "card_draw": {"score": 5, "text": "Keine card draw Daten verfügbar."},
-            "removal": {"score": 5, "text": "Keine removal Daten verfügbar."},
-            "ramp": {"score": 5, "text": "Keine ramp Daten verfügbar."},
-            "protection": {"score": 5, "text": "Keine protection Daten verfügbar."},
-            "winconditions": {"score": 5, "text": "Keine winconditions Daten verfügbar."}
-        },
+        # Kein Ersatz-Ergebnis erfinden: Ohne KI-Antwort gibt es KEINE Bewertung.
+        # Vorher standen hier überall "score: 5" und "power_level: 5" -- im
+        # Frontend sah das aus wie eine echte Analyse, war aber geraten.
+        "nicht_verfuegbar": True,
+        "strategie": "Die KI-Analyse ist momentan nicht verfügbar. Bitte versuche es später erneut.",
+        "commander": None,
+        "staerken": [],
+        "schwaechen": {},
         "synergien": [],
         "combos": [],
         "verbesserungen": [],
-        "format_kontext": "Format-Kontext konnte nicht bestimmt werden.",
-        "power_level": 5
+        "format_kontext": None,
+        "power_level": None
     }
     return fallback_res
 
@@ -534,9 +532,12 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
             logger.exception("Error generating deck roast")
             
     fallback_res = {
-        "roast": "Dein Deck ist so langweilig, dass selbst die KI eingeschlafen ist. Versuche es später noch einmal.",
-        "salt_score": 50,
-        "verdict": "Zu unbedeutend für echtes Salz"
+        # Auch hier keine erfundene Bewertung: salt_score 50 sah aus wie ein
+        # Ergebnis, war aber nur ein Platzhalter.
+        "nicht_verfuegbar": True,
+        "roast": "Der Roast ist momentan nicht verfügbar. Bitte versuche es später erneut.",
+        "salt_score": None,
+        "verdict": None
     }
     return fallback_res
 
@@ -738,8 +739,17 @@ async def get_dashboard_stats():
             res_decks = await session.execute(text("SELECT COUNT(*) FROM decks"))
             decks_count = res_decks.scalar() or 0
 
-            # 2. Total collection cards count (sum of card quantities)
-            res_collection = await session.execute(text("SELECT SUM(anzahl) FROM sammlung_alben"))
+            # 2. Anzahl Karten in allen Sammlungen.
+            #
+            # Vorher: SUM(anzahl) -- die Spalte `anzahl` wird von den Roh-SQL-
+            # Inserts aber nie gesetzt und ist damit immer NULL, sodass hier
+            # dauerhaft 0 stand, egal wie viele Karten gespeichert waren.
+            # Jede Zeile entspricht genau einer physischen Karte (mehrere
+            # Exemplare = mehrere Zeilen), also ist COUNT die richtige Zahl.
+            # Platzhalter-Zeilen leerer Alben zählen nicht mit.
+            res_collection = await session.execute(
+                text("SELECT COUNT(*) FROM sammlung_alben WHERE karten_name != '__PLACEHOLDER__'")
+            )
             collection_count = res_collection.scalar() or 0
 
             # 3. Echte Anzahl angelegter Alben (über alle Nutzer). Der frühere
