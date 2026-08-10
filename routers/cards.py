@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import re
+import unicodedata
 from datetime import datetime, timedelta
 import urllib.parse
 from typing import Optional
@@ -29,6 +30,7 @@ from sqlalchemy import text
 from auth import get_current_user_optional
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached, scryfall_client, scryfall_request, best_market_price
+from services.multilingual_search import finde_karte_sprachunabhaengig
 from services.ai_service import model_lite, KI_VERFUEGBAR
 from services.usage_limiter import check_and_increment_ai_usage
 from database import get_db_session, check_user_premium
@@ -82,25 +84,36 @@ async def suche_karte(
         return cached
 
     async with scryfall_client() as client:
-        resp = None
-        # Enthält der Suchbegriff Nicht-ASCII-Zeichen (Umlaute etc.), ist es
-        # sehr wahrscheinlich ein lokalisierter (z.B. deutscher) Kartenname.
-        # Dann ZUERST die sprachübergreifende Namenssuche, weil die Fuzzy-Suche
-        # solche Namen oft falsch auf eine ähnlich geschriebene englische Karte
-        # matcht (z.B. "Plunderprüfer" -> "Plunder" statt "Taster of Wares").
-        if not search_term.isascii():
-            resp = await _fallback_lang_search(client, search_term, None)
+        # Suchstufen nach dem Grundsatz EXAKT SCHLÄGT UNSCHARF -- unabhängig von
+        # der Sprache. Vorher lief die englische Fuzzy-Suche vor der Sprachsuche:
+        # "Raio" (portugiesisch für Lightning Bolt) wurde dadurch unscharf auf
+        # "Samurai of the Pale Curtain" abgebildet, obwohl es einen exakten
+        # portugiesischen Treffer gibt.
 
-        # --- Scryfall Fuzzy-Suche (Standard; bzw. wenn die Sprachsuche nichts fand) ---
-        if resp is None or resp.status_code != 200:
-            url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(search_term)}"
-            resp = await scryfall_request(client, "GET", url)
+        # 1. Exakter englischer Name
+        url = f"https://api.scryfall.com/cards/named?exact={urllib.parse.quote(search_term)}"
+        resp = await scryfall_request(client, "GET", url)
 
-        # --- Fallback: Sprachübergreifende Suche ---
+        # 2. Exakter gedruckter Name in BELIEBIGER Sprache
         if resp.status_code != 200:
             resp = await _fallback_lang_search(client, search_term, resp)
 
+        # 3. Erst jetzt unscharf auf Englisch (Tippfehler, Teilnamen)
         if resp.status_code != 200:
+            url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(search_term)}"
+            resp = await scryfall_request(client, "GET", url)
+
+        if resp.status_code != 200:
+            # Letzte Stufe: Name in beliebiger Sprache. Das Modell schlägt
+            # englische Namen vor, Scryfall bestätigt sie -- nur Bestätigtes
+            # zählt. Greift genau dann, wenn es für ein brandneues Set noch gar
+            # keine lokalisierten Daten gibt.
+            uebersetzt = await finde_karte_sprachunabhaengig(client, search_term)
+            if uebersetzt is not None:
+                data = uebersetzt
+                resp = None  # ab hier normal weiterverarbeiten
+
+        if resp is not None and resp.status_code != 200:
             # Sackgasse vermeiden: Vorschläge suchen und erklären, warum gerade
             # brandneue deutsche Kartennamen (noch) nicht auffindbar sind.
             vorschlaege = await _finde_vorschlaege(client, search_term)
@@ -114,7 +127,8 @@ async def suche_karte(
                 ),
             }
 
-        data = resp.json()
+        if resp is not None:
+            data = resp.json()
 
         # --- Bild extrahieren (inkl. DFC-Support) ---
         bild = _get_card_image(data)
@@ -174,8 +188,22 @@ async def karten_suchen_liste(q: str, limit: int = 15):
         return gecacht
 
     def _aufbereiten(rohkarten: list) -> list:
+        # Exakte Treffer auf den gedruckten Namen zuerst -- sonst stand bei
+        # "Fulmine" (italienisch für Lightning Bolt) "Arc Lightning" oben, weil
+        # dessen italienischer Name den Begriff als Teilstring enthält.
+        ziel = _namensschluessel(begriff)
+        rohkarten = sorted(
+            rohkarten,
+            key=lambda c: _namensschluessel(c.get("printed_name") or c.get("name", "")) != ziel,
+        )
         karten = []
-        for c in rohkarten[:limit]:
+        gesehen = set()
+        for c in rohkarten:
+            if len(karten) >= limit:
+                break
+            if c.get("name") in gesehen:
+                continue
+            gesehen.add(c.get("name"))
             bild = c.get("image_uris", {}).get("small") or c.get("image_uris", {}).get("normal", "")
             if not bild and "card_faces" in c:
                 flaechen = c["card_faces"][0].get("image_uris", {})
@@ -198,7 +226,7 @@ async def karten_suchen_liste(q: str, limit: int = 15):
         for suchausdruck in (f'lang:any name:"{begriff}"', f'name:{begriff}'):
             try:
                 url = ("https://api.scryfall.com/cards/search?q="
-                       + urllib.parse.quote(suchausdruck) + "&unique=cards")
+                       + urllib.parse.quote(suchausdruck) + "&include_multilingual=true&unique=prints")
                 resp = await scryfall_request(client, "GET", url)
             except Exception:
                 logger.warning("Kartenliste: Scryfall nicht erreichbar", exc_info=True)
@@ -211,6 +239,14 @@ async def karten_suchen_liste(q: str, limit: int = 15):
                 return {"karten": [], "hinweis": "Zu viele Anfragen -- bitte kurz warten."}
 
         if not karten:
+            # Letzte Stufe: Name in beliebiger Sprache (Modell schlägt vor,
+            # Scryfall bestätigt). Gilt für ALLE Sets und alle Sprachen.
+            uebersetzt = await finde_karte_sprachunabhaengig(client, begriff)
+            if uebersetzt is not None:
+                ergebnis = {"karten": _aufbereiten([uebersetzt])}
+                scryfall_cache.set(cache_key, ergebnis)
+                return ergebnis
+
             vorschlaege = await _finde_vorschlaege(client, begriff)
             ergebnis = {
                 "karten": [],
@@ -313,31 +349,79 @@ async def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzernam
         return f"Originaltext (Englisch):\n{oracle_text}"
 
 
-async def _fallback_lang_search(
-    client: httpx.AsyncClient, search_term: str, original_resp
-):
-    """Sprachübergreifende Suche als Fallback (für deutsche Kartennamen)."""
+def _namensschluessel(text: str) -> str:
+    """Vereinheitlicht einen Namen für den exakten Vergleich.
+
+    Gleicht typografische Apostrophe/Bindestriche an und ignoriert Gross- und
+    Kleinschreibung -- sonst scheitert der Abgleich an Kleinigkeiten wie
+    "Moria's" gegenüber "Moria\u2019s".
+    """
+    text = unicodedata.normalize("NFKC", (text or "").strip().lower())
+    for zeichen, ersatz in (("\u2019", "'"), ("\u00b4", "'"), ("\u2018", "'"),
+                            ("\u2013", "-"), ("\u2014", "-")):
+        text = text.replace(zeichen, ersatz)
+    return re.sub(r"\s+", " ", text)
+
+
+async def _fallback_lang_search(client, search_term, original_resp):
+    """Sucht eine Karte über ihren gedruckten Namen in BELIEBIGER Sprache.
+
+    Wichtig ist der EXAKTE Abgleich des gedruckten Namens. Scryfalls
+    `name:"..."` sucht als Teilstring und liefert nach Relevanz sortiert --
+    dadurch kam bei "Fulmine" (italienisch für Lightning Bolt) "Arc Lightning"
+    zurück, weil dessen italienischer Name "Fulmine ad Arco" den Begriff
+    enthält. Genau so entstehen falsche Karten im Ergebnis.
+
+    Deshalb: alle Drucke laden, den exakt passenden gedruckten Namen heraus-
+    suchen und nur dann übernehmen. Gibt es keinen exakten Treffer, wird
+    bewusst NICHTS geraten -- die nachfolgenden Stufen (Übersetzung,
+    Vorschläge) übernehmen dann.
+    """
     try:
         url_search = (
-            f"https://api.scryfall.com/cards/search?"
-            f"q=lang:any+name:%22{urllib.parse.quote(search_term)}%22"
+            "https://api.scryfall.com/cards/search?q="
+            + urllib.parse.quote(f'lang:any name:"{search_term}"')
+            + "&include_multilingual=true&unique=prints"
         )
         search_resp = await scryfall_request(client, "GET", url_search)
-        if search_resp.status_code == 200:
-            search_data = search_resp.json()
-            if "data" in search_data and len(search_data["data"]) > 0:
-                english_name = search_data["data"][0]["name"]
-                url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(english_name)}"
-                return await scryfall_request(client, "GET", url)
+        if search_resp.status_code != 200:
+            return original_resp
+
+        daten = search_resp.json().get("data", []) or []
+        if not daten:
+            return original_resp
+
+        ziel = _namensschluessel(search_term)
+        englischer_name = None
+
+        # 1. Exakter gedruckter Name (in irgendeiner Sprache)
+        for karte in daten:
+            gedruckt = karte.get("printed_name") or karte.get("name", "")
+            if _namensschluessel(gedruckt) == ziel:
+                englischer_name = karte.get("name")
+                break
+
+        # 2. Kein exakter Treffer: nur übernehmen, wenn die Suche eindeutig
+        #    genau EINE Karte meint -- sonst lieber nichts als das Falsche.
+        if not englischer_name:
+            eindeutige = {k.get("name") for k in daten if k.get("name")}
+            if len(eindeutige) == 1:
+                englischer_name = eindeutige.pop()
+
+        if not englischer_name:
+            return original_resp
+
+        url = "https://api.scryfall.com/cards/named?fuzzy=" + urllib.parse.quote(englischer_name)
+        return await scryfall_request(client, "GET", url)
     except Exception:
-        pass
+        logger.debug("Sprachsuche fehlgeschlagen für %r", search_term, exc_info=True)
     return original_resp
 
 
-# Wörter, die als Suchbaustein nichts taugen (zu häufig / kein Eigenname).
 # Zeitfenster, das als "brandneu" gilt (für die Vorschlagssuche).
 NEUE_SETS_TAGE = int(os.getenv("NEUE_SETS_TAGE", "60"))
 
+# Wörter, die als Suchbaustein nichts taugen (zu häufig / kein Eigenname).
 _UNSPEZIFISCH = {
     "der", "die", "das", "des", "dem", "den", "ein", "eine", "einen", "und", "oder",
     "von", "vom", "zum", "zur", "the", "of", "and", "a", "an",
@@ -401,7 +485,6 @@ async def _finde_vorschlaege(client, begriff: str, limit: int = 6) -> list:
     # 3. Letzte Stufe, genau für den häufigsten Fall: ein deutscher Name aus
     #    einem brandneuen Set. Dann ist ein allgemeines Wort wie "Goblin" doch
     #    brauchbar -- sofern man es auf die zuletzt erschienenen Sets eingrenzt.
-    #    So führt "Furchterregendes Goblin-Duo" zu den neuen Goblin-Karten.
     if not gefunden and bausteine:
         stichtag = (datetime.utcnow() - timedelta(days=NEUE_SETS_TAGE)).strftime("%Y-%m-%d")
         for wort in bausteine:
