@@ -34,6 +34,7 @@ from services.combos import detect_local_combos
 from services.combo_validation import validate_combos
 from services.limiter import limiter
 from services.scryfall import parse_decklist, extract_card_name_candidates, fetch_card_details_cached
+from services.rules_corpus import suche_regeln
 from services.synergies import detect_synergies
 from services.usage_limiter import check_and_increment_ai_usage
 
@@ -107,6 +108,7 @@ async def _build_judge_prompt(frage: str) -> str:
     """
     karten_block = ""
     nicht_gefunden: list[str] = []
+    oracle_begriffe: list[str] = []
 
     try:
         kandidaten = extract_card_name_candidates(frage)
@@ -119,9 +121,15 @@ async def _build_judge_prompt(frage: str) -> str:
                 if not name or name in gefundene_namen:
                     continue
                 gefundene_namen.add(name)
+                oracle = info.get("oracle_text") or ""
+                # Der englische Kartentext liefert die Fachbegriffe, mit denen
+                # sich die (englischen) offiziellen Regeln finden lassen --
+                # die Brücke von der deutschen Frage zum Regelwerk.
+                if oracle:
+                    oracle_begriffe.append(oracle)
                 zeilen.append(
                     f"- {name} ({info.get('type', '')})\n"
-                    f"  Regeltext: {info.get('oracle_text') or '(kein Regeltext)'}"
+                    f"  Regeltext: {oracle or '(kein Regeltext)'}"
                 )
             if zeilen:
                 karten_block = "\n".join(zeilen)
@@ -148,7 +156,22 @@ async def _build_judge_prompt(frage: str) -> str:
         "Rate nicht.",
         "- Allgemeine Regelmechaniken (Stapel, Priorität, Zustandsbasierte Aktionen usw.) "
         "darfst du selbstverständlich aus deinem Regelwissen erklären.",
+        "- Sind unten offizielle Regeln zitiert, stütze dich darauf und nenne die "
+        "Regelnummer in deiner Antwort.",
     ]
+
+    # Passende Stellen aus den offiziellen Comprehensive Rules nachschlagen.
+    try:
+        regeln = suche_regeln(frage, extra_terms=oracle_begriffe)
+    except Exception:
+        logger.warning("Regelsuche fehlgeschlagen", exc_info=True)
+        regeln = []
+    if regeln:
+        teile += [
+            "",
+            "OFFIZIELLE REGELN (Comprehensive Rules, maßgeblich):",
+            "\n".join(f"- {nummer} {text}" for nummer, text in regeln),
+        ]
 
     if karten_block:
         teile += ["", "BESTÄTIGTE KARTENDATEN (live von Scryfall):", karten_block]
