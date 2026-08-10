@@ -159,6 +159,98 @@ def parse_import_csv(csv_text: str, default_album: str) -> List[Dict[str, Any]]:
 logger = logging.getLogger(__name__)
 
 # ======================================================================
+# Strukturierte Kartenmetadaten
+# ======================================================================
+# Die Spalten scryfall_id/edition/seltenheit/farben/manakosten/kartentyp waren
+# im Schema vorhanden, wurden aber von KEINEM Insert befüllt -- deshalb musste
+# der Sammlungsfilter alle Zeilen laden, über das Netz auflösen und in Python
+# filtern. Beim Speichern liegen die Daten ohnehin vor; sie werden jetzt
+# mitgeschrieben und machen die Sammlung echt abfragbar.
+_SAMMLUNG_INSERT_SQL = (
+    "INSERT INTO sammlung_alben "
+    "(benutzername, karten_name, album_name, bild_url, preis, "
+    " edition, seltenheit, farben, manakosten, kartentyp) "
+    "VALUES (:user, :name, :album, :url, :price, "
+    " :edition, :seltenheit, :farben, :manakosten, :kartentyp)"
+)
+
+
+def karten_metadaten(card_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Wandelt ein Scryfall-card_info in die strukturierten Spaltenwerte.
+
+    Fehlt card_info (Scryfall nicht erreichbar), werden NULL-Werte geliefert --
+    die Zeile wird trotzdem gespeichert und kann später nachgefüllt werden.
+    """
+    if not card_info:
+        return {"edition": None, "seltenheit": None, "farben": None,
+                "manakosten": None, "kartentyp": None}
+
+    try:
+        manakosten = int(float(card_info.get("cmc") or 0))
+    except (TypeError, ValueError):
+        manakosten = None
+
+    farben = card_info.get("colors") or card_info.get("color_identity") or []
+    return {
+        "edition": (card_info.get("set") or None),
+        "seltenheit": (card_info.get("rarity") or None),
+        # 'W,U' -- Suche erfolgt per LIKE '%W%'
+        "farben": (",".join(farben) if farben else ""),
+        "manakosten": manakosten,
+        "kartentyp": (card_info.get("type") or None),
+    }
+
+async def backfill_kartenmetadaten(limit: int = 200) -> int:
+    """Füllt die strukturierten Spalten für Alt-Zeilen nach.
+
+    Zeilen, die vor dieser Änderung gespeichert wurden, haben leere Metadaten.
+    Der Filter arbeitet für sie weiterhin korrekt (NULL-Zeilen werden in Python
+    geprüft), aber ohne Nachfüllen bliebe die Sammlung dauerhaft halb
+    strukturiert. Die Wartungsaufgabe ruft das in kleinen Portionen auf.
+
+    Returns:
+        Anzahl aktualisierter Zeilen.
+    """
+    async with get_db_session() as session:
+        res = await session.execute(
+            text(
+                "SELECT DISTINCT karten_name FROM sammlung_alben "
+                "WHERE kartentyp IS NULL AND karten_name != '__PLACEHOLDER__' "
+                "LIMIT :limit"
+            ),
+            {"limit": limit},
+        )
+        namen = [r["karten_name"] for r in res.mappings().all()]
+
+    if not namen:
+        return 0
+
+    try:
+        treffer = await fetch_card_details_cached(namen)
+    except Exception:
+        logger.warning("Nachfüllen der Kartenmetadaten fehlgeschlagen", exc_info=True)
+        return 0
+
+    aktualisiert = 0
+    async with get_db_session() as session:
+        for name in namen:
+            info = treffer.get(name.lower().strip())
+            if not info:
+                continue
+            meta = karten_metadaten(info)
+            res = await session.execute(
+                text(
+                    "UPDATE sammlung_alben SET edition = :edition, seltenheit = :seltenheit, "
+                    "farben = :farben, manakosten = :manakosten, kartentyp = :kartentyp "
+                    "WHERE karten_name = :name AND kartentyp IS NULL"
+                ),
+                {**meta, "name": name},
+            )
+            aktualisiert += res.rowcount or 0
+    return aktualisiert
+
+
+# ======================================================================
 # Lokale Request Models (zur Kompatibilität mit originalen Signaturen)
 # ======================================================================
 class DeleteKarteData(BaseModel):
@@ -236,11 +328,23 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
     summary="Karte zur Sammlung hinzufügen",
 )
 async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_user)):
+    # Strukturierte Metadaten gleich mitschreiben. Der Aufruf ist praktisch
+    # gratis: die Karte wurde soeben gesucht und liegt daher im Cache. Der
+    # Platzhalter für leere Alben wird bewusst nicht aufgelöst.
+    card_info = None
+    if data.karten_name and data.karten_name != "__PLACEHOLDER__":
+        try:
+            treffer = await fetch_card_details_cached([data.karten_name])
+            card_info = treffer.get(data.karten_name.lower().strip())
+        except Exception:
+            logger.warning("Kartenmetadaten für %r nicht auflösbar", data.karten_name, exc_info=True)
+
+    meta = karten_metadaten(card_info)
     async with get_db_session() as session:
         await session.execute(
-            text("INSERT INTO sammlung_alben (benutzername, karten_name, album_name, bild_url, preis) "
-                 "VALUES (:user, :name, :album, :url, :price)"),
-            {"user": current_user, "name": data.karten_name, "album": data.album_name, "url": data.bild_url, "price": data.preis}
+            text(_SAMMLUNG_INSERT_SQL),
+            {"user": current_user, "name": data.karten_name, "album": data.album_name,
+             "url": data.bild_url, "price": data.preis, **meta}
         )
     return {"erfolg": True}
 
@@ -296,17 +400,44 @@ async def sammlung_filter(
     if benutzername != current_user:
         raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     try:
+        # SQL-Vorfilterung auf den strukturierten Spalten. Jede Bedingung lässt
+        # Zeilen mit NULL bewusst durch: Alt-Zeilen aus der Zeit vor dem
+        # Befüllen der Spalten würden sonst aus den Ergebnissen verschwinden.
+        # Sie werden anschließend wie bisher in Python geprüft -- die
+        # Korrektheit bleibt also unverändert, nur die Datenmenge sinkt.
+        bedingungen = ["benutzername = :name"]
+        params: Dict[str, Any] = {"name": current_user}
+
+        if album:
+            bedingungen.append("album_name = :album")
+            params["album"] = album
+        else:
+            bedingungen.append("album_name != 'Wunschliste'")
+
+        if seltenheit:
+            bedingungen.append("(seltenheit IS NULL OR LOWER(seltenheit) = :f_seltenheit)")
+            params["f_seltenheit"] = seltenheit.lower()
+        if edition:
+            bedingungen.append("(edition IS NULL OR LOWER(edition) = :f_edition)")
+            params["f_edition"] = edition.lower()
+        if farbe:
+            bedingungen.append("(farben IS NULL OR farben LIKE :f_farbe)")
+            params["f_farbe"] = f"%{farbe.upper()}%"
+        if typ:
+            bedingungen.append("(kartentyp IS NULL OR LOWER(kartentyp) LIKE :f_typ)")
+            params["f_typ"] = f"%{typ.lower()}%"
+        if manakosten_min is not None:
+            bedingungen.append("(manakosten IS NULL OR manakosten >= :f_cmc_min)")
+            params["f_cmc_min"] = manakosten_min
+        if manakosten_max is not None:
+            bedingungen.append("(manakosten IS NULL OR manakosten <= :f_cmc_max)")
+            params["f_cmc_max"] = manakosten_max
+
         async with get_db_session() as session:
-            if album:
-                res = await session.execute(
-                    text("SELECT * FROM sammlung_alben WHERE benutzername = :name AND album_name = :album"),
-                    {"name": current_user, "album": album}
-                )
-            else:
-                res = await session.execute(
-                    text("SELECT * FROM sammlung_alben WHERE benutzername = :name AND album_name != 'Wunschliste'"),
-                    {"name": current_user}
-                )
+            res = await session.execute(
+                text("SELECT * FROM sammlung_alben WHERE " + " AND ".join(bedingungen)),
+                params,
+            )
             rows = res.mappings().all()
 
         if not rows:
@@ -493,24 +624,22 @@ async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, alb
             bild_url = card_info.get("image", "")
             price_val = card_info.get("price", "0.00")
             
+            meta = karten_metadaten(card_info)
             for _ in range(r["anzahl"]):
                 rows_to_insert.append({
                     "user": benutzername,
                     "name": canonical_name,
                     "album": r["album"],
                     "url": bild_url,
-                    "price": str(price_val)
+                    "price": str(price_val),
+                    **meta,
                 })
             imported += r["anzahl"]
             
         # 4. Insert into database
         if rows_to_insert:
             async with get_db_session() as session:
-                await session.execute(
-                    text("INSERT INTO sammlung_alben (benutzername, karten_name, album_name, bild_url, preis) "
-                         "VALUES (:user, :name, :album, :url, :price)"),
-                    [{"user": r["user"], "name": r["name"], "album": r["album"], "url": r["url"], "price": r["price"]} for r in rows_to_insert]
-                )
+                await session.execute(text(_SAMMLUNG_INSERT_SQL), rows_to_insert)
                 
         # 5. Update job status to completed
         result_json = json.dumps({

@@ -115,6 +115,14 @@ async def _run_maintenance() -> None:
     except Exception:
         logger.warning("Aufräumen des KI-Protokolls fehlgeschlagen", exc_info=True)
 
+    try:
+        from routers.collection import backfill_kartenmetadaten
+        nachgefuellt = await backfill_kartenmetadaten()
+        if nachgefuellt:
+            logger.info("Sammlung: Metadaten für %d Zeilen nachgefüllt.", nachgefuellt)
+    except Exception:
+        logger.warning("Nachfüllen der Kartenmetadaten fehlgeschlagen", exc_info=True)
+
 
 async def _maintenance_loop() -> None:
     while True:
