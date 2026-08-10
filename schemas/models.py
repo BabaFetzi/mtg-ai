@@ -140,6 +140,10 @@ class CardSearchResult(BaseModel):
     prints: List[CardPrint] = []
     marktwert: str = "0.00"
     error: Optional[str] = None
+    # Bei erfolgloser Suche: ähnliche Kartennamen als Vorschlag plus Erklärung.
+    # Es wird bewusst NIE automatisch eine andere Karte ausgeliefert.
+    vorschlaege: List[str] = []
+    hinweis: Optional[str] = None
 
 
 class TrendingCard(BaseModel):

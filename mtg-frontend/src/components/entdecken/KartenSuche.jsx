@@ -27,6 +27,7 @@ function KartenSuche({ currentUser }) {
   const [albumName, setAlbumName] = useState("");
   const [loadedImages, setLoadedImages] = useState({});
   const [popularTags, setPopularTags] = useState([]);
+  const [nichtGefunden, setNichtGefunden] = useState(null);
 
   const loadAlbums = () => {
     fetch(`/api/sammlung/${currentUser}`).then(res => res.json()).then(data => {
@@ -58,14 +59,25 @@ function KartenSuche({ currentUser }) {
   }
 
   const triggerSearch = async (searchTerm) => {
-    setKarte(null); setLaedt(true);
+    setKarte(null); setLaedt(true); setNichtGefunden(null);
     try {
       const res = await fetch(`/api/suche/${encodeURIComponent(searchTerm)}?benutzername=${currentUser}`)
-      if (!res.ok) { alert("Fehler bei der Serververbindung."); setLaedt(false); return; }
+      if (!res.ok) {
+        setNichtGefunden({ hinweis: "Der Server ist gerade nicht erreichbar. Bitte versuche es erneut.", vorschlaege: [] });
+        setLaedt(false);
+        return;
+      }
       const data = await res.json()
-      if (data.error) alert("Karte nicht gefunden."); 
-      else { setKarte(data); setSelectedPrintIndex(0); setSuche(data.name); }
-    } catch { alert("Suche fehlgeschlagen."); }
+      if (data.error) {
+        // Kein Popup mehr: Hinweis und Vorschläge bleiben auf der Seite stehen,
+        // damit man direkt darauf klicken kann.
+        setNichtGefunden({ hinweis: data.hinweis || "", vorschlaege: data.vorschlaege || [] });
+      } else {
+        setKarte(data); setSelectedPrintIndex(0); setSuche(data.name);
+      }
+    } catch {
+      setNichtGefunden({ hinweis: "Die Suche ist fehlgeschlagen. Bitte prüfe deine Verbindung.", vorschlaege: [] });
+    }
     setLaedt(false);
   }
 
@@ -142,6 +154,32 @@ function KartenSuche({ currentUser }) {
             <button className="primary-btn" onClick={handleSearchSubmit}>{laedt && !karte ? "Suche..." : "Suchen"}</button>
         </div>
       </div>
+
+      {!karte && !laedt && nichtGefunden && (
+        <div className="content-card" style={{ maxWidth: '640px', margin: '30px auto 0 auto', padding: '26px', textAlign: 'left' }}>
+          <h4 style={{ margin: '0 0 8px 0', fontSize: '1.1rem' }}>Karte nicht gefunden</h4>
+          {nichtGefunden.hinweis && (
+            <p style={{ margin: 0, fontSize: '0.92rem', lineHeight: 1.55 }}>{nichtGefunden.hinweis}</p>
+          )}
+          {nichtGefunden.vorschlaege?.length > 0 && (
+            <div style={{ marginTop: '18px' }}>
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>Meintest du:</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
+                {nichtGefunden.vorschlaege.map(v => (
+                  <button
+                    key={v}
+                    className="secondary-btn"
+                    onClick={() => { setSuche(v); triggerSearch(v); }}
+                    style={{ padding: '7px 14px', fontSize: '0.88rem', borderRadius: '16px', width: 'auto' }}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {!karte && !laedt && (
         <div style={{ animation: 'slideUp 0.4s ease', marginTop: '40px', maxWidth: '800px', margin: '40px auto 0 auto' }}>

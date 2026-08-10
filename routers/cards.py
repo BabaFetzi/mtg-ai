@@ -15,6 +15,9 @@ Abhängigkeiten:
 
 import asyncio
 import logging
+import os
+import re
+from datetime import datetime, timedelta
 import urllib.parse
 from typing import Optional
 
@@ -98,7 +101,18 @@ async def suche_karte(
             resp = await _fallback_lang_search(client, search_term, resp)
 
         if resp.status_code != 200:
-            return {"error": "Karte nicht gefunden"}
+            # Sackgasse vermeiden: Vorschläge suchen und erklären, warum gerade
+            # brandneue deutsche Kartennamen (noch) nicht auffindbar sind.
+            vorschlaege = await _finde_vorschlaege(client, search_term)
+            return {
+                "error": "Karte nicht gefunden",
+                "vorschlaege": vorschlaege,
+                "hinweis": (
+                    "Bei ganz neuen Sets liefert die Kartendatenbank Scryfall die "
+                    "deutschen Kartennamen oft erst einige Tage nach Erscheinen nach. "
+                    "Versuche es so lange mit dem englischen Namen."
+                ),
+            }
 
         data = resp.json()
 
@@ -131,6 +145,89 @@ async def suche_karte(
         _cache_individual_card(data, bild)
 
         return result
+
+
+# ======================================================================
+# GET /api/karten/suchen – Mehrere Karten suchen (Deck-Editor)
+# ======================================================================
+@router.get(
+    "/karten/suchen",
+    summary="Karten suchen (Liste)",
+    description="Liefert mehrere Treffer zu einem Suchbegriff -- für die "
+                "Karten-Datenbank im Deck-Editor.",
+)
+async def karten_suchen_liste(q: str, limit: int = 15):
+    """
+    Vorher suchte der Deck-Editor DIREKT aus dem Browser bei Scryfall. Damit
+    umging er die globale Drossel und den Cache (bei vielen Nutzern ein
+    Rate-Limit-Risiko) und verhielt sich anders als die normale Kartensuche.
+    Jetzt läuft auch diese Suche über den Server.
+    """
+    begriff = (q or "").strip()
+    if not begriff:
+        return {"karten": []}
+
+    limit = max(1, min(int(limit or 15), 30))
+    cache_key = f"kartenliste:v1:{begriff.lower()}:{limit}"
+    gecacht = scryfall_cache.get(cache_key)
+    if gecacht is not None:
+        return gecacht
+
+    def _aufbereiten(rohkarten: list) -> list:
+        karten = []
+        for c in rohkarten[:limit]:
+            bild = c.get("image_uris", {}).get("small") or c.get("image_uris", {}).get("normal", "")
+            if not bild and "card_faces" in c:
+                flaechen = c["card_faces"][0].get("image_uris", {})
+                bild = flaechen.get("small") or flaechen.get("normal", "")
+            karten.append({
+                "id": c.get("id"),
+                "name": c.get("name", ""),
+                "printed_name": c.get("printed_name") or None,
+                "type_line": c.get("type_line", ""),
+                "mana_cost": c.get("mana_cost", ""),
+                "bild_url": bild,
+                "set": c.get("set", ""),
+            })
+        return karten
+
+    async with scryfall_client() as client:
+        karten = []
+        # lang:any findet auch lokalisierte (z.B. deutsche) Namen, sofern
+        # Scryfall sie für das Set bereits veröffentlicht hat.
+        for suchausdruck in (f'lang:any name:"{begriff}"', f'name:{begriff}'):
+            try:
+                url = ("https://api.scryfall.com/cards/search?q="
+                       + urllib.parse.quote(suchausdruck) + "&unique=cards")
+                resp = await scryfall_request(client, "GET", url)
+            except Exception:
+                logger.warning("Kartenliste: Scryfall nicht erreichbar", exc_info=True)
+                return {"karten": [], "hinweis": "Kartendatenbank momentan nicht erreichbar."}
+            if resp.status_code == 200:
+                karten = _aufbereiten(resp.json().get("data", []))
+                if karten:
+                    break
+            elif resp.status_code == 429:
+                return {"karten": [], "hinweis": "Zu viele Anfragen -- bitte kurz warten."}
+
+        if not karten:
+            vorschlaege = await _finde_vorschlaege(client, begriff)
+            ergebnis = {
+                "karten": [],
+                "vorschlaege": vorschlaege,
+                "hinweis": (
+                    "Keine Karte gefunden. Bei ganz neuen Sets liefert Scryfall die "
+                    "deutschen Kartennamen oft erst einige Tage nach Erscheinen nach -- "
+                    "versuche es so lange mit dem englischen Namen."
+                ),
+            }
+            # Fehlversuche nur kurz halten: sobald Scryfall die Daten nachliefert,
+            # soll die Suche wieder greifen. Deshalb NICHT cachen.
+            return ergebnis
+
+    ergebnis = {"karten": karten}
+    scryfall_cache.set(cache_key, ergebnis)
+    return ergebnis
 
 
 # ======================================================================
@@ -235,6 +332,93 @@ async def _fallback_lang_search(
     except Exception:
         pass
     return original_resp
+
+
+# Wörter, die als Suchbaustein nichts taugen (zu häufig / kein Eigenname).
+# Zeitfenster, das als "brandneu" gilt (für die Vorschlagssuche).
+NEUE_SETS_TAGE = int(os.getenv("NEUE_SETS_TAGE", "60"))
+
+_UNSPEZIFISCH = {
+    "der", "die", "das", "des", "dem", "den", "ein", "eine", "einen", "und", "oder",
+    "von", "vom", "zum", "zur", "the", "of", "and", "a", "an",
+}
+
+
+def _suchbausteine(begriff: str) -> list:
+    """Zerlegt einen Suchbegriff in unterscheidungskräftige Einzelwörter.
+
+    Bindestrich-Wörter werden mitgetrennt ("Goblin-Duo" -> "Goblin", "Duo"),
+    weil deutsche Kartennamen häufig zusammengesetzt sind. Sortiert nach Länge:
+    lange Eigennamen ("Azog") sind die besten Kandidaten.
+    """
+    roh = re.split(r"[^\wäöüÄÖÜß]+", begriff or "")
+    woerter = [w for w in roh if len(w) >= 4 and w.lower() not in _UNSPEZIFISCH]
+    return sorted(set(woerter), key=len, reverse=True)[:3]
+
+
+async def _finde_vorschlaege(client, begriff: str, limit: int = 6) -> list:
+    """Sucht ähnliche Kartennamen, wenn die eigentliche Suche nichts fand.
+
+    Bewusst nur VORSCHLÄGE -- es wird nie automatisch eine andere Karte
+    ausgeliefert. Genau daraus entstand früher der Fehler, dass eine gar nicht
+    vorhandene Karte als Treffer angezeigt wurde.
+    """
+    gefunden: list = []
+
+    async def autocomplete(text: str) -> list:
+        try:
+            resp = await scryfall_request(
+                client, "GET",
+                f"https://api.scryfall.com/cards/autocomplete?q={urllib.parse.quote(text)}",
+            )
+            if resp.status_code == 200:
+                return resp.json().get("data", []) or []
+        except Exception:
+            logger.debug("Autocomplete fehlgeschlagen für %r", text, exc_info=True)
+        return []
+
+    def uebernehmen(namen: list) -> None:
+        for name in namen:
+            if name not in gefunden:
+                gefunden.append(name)
+
+    # 1. Ganzer Begriff (greift, wenn er ein Namensanfang ist)
+    uebernehmen(await autocomplete(begriff))
+
+    # 2. Einzelne unterscheidungskräftige Wörter -- so führt
+    #    "Azog, Morias Untergang" zu "Azog, Moria's Ruin".
+    bausteine = _suchbausteine(begriff)
+    if len(gefunden) < limit:
+        for wort in bausteine:
+            treffer = await autocomplete(wort)
+            # Sehr allgemeine Wörter (z.B. "Goblin") liefern zwanzig Treffer und
+            # wären als Vorschlag nur Rauschen -- solche Wörter überspringen.
+            if treffer and len(treffer) <= 8:
+                uebernehmen(treffer)
+            if len(gefunden) >= limit:
+                break
+
+    # 3. Letzte Stufe, genau für den häufigsten Fall: ein deutscher Name aus
+    #    einem brandneuen Set. Dann ist ein allgemeines Wort wie "Goblin" doch
+    #    brauchbar -- sofern man es auf die zuletzt erschienenen Sets eingrenzt.
+    #    So führt "Furchterregendes Goblin-Duo" zu den neuen Goblin-Karten.
+    if not gefunden and bausteine:
+        stichtag = (datetime.utcnow() - timedelta(days=NEUE_SETS_TAGE)).strftime("%Y-%m-%d")
+        for wort in bausteine:
+            try:
+                url = ("https://api.scryfall.com/cards/search?q="
+                       + urllib.parse.quote(f"name:{wort} date>={stichtag}")
+                       + "&order=released&dir=desc&unique=cards")
+                resp = await scryfall_request(client, "GET", url)
+            except Exception:
+                logger.debug("Neue-Sets-Suche fehlgeschlagen für %r", wort, exc_info=True)
+                continue
+            if resp.status_code == 200:
+                uebernehmen([c.get("name", "") for c in resp.json().get("data", []) if c.get("name")])
+            if len(gefunden) >= limit:
+                break
+
+    return gefunden[:limit]
 
 
 async def _fetch_prints(

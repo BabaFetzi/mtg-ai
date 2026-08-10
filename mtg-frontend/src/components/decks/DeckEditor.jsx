@@ -7,6 +7,9 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  // Ehrliche Rückmeldung statt eines blossen "Keine Karten gefunden".
+  const [suchHinweis, setSuchHinweis] = useState("");
+  const [vorschlaege, setVorschlaege] = useState([]);
   const [dragActive, setDragActive] = useState(false);
   
   // Local list parsed for visual editor
@@ -47,25 +50,25 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
     }
   };
 
-  // Search card on change (debounced manually on search submission)
+  // Kartensuche über das eigene Backend.
+  //
+  // Vorher ging diese Anfrage DIREKT aus dem Browser an Scryfall. Damit umging
+  // sie die serverseitige Drossel und den Cache (bei vielen Nutzern ein
+  // Rate-Limit-Risiko) und verhielt sich anders als die normale Kartensuche.
   const triggerSearch = async (q) => {
     if (!q.trim()) return;
     setSearching(true);
+    setSuchHinweis("");
+    setVorschlaege([]);
     try {
-      // Scryfall search directly
-      const res = await fetch(`https://api.scryfall.com/cards/search?q=lang:any+name:%22${encodeURIComponent(q)}%22`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data.data)) {
-          setSearchResults(data.data.slice(0, 15));
-        } else {
-          setSearchResults([]);
-        }
-      } else {
-        setSearchResults([]);
-      }
+      const res = await fetch(`/api/karten/suchen?q=${encodeURIComponent(q)}`);
+      const data = await res.json().catch(() => ({}));
+      setSearchResults(Array.isArray(data.karten) ? data.karten : []);
+      if (data.hinweis) setSuchHinweis(data.hinweis);
+      if (Array.isArray(data.vorschlaege)) setVorschlaege(data.vorschlaege);
     } catch (e) {
       setSearchResults([]);
+      setSuchHinweis("Verbindungsfehler bei der Kartensuche.");
     }
     setSearching(false);
   };
@@ -271,7 +274,7 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                     className="drag-source-card"
                   >
                     <img
-                      src={item.image_uris?.small || getFallbackCardImage(item.name, item.type_line)}
+                      src={item.bild_url || getFallbackCardImage(item.name, item.type_line)}
                       alt={item.name}
                       style={{ width: '40px', borderRadius: '2px' }}
                       draggable="false"
@@ -310,7 +313,28 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                 ))
               )}
               {!searching && searchQuery && searchResults.length === 0 && (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem', padding: '20px 0' }}>Keine Karten gefunden.</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.88rem', padding: '16px 0', lineHeight: 1.5 }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>Keine Karten gefunden.</div>
+                  {suchHinweis && <div>{suchHinweis}</div>}
+                  {vorschlaege.length > 0 && (
+                    <div style={{ marginTop: '12px' }}>
+                      <div style={{ marginBottom: '6px' }}>Meintest du:</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {vorschlaege.map(v => (
+                          <button
+                            key={v}
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => { setSearchQuery(v); triggerSearch(v); }}
+                            style={{ padding: '5px 12px', fontSize: '0.82rem', borderRadius: '14px', width: 'auto' }}
+                          >
+                            {v}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

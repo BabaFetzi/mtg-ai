@@ -233,6 +233,44 @@ async def _build_judge_prompt(frage: str) -> str:
     return "\n".join(teile)
 
 # ======================================================================
+# GET /api/regeln/suchen – Offizielle Regeln durchsuchen (Regelbuch)
+# ======================================================================
+@router.get(
+    "/regeln/suchen",
+    summary="Offizielle Comprehensive Rules durchsuchen",
+)
+async def regeln_suchen(q: str = "", limit: int = 25):
+    """
+    Durchsucht die offiziellen Comprehensive Rules.
+
+    Das Regelbuch der App bestand bisher aus 14 fest einprogrammierten Regeln im
+    Frontend. Derselbe Korpus, den der Judge nutzt (~2700 Regeln), steht damit
+    auch den Nutzern direkt zur Verfügung.
+    """
+    limit = max(1, min(int(limit or 25), 50))
+    begriff = (q or "").strip()
+    try:
+        # Ohne Suchbegriff: ein paar grundlegende Regeln als Einstieg zeigen.
+        treffer = await asyncio.to_thread(
+            suche_regeln, begriff or "priority stack turn structure state-based actions", None, limit
+        )
+    except Exception:
+        logger.warning("Regelsuche fehlgeschlagen", exc_info=True)
+        treffer = []
+
+    if not treffer:
+        return {
+            "regeln": [],
+            "hinweis": (
+                "Die offiziellen Regeln stehen momentan nicht zur Verfügung. "
+                "Sie werden beim ersten Zugriff einmalig geladen -- bitte kurz "
+                "warten und erneut versuchen."
+            ),
+        }
+    return {"regeln": [{"nummer": n, "text": t} for n, t in treffer]}
+
+
+# ======================================================================
 # GET /api/combos/{card_name} – Kombo-Vorschläge für Einzelkarten
 # ======================================================================
 @router.get(
