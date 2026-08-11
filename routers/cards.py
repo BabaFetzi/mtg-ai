@@ -185,7 +185,7 @@ async def karten_suchen_liste(q: str, limit: int = 15):
     # v2: die alte Fassung konnte über die ungeprüfte Fuzzy-Bestätigung eine
     # falsche Karte liefern ("Steinstimmen-Goblins" -> "Stoneforge Mystic").
     # Solche Antworten lagen 24 h im Cache -- der Versionssprung wirft sie weg.
-    cache_key = f"kartenliste:v2:{begriff.lower()}:{limit}"
+    cache_key = f"kartenliste:v3:{begriff.lower()}:{limit}"
     gecacht = scryfall_cache.get(cache_key)
     if gecacht is not None:
         return gecacht

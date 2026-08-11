@@ -6,31 +6,32 @@ Geprüft am Hobbit-Set (Release 14.08.2026): Scryfall hat KEINE deutschen Drucke
 MTGJSON ebenfalls nicht (360 Karten, 0 Übersetzungen). Eine Nachschlagetabelle
 kann es also nicht geben -- die Daten existieren schlicht noch nicht.
 
-Lösung in drei Stufen -- entscheidend ist, dass ab Stufe 2 ausschliesslich mit
-ECHT existierenden Kartennamen gearbeitet wird:
+Lösung: Es wird gesammelt statt geraten. Nichts, was das Modell vorschlägt,
+gilt als Antwort -- entschieden wird nur zwischen ECHT existierenden Karten.
 
     "Steinstimmen-Goblins"
-      1. Modell schlägt vor: "Stonevoice Goblins", "Stone-Voiced Goblins", ...
-         -> exakt bei Scryfall? Nein.
-      2. Aus den Vorschlägen echte Namen sammeln:
-         name:goblins -> 36 real existierende Karten,
-         darunter "Stony-Voiced Goblins"
-      3. Das Modell wählt aus DIESER Liste -- oder antwortet "KEINE".
+      1. Sammeln: Modellvorschläge, die es wirklich gibt; dazu eine Wortsuche
+         über die Vorschläge UND über die Eingabe selbst
+         (name:goblins -> 36 reale Karten, darunter "Stony-Voiced Goblins").
+      2. Das Modell wählt aus DIESER Liste -- oder antwortet "KEINE".
          -> "Stony-Voiced Goblins"   <- richtige Karte
 
-Warum nicht einfach die Fuzzy-Suche bestätigen lassen? Weil sie zu grosszügig
-ist: sie matcht auf Wortanfängen und liefert bereitwillig eine völlig fremde
-Karte ("Stonespeaker" -> "Stonespeaker Crystal", "Stone Mystic" ->
-"Stoneforge Mystic"). Genau so landete bei der Suche nach "Steinstimmen-Goblins"
-ein "Stoneforge Mystic" im Deck. Ein Fuzzy-Treffer wird deshalb nur noch
-akzeptiert, wenn der zurückgegebene Name dem Vorschlag auch wirklich ähnelt.
+Warum ein exakter Vorschlag NICHT genügt: Das Modell schlug für
+"Steinstimmen-Goblins" die Karte "Stoneforge Mystic" vor. Die gibt es wirklich
+-- und weil sie exakt existierte, wurde sie ungeprüft übernommen. Exaktheit
+beweist nur, dass eine Karte EXISTIERT, nicht dass es die gesuchte ist. Auch
+ein exakter Vorschlag ist deshalb nur ein Kandidat.
 
-Warum die Auswahl trotzdem das Modell trifft und kein Zeichenvergleich? Weil
-Zeichen hier nicht reichen: "Duo" und "Pair" sind sich als Zeichenfolge fremd
-und meinen dasselbe, während "Stone Mystic" und "Stoneforge Mystic" sich sehr
-ähnlich sehen und nichts miteinander zu tun haben. Das Modell darf dabei nichts
-erfinden -- eine Antwort, die nicht wörtlich in der vorgelegten Liste steht,
-wird verworfen.
+Warum die Fuzzy-Suche nicht bestätigen darf: Sie ist zu grosszügig, matcht auf
+Wortanfängen und liefert bereitwillig eine fremde Karte ("Stonespeaker" ->
+"Stonespeaker Crystal", "Stone Mystic" -> "Stoneforge Mystic"). Sie gilt nur
+noch als Abkürzung, wenn der gelieferte Name dem Vorschlag wirklich ähnelt.
+
+Warum die Auswahl das Modell trifft und kein Zeichenvergleich: Zeichen reichen
+nicht. "Duo" und "Pair" sind sich als Zeichenfolge fremd und meinen dasselbe,
+während "Stone Mystic" und "Stoneforge Mystic" sich sehr ähnlich sehen und
+nichts miteinander zu tun haben. Erfinden kann das Modell dabei nichts: eine
+Antwort, die nicht wörtlich in der vorgelegten Liste steht, wird verworfen.
 
 Kosten: Ein günstiger Modellaufruf, und zwar nur, wenn alle anderen Wege
 gescheitert sind. Eine bestätigte Zuordnung wird zwischengespeichert, sodass
@@ -66,7 +67,7 @@ MAX_KANDIDATEN = int(os.getenv("MULTILANG_MAX_CANDIDATES", "5"))
 
 # Wieviele Vorschläge die teureren Stufen (Fuzzy, Wortsuche) durchlaufen.
 MAX_FUZZY = 3
-MAX_WORTSUCHE = 2
+MAX_WORTSUCHE = 3
 # Ein Suchwort, das auf mehr als so viele Karten passt, ist zu unspezifisch.
 MAX_WORTTREFFER = 400
 # Soviele echte Namen bekommt das Modell zur Auswahl vorgelegt.
@@ -84,11 +85,11 @@ FUZZY_SCHWELLE = 0.88
 NEGATIV_CACHE_SEKUNDEN = int(os.getenv("MULTILANG_NEGATIVE_CACHE_SECONDS", "900"))
 
 # Cache-Version im Schlüssel: erlaubt es, alte Zuordnungen bei einer
-# Verbesserung des Verfahrens gezielt ungültig zu machen. v3 = Einträge tragen
+# Verbesserung des Verfahrens gezielt ungültig zu machen. v4 = Einträge tragen
 # einen Zeitstempel (negative Ergebnisse verfallen eigenständig), und die
 # Auswahl läuft über echte Kartennamen -- alte Zuordnungen aus der
 # ungeprüften Fuzzy-Bestätigung könnten falsch sein und müssen weg.
-_CACHE_PRAEFIX = "namemap:v3:"
+_CACHE_PRAEFIX = "namemap:v4:"
 
 
 def _wirkt_wie_kartenname(begriff: str) -> bool:
@@ -358,7 +359,8 @@ async def finde_karte_sprachunabhaengig(client, begriff: str) -> Optional[dict]:
 
     Returns:
         Das vollständige Scryfall-Kartenobjekt, oder None wenn nichts bestätigt
-        werden konnte. Es wird NIEMALS ein unbestätigter Vorschlag geliefert.
+        werden konnte. Es wird NIEMALS ein unbestätigter Vorschlag geliefert --
+        auch dann nicht, wenn er zufällig eine echt existierende Karte trifft.
     """
     if not UEBERSETZUNGSSUCHE_AKTIV or not _wirkt_wie_kartenname(begriff):
         return None
@@ -381,30 +383,29 @@ async def finde_karte_sprachunabhaengig(client, begriff: str) -> Optional[dict]:
         # sonst zementiert ein technischer Ausfall das Ergebnis.
         return None
 
-    # --- Stufe 1: exakter Treffer auf einen Vorschlag ---------------------
-    # Kennt das Modell den offiziellen Namen, ist die Sache eindeutig.
-    for kandidat in kandidaten:
+    # --- Stufe 1: Menge ECHT existierender Kartennamen aufbauen -----------
+    # Hier wird nichts entschieden, nur gesammelt. Alles Folgende sind reale
+    # Karten -- aber KEINE davon gilt schon als richtig.
+    echte: dict = {}
+    for nummer, kandidat in enumerate(kandidaten):
         karte = await _exakter_treffer(client, kandidat)
         if karte:
-            logger.info(
-                "Sprachunabhängige Suche: %r -> %r (exakter Vorschlag)",
-                begriff, karte.get("name"),
-            )
-            _merke(schluessel, karte.get("name", ""))
-            return karte
-
-    # --- Stufe 2: Menge ECHT existierender Kartennamen aufbauen -----------
-    # Ab hier wird nichts mehr geraten: alles Folgende sind reale Karten.
-    echte: dict = {}
-    for kandidat in kandidaten[:MAX_FUZZY]:
-        karte = await _fuzzy_treffer(client, kandidat)
-        if karte and _passt_klar_zusammen(kandidat, karte.get("name", "")):
             echte[karte["name"]] = karte
-    for kandidat in kandidaten[:MAX_WORTSUCHE]:
-        for name in await _echte_namen_zu(client, kandidat):
+            continue
+        if nummer < MAX_FUZZY:
+            karte = await _fuzzy_treffer(client, kandidat)
+            if karte and _passt_klar_zusammen(kandidat, karte.get("name", "")):
+                echte[karte["name"]] = karte
+
+    # Auch die Wörter der EINGABE selbst durchsuchen. Kreaturentypen und
+    # Eigennamen sind über Sprachen hinweg oft fast gleich ("Steinstimmen-
+    # Goblins" enthält "Goblins", "Azogs Untergang" enthält "Azog"). Das
+    # findet die richtige Karte unabhängig davon, was das Modell vorschlägt.
+    for quelle in [begriff] + kandidaten[:MAX_WORTSUCHE]:
+        for name in await _echte_namen_zu(client, quelle):
             echte.setdefault(name, None)
 
-    auswahl = _engere_auswahl(kandidaten, echte.keys())
+    auswahl = _engere_auswahl([begriff] + kandidaten, echte.keys())
     if not auswahl:
         logger.info(
             "Sprachunabhängige Suche: für %r existiert zu den Vorschlägen %s keine "
@@ -413,7 +414,7 @@ async def finde_karte_sprachunabhaengig(client, begriff: str) -> Optional[dict]:
         _merke(schluessel, "")
         return None
 
-    # --- Stufe 3: das Modell wählt -- aber nur aus echten Namen -----------
+    # --- Stufe 2: das Modell wählt -- aber nur aus echten Namen -----------
     # Reiner Zeichenvergleich kann hier nicht entscheiden: "Duo" und "Pair"
     # sind sich als Zeichenfolge unähnlich, meinen aber dasselbe -- während
     # "Stone Mystic" und "Stoneforge Mystic" sich sehr ähnlich sehen und doch

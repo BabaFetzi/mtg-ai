@@ -160,17 +160,77 @@ def _scryfall(exakt=None, fuzzy=None, suche=None):
     return fake_request
 
 
+async def _waehlt(ziel):
+    async def waehlen(begriff, auswahl):
+        return ziel if ziel in auswahl else None
+    return waehlen
+
+
 @pytest.mark.asyncio
-async def test_exact_proposal_is_returned_directly():
-    """Kennt das Modell den offiziellen Namen, braucht es keine Auswahlrunde."""
+async def test_exact_proposal_still_needs_confirmation():
+    """Ein exakter Vorschlag beweist nur, dass die Karte EXISTIERT -- nicht,
+    dass es die richtige ist. Er kommt in die Auswahl wie jeder andere."""
     async def kandidaten(begriff):
         return ["Lightning Bolt"]
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Lightning Bolt")), \
          patch.object(ml, "scryfall_request", _scryfall(exakt={"Lightning Bolt": "Lightning Bolt"})):
         karte = await ml.finde_karte_sprachunabhaengig(None, "Blitzschlag")
 
     assert karte["name"] == "Lightning Bolt"
+
+
+@pytest.mark.asyncio
+async def test_real_but_wrong_card_proposal_is_not_taken_blindly():
+    """DER gemeldete Fehler in seiner zweiten Ausprägung: das Modell schlug
+    "Stoneforge Mystic" für "Steinstimmen-Goblins" vor. Weil das eine echt
+    existierende Karte ist, wurde sie als "exakter Vorschlag" sofort
+    übernommen -- die gesamte Auswahllogik wurde übersprungen."""
+    async def kandidaten(begriff):
+        return ["Stoneforge Mystic", "Stonevoice Goblins"]
+
+    scryfall = _scryfall(
+        exakt={"Stoneforge Mystic": "Stoneforge Mystic",
+               "Stony-Voiced Goblins": "Stony-Voiced Goblins"},
+        suche={"goblins": ["Stony-Voiced Goblins", "Goblin Shrine"],
+               "mystic": ["Stoneforge Mystic", "Mystic Snake"]},
+    )
+    gezeigt = {}
+
+    async def waehlt(begriff, auswahl):
+        gezeigt["auswahl"] = auswahl
+        return "Stony-Voiced Goblins"
+
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", waehlt), \
+         patch.object(ml, "scryfall_request", scryfall):
+        karte = await ml.finde_karte_sprachunabhaengig(None, "Steinstimmen-Goblins")
+
+    assert karte["name"] == "Stony-Voiced Goblins"
+    assert "Stoneforge Mystic" in gezeigt["auswahl"], \
+        "Der Vorschlag darf Kandidat sein -- aber eben nur Kandidat"
+
+
+@pytest.mark.asyncio
+async def test_words_of_the_original_query_are_searched_too():
+    """Kreaturentypen und Eigennamen sind über Sprachen hinweg oft fast gleich.
+    "Steinstimmen-Goblins" enthält "Goblins" -- damit wird die richtige Karte
+    gefunden, ganz unabhängig davon, was das Modell vorschlägt."""
+    async def kandidaten(begriff):
+        return ["Completely Unrelated Guess"]
+
+    scryfall = _scryfall(
+        suche={"goblins": ["Stony-Voiced Goblins"]},
+        exakt={"Stony-Voiced Goblins": "Stony-Voiced Goblins"},
+    )
+
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Stony-Voiced Goblins")), \
+         patch.object(ml, "scryfall_request", scryfall):
+        karte = await ml.finde_karte_sprachunabhaengig(None, "Steinstimmen-Goblins")
+
+    assert karte["name"] == "Stony-Voiced Goblins"
 
 
 @pytest.mark.asyncio
@@ -272,6 +332,7 @@ async def test_result_is_cached_so_model_runs_once(cache):
 
     scryfall = _scryfall(exakt={"Fearsome Goblin Duo": "Fearsome Goblin Duo"})
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Fearsome Goblin Duo")), \
          patch.object(ml, "scryfall_request", scryfall):
         await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
         await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
@@ -315,6 +376,7 @@ async def test_negative_cache_expires_so_a_card_is_not_lost_for_a_day(cache):
         return FakeResponse(404)
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Fearsome Goblin Pair")), \
          patch.object(ml, "scryfall_request", scryfall):
         assert await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo") is None
 
@@ -346,6 +408,7 @@ async def test_missing_model_is_not_remembered_as_a_failure(cache):
 
     scryfall = _scryfall(exakt={"Fearsome Goblin Pair": "Fearsome Goblin Pair"})
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Fearsome Goblin Pair")), \
          patch.object(ml, "scryfall_request", scryfall):
         karte = await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
 
