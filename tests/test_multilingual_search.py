@@ -208,6 +208,78 @@ async def test_negative_result_is_cached_too(cache):
 
 
 @pytest.mark.asyncio
+async def test_negative_cache_expires_so_a_card_is_not_lost_for_a_day(cache):
+    """Regression: der Fehlschlag wurde 24 h gemerkt. Lief der Server beim
+    ersten Versuch ohne API-Schlüssel, blieb die Karte danach einen ganzen Tag
+    unauffindbar -- obwohl längst alles korrekt konfiguriert war."""
+    aufrufe = {"n": 0}
+
+    async def kandidaten(begriff):
+        aufrufe["n"] += 1
+        return ["Fearsome Goblin Duo"]
+
+    gefunden = {"ja": False}
+
+    async def fake_request(client, method, url, **kw):
+        if gefunden["ja"]:
+            return FakeResponse(200, {"name": "Fearsome Goblin Pair"})
+        return FakeResponse(404)
+
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "scryfall_request", fake_request):
+        assert await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo") is None
+
+        # Cache-Eintrag künstlich altern lassen.
+        for eintrag in cache.daten.values():
+            eintrag["zeit"] -= ml.NEGATIV_CACHE_SEKUNDEN + 1
+
+        gefunden["ja"] = True
+        karte = await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
+
+    assert aufrufe["n"] == 2, "Nach Ablauf muss erneut gefragt werden"
+    assert karte["name"] == "Fearsome Goblin Pair"
+
+
+@pytest.mark.asyncio
+async def test_missing_model_is_not_remembered_as_a_failure(cache):
+    """Fehlt das Sprachmodell (z.B. kein GEMINI_API_KEY), ist das ein
+    technischer Ausfall -- kein Beweis, dass es die Karte nicht gibt. Er darf
+    den späteren, korrekt konfigurierten Versuch nicht blockieren."""
+    async def kein_modell(begriff):
+        return []
+
+    async def fake_request(client, method, url, **kw):
+        return FakeResponse(200, {"name": "Fearsome Goblin Pair"})
+
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kein_modell):
+        assert await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo") is None
+
+    assert cache.daten == {}, "Ein technischer Ausfall darf nichts zementieren"
+
+    async def kandidaten(begriff):
+        return ["Fearsome Goblin Duo"]
+
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "scryfall_request", fake_request):
+        karte = await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
+
+    assert karte["name"] == "Fearsome Goblin Pair"
+
+
+@pytest.mark.asyncio
+async def test_missing_model_is_logged(caplog):
+    """Die Stufe darf nicht stumm aussteigen -- sonst ist im Betrieb nicht
+    erkennbar, WARUM eine Karte nicht gefunden wurde."""
+    import logging
+
+    with patch("services.ai_service.model_lite", None), \
+         caplog.at_level(logging.WARNING, logger="services.multilingual_search"):
+        assert await ml._frage_modell_nach_englischen_namen("Furchterregendes Goblin-Duo") == []
+
+    assert "kein Sprachmodell" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_gibberish_does_not_trigger_a_model_call():
     """Kostenschutz: Unsinnseingaben lösen keinen Modellaufruf aus."""
     aufrufe = {"n": 0}

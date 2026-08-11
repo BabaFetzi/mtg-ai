@@ -77,8 +77,15 @@ class HybridCache:
             self.redis_client.ping()
             self.use_redis = True
             logger.info("Redis-Cache erfolgreich verbunden!")
-        except Exception:
-            logger.warning("Redis nicht verfügbar (Nutze SQLite Fallback)", exc_info=True)
+        except Exception as fehler:
+            # Kein Traceback: "kein Redis vorhanden" ist der normale Zustand einer
+            # lokalen Installation. Der volle Stack schrieb bei jedem Start einen
+            # 20-zeiligen Fehlerblock ins Log und liess einen harmlosen Fallback
+            # wie einen Absturz aussehen -- echte Fehler gingen darin unter.
+            logger.info(
+                "Redis nicht verfügbar (%s: %s) – nutze SQLite-Fallback.",
+                type(fehler).__name__, fehler,
+            )
             self.use_redis = False
 
         # --- SQLite Fallback-Tabelle anlegen ---

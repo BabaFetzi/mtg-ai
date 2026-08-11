@@ -19,8 +19,12 @@ Damit kann diese Stufe keine falschen Karten erzeugen -- der Fehler, der früher
 zu einer gar nicht besessenen Karte im Combo-Ergebnis führte.
 
 Kosten: Ein günstiger Modellaufruf, und zwar nur, wenn alle anderen Wege
-gescheitert sind. Das Ergebnis wird dauerhaft zwischengespeichert (auch das
-negative), sodass derselbe Name nie zweimal übersetzt wird.
+gescheitert sind. Eine bestätigte Zuordnung wird zwischengespeichert, sodass
+derselbe Name nie zweimal übersetzt wird. Ein erfolgloser Versuch wird nur
+KURZ gemerkt (Standard 15 Minuten): er soll wiederholte Modellaufrufe im
+Sekundentakt verhindern, darf aber nicht dazu führen, dass eine Karte für den
+Rest des Tages als "nicht auffindbar" gilt -- etwa weil beim ersten Versuch
+der API-Schlüssel fehlte oder das Modell kurzzeitig gestört war.
 """
 
 import asyncio
@@ -28,8 +32,9 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.parse
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from services.cache import scryfall_cache
 from services.scryfall import scryfall_request
@@ -43,9 +48,17 @@ UEBERSETZUNGSSUCHE_AKTIV = os.getenv("MULTILANG_SEARCH_ENABLED", "true").strip()
 
 MAX_KANDIDATEN = int(os.getenv("MULTILANG_MAX_CANDIDATES", "5"))
 
+# Wie lange ein ERFOLGLOSER Versuch gemerkt wird. Bewusst kurz: der Zweck ist
+# nur, Modellaufrufe bei Tippen/Neuladen zu bündeln. Wäre er so lang wie die
+# normale Cache-Dauer (24 h), würde ein einziger fehlgeschlagener Versuch --
+# z.B. während der Server ohne GEMINI_API_KEY lief -- die Karte einen ganzen
+# Tag lang unauffindbar machen, ohne dass es irgendwo sichtbar wäre.
+NEGATIV_CACHE_SEKUNDEN = int(os.getenv("MULTILANG_NEGATIVE_CACHE_SECONDS", "900"))
+
 # Cache-Version im Schlüssel: erlaubt es, alte Zuordnungen bei einer
-# Verbesserung des Verfahrens gezielt ungültig zu machen.
-_CACHE_PRAEFIX = "namemap:v1:"
+# Verbesserung des Verfahrens gezielt ungültig zu machen. v2 = Einträge tragen
+# jetzt einen Zeitstempel, damit negative Ergebnisse eigenständig verfallen.
+_CACHE_PRAEFIX = "namemap:v2:"
 
 
 def _wirkt_wie_kartenname(begriff: str) -> bool:
@@ -63,11 +76,45 @@ def _wirkt_wie_kartenname(begriff: str) -> bool:
     return " " in text or "-" in text or len(text) >= 8
 
 
+def _lies_cache(schluessel: str) -> Tuple[Optional[str], Optional[str]]:
+    """Liest einen Cache-Eintrag.
+
+    Returns:
+        ("treffer", englischer_name) – bekannte Zuordnung,
+        ("fehlschlag", None)        – kürzlich erfolglos, nicht erneut fragen,
+        (None, None)                – nichts Gültiges gespeichert.
+    """
+    eintrag = scryfall_cache.get(schluessel)
+    if not isinstance(eintrag, dict):
+        # Kein Eintrag – oder ein Eintrag im alten v1-Format (reiner String),
+        # der über den neuen Präfix ohnehin nicht mehr gefunden wird.
+        return None, None
+
+    name = (eintrag.get("name") or "").strip()
+    if name:
+        return "treffer", name
+
+    alter = time.time() - float(eintrag.get("zeit") or 0)
+    if alter < NEGATIV_CACHE_SEKUNDEN:
+        return "fehlschlag", None
+    return None, None
+
+
+def _merke(schluessel: str, name: str) -> None:
+    scryfall_cache.set(schluessel, {"name": name, "zeit": time.time()})
+
+
 async def _frage_modell_nach_englischen_namen(begriff: str) -> List[str]:
     """Lässt das Modell mögliche englische Kartennamen vorschlagen."""
     from services.ai_service import model_lite
 
     if model_lite is None:
+        # Ohne diese Zeile schweigt die Stufe genau dann, wenn man am
+        # dringendsten wüsste, warum nichts gefunden wurde.
+        logger.warning(
+            "Sprachunabhängige Suche übersprungen für %r: kein Sprachmodell verfügbar "
+            "(GEMINI_API_KEY gesetzt?)", begriff,
+        )
         return []
 
     prompt = (
@@ -136,15 +183,21 @@ async def finde_karte_sprachunabhaengig(client, begriff: str) -> Optional[dict]:
         return None
 
     schluessel = _CACHE_PRAEFIX + begriff.lower().strip()
-    gemerkt = scryfall_cache.get(schluessel)
-    if gemerkt is not None:
-        # "" = bekannt: dafür gibt es keine Entsprechung (kein erneuter Modellaufruf)
-        if not gemerkt:
-            return None
+    art, gemerkt = _lies_cache(schluessel)
+    if art == "treffer":
+        logger.info("Sprachunabhängige Suche: %r -> %r (aus Cache)", begriff, gemerkt)
         return await _bestaetige_bei_scryfall(client, gemerkt)
+    if art == "fehlschlag":
+        logger.info(
+            "Sprachunabhängige Suche übersprungen für %r: vor weniger als %d s bereits "
+            "erfolglos versucht", begriff, NEGATIV_CACHE_SEKUNDEN,
+        )
+        return None
 
     kandidaten = await _frage_modell_nach_englischen_namen(begriff)
     if not kandidaten:
+        # Kein Modell / keine verwertbare Antwort: NICHT als Fehlschlag merken,
+        # sonst zementiert ein technischer Ausfall das Ergebnis.
         return None
 
     for kandidat in kandidaten:
@@ -155,10 +208,15 @@ async def finde_karte_sprachunabhaengig(client, begriff: str) -> Optional[dict]:
                 begriff, karte.get("name"), kandidat,
             )
             # Zuordnung merken: derselbe Name kostet nie wieder einen Modellaufruf.
-            scryfall_cache.set(schluessel, karte.get("name", ""))
+            _merke(schluessel, karte.get("name", ""))
             return karte
 
-    # Auch das negative Ergebnis merken -- verhindert wiederholte Modellaufrufe
-    # für denselben erfolglosen Begriff.
-    scryfall_cache.set(schluessel, "")
+    # Das Modell hat geantwortet, aber Scryfall bestätigte keinen Vorschlag.
+    # Kurz merken, damit dieselbe Eingabe nicht bei jedem Tastendruck erneut
+    # das Modell kostet -- aber eben nur kurz.
+    logger.info(
+        "Sprachunabhängige Suche: für %r bestätigte Scryfall keinen der Vorschläge %s",
+        begriff, kandidaten,
+    )
+    _merke(schluessel, "")
     return None
