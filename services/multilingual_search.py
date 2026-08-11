@@ -278,8 +278,11 @@ async def _echte_namen_zu(client, kandidat: str) -> List[str]:
 
     namen: List[str] = []
     for wort in reihenfolge[:2]:
+        # -is:rebalanced: die Alchemy-Fassungen ("A-...") gibt es nur digital
+        # in MTG Arena. Sie haben nichts in der Auswahl zu suchen.
         resp = await _hole(client, "https://api.scryfall.com/cards/search?q="
-                           + urllib.parse.quote(f"name:{wort}") + "&unique=cards")
+                           + urllib.parse.quote(f"name:{wort} -is:rebalanced")
+                           + "&unique=cards")
         if resp is None or resp.status_code != 200:
             continue
         daten = resp.json()

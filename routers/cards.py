@@ -226,7 +226,14 @@ async def karten_suchen_liste(q: str, limit: int = 15):
         karten = []
         # lang:any findet auch lokalisierte (z.B. deutsche) Namen, sofern
         # Scryfall sie für das Set bereits veröffentlicht hat.
-        for suchausdruck in (f'lang:any name:"{begriff}"', f'name:{begriff}'):
+        #
+        # -is:rebalanced blendet die Alchemy-Fassungen aus ("A-Orcish
+        # Bowmasters"). Die gibt es nur digital in MTG Arena, nicht auf Papier:
+        # sie tauchten als scheinbares Duplikat neben der echten Karte auf, sind
+        # in keinem Papierformat legal und haben keinen Marktpreis (0,00 EUR).
+        # Für eine Sammlung und Deckbau auf Papier sind sie schlicht falsch.
+        for suchausdruck in (f'lang:any name:"{begriff}" -is:rebalanced',
+                             f'name:{begriff} -is:rebalanced'):
             try:
                 url = ("https://api.scryfall.com/cards/search?q="
                        + urllib.parse.quote(suchausdruck) + "&include_multilingual=true&unique=prints")
@@ -493,7 +500,7 @@ async def _finde_vorschlaege(client, begriff: str, limit: int = 6) -> list:
         for wort in bausteine:
             try:
                 url = ("https://api.scryfall.com/cards/search?q="
-                       + urllib.parse.quote(f"name:{wort} date>={stichtag}")
+                       + urllib.parse.quote(f"name:{wort} date>={stichtag} -is:rebalanced")
                        + "&order=released&dir=desc&unique=cards")
                 resp = await scryfall_request(client, "GET", url)
             except Exception:

@@ -493,3 +493,19 @@ body {
   transform: scale(1.1);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
 }
+/* Kartentreffer im Deck-Editor: das Vorschaubild vergrössert sich beim
+   Darüberfahren, damit ähnliche Karten sicher unterscheidbar sind. Zwei
+   Fassungen derselben Karte waren bei Briefmarkengrösse nicht zu trennen. */
+.kartentreffer-bild {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transform-origin: left center;
+}
+.kartentreffer-bild:hover {
+  transform: scale(3.2);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  position: relative;
+  z-index: 20;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kartentreffer-bild { transition: none; }
+}

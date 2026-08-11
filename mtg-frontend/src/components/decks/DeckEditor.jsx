@@ -273,10 +273,14 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                     }}
                     className="drag-source-card"
                   >
+                    {/* Bild deutlich grösser: bei 40px waren zwei ähnliche Karten
+                        nicht auseinanderzuhalten. Zusätzlich vergrössert es sich
+                        beim Darüberfahren (siehe .kartentreffer-bild in App.css). */}
                     <img
                       src={item.bild_url || getFallbackCardImage(item.name, item.type_line)}
                       alt={item.name}
-                      style={{ width: '40px', borderRadius: '2px' }}
+                      className="kartentreffer-bild"
+                      style={{ width: '62px', borderRadius: '3px', flexShrink: 0 }}
                       draggable="false"
                       onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(item.name, item.type_line); }}
                     />
@@ -288,6 +292,12 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                         {item.printed_name && item.printed_name !== item.name ? `${item.printed_name} (${item.name})` : item.name}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.type_line}</div>
+                      {/* Die Edition unterscheidet Treffer, die sonst gleich aussehen. */}
+                      {item.set && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          {item.set}
+                        </div>
+                      )}
                     </div>
                     <button
                       onClick={() => addCard(item.name)}

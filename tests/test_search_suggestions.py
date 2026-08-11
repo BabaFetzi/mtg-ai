@@ -10,11 +10,22 @@ daraus entstand früher der Fehler, dass eine nicht besessene Karte als Treffer
 erschien. Es gibt ausschliesslich Vorschläge zum Anklicken.
 """
 
+import urllib.parse
 from unittest.mock import patch
 
 import pytest
 
 from routers.cards import _suchbausteine, _finde_vorschlaege
+
+
+class _LeererCache:
+    """Cache-Double: liefert nie einen Treffer, merkt sich Schreibvorgänge."""
+
+    def get(self, key):
+        return None
+
+    def set(self, key, value):
+        pass
 
 
 class FakeResponse:
@@ -106,3 +117,31 @@ async def test_scryfall_failure_yields_no_suggestions_not_an_error():
 
     with patch("routers.cards.scryfall_request", boom):
         assert await _finde_vorschlaege(None, "Azog") == []
+
+
+# ======================================================================
+# Alchemy-Fassungen ausblenden
+# ======================================================================
+@pytest.mark.asyncio
+async def test_alchemy_rebalanced_cards_are_excluded():
+    """Regression: die Suche nach "Orcish Bowmaster" lieferte ZWEI Treffer --
+    die echte Karte und "A-Orcish Bowmasters". Letztere ist die Alchemy-Fassung:
+    es gibt sie nur digital in MTG Arena, sie ist in keinem Papierformat legal
+    und hat keinen Marktpreis. In einer Sammel- und Deckbau-App für Papierkarten
+    ist sie ein irreführendes Duplikat."""
+    from routers.cards import karten_suchen_liste
+
+    gestellte_fragen = []
+
+    async def fake_request(client, method, url, **kw):
+        frage = urllib.parse.unquote_plus(url.split("q=", 1)[1].split("&")[0])
+        gestellte_fragen.append(frage)
+        return FakeResponse(200, {"data": [{"name": "Orcish Bowmasters", "type_line": "Creature"}]})
+
+    with patch("routers.cards.scryfall_request", fake_request), \
+         patch("routers.cards.scryfall_cache", _LeererCache()):
+        ergebnis = await karten_suchen_liste(q="Orcish Bowmaster", limit=5)
+
+    assert [k["name"] for k in ergebnis["karten"]] == ["Orcish Bowmasters"]
+    assert gestellte_fragen, "Es wurde gar nicht gesucht"
+    assert all("-is:rebalanced" in f for f in gestellte_fragen), gestellte_fragen

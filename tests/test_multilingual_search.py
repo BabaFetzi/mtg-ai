@@ -149,7 +149,8 @@ def _scryfall(exakt=None, fuzzy=None, suche=None):
             treffer = tabelle.get(name)
             return FakeResponse(200, {"name": treffer}) if treffer else FakeResponse(404)
         if "/cards/search" in url:
-            wort = frage.split("name:", 1)[1].split("&")[0]
+            # "name:goblins -is:rebalanced" -> "goblins"
+            wort = frage.split("name:", 1)[1].split("&")[0].split()[0]
             namen = suche.get(wort, [])
             return FakeResponse(200, {
                 "total_cards": len(namen),

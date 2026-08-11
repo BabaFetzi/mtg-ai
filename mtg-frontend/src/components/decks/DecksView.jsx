@@ -43,6 +43,11 @@ const FORMAT_LABELS = {
   vintage: 'Vintage',
 };
 
+// Nur diese Formate kennen überhaupt einen Commander. In Standard, Modern,
+// Pioneer, Legacy und Vintage gibt es keinen -- dort ist eine legendäre
+// Kreatur einfach eine Kreatur.
+const FORMATE_MIT_COMMANDER = new Set(['commander', 'brawl', 'oathbreaker', 'duel']);
+
 // Deckt sich mit der bestehenden Regelprüfung in format_engine.py: Commander
 // verlangt EXAKT 100 Karten (inkl. Commander), alle anderen Formate
 // mindestens 60 -- dieselbe Logik wie im Statistik-Streifen über der
@@ -736,10 +741,15 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const renderGruppierteKarten = () => {
     if(!visualDeck || !Array.isArray(visualDeck) || visualDeck.length === 0) return <p style={{textAlign: 'center', color: 'var(--text-muted)'}}>Keine Karten gefunden. Bitte prüfe die Namen im Editor.</p>;
     
-    const grouped = { 
-      Unbekannt: [], 
-      Commander: [], 
-      Kreaturen: [], 
+    // "Gimli, Counter of Kills" stand in einem Standard-Deck unter "Commander",
+    // weil jede legendäre Kreatur dorthin einsortiert wurde -- unabhängig vom
+    // Format. Standard kennt aber gar keinen Commander.
+    const mitCommander = FORMATE_MIT_COMMANDER.has((selectedFormat || '').toLowerCase());
+
+    const grouped = {
+      Unbekannt: [],
+      Commander: [],
+      Kreaturen: [],
       Planeswalker: [],
       Artefakte: [], 
       "Spontanzauber & Hexereien": [], 
@@ -754,7 +764,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
        const isNotFound = k.type === "Unbekannt" || !k.image || (k.name && k.name.includes("(Nicht gefunden)"));
        
        if(isNotFound) grouped.Unbekannt.push(k);
-       else if(t.includes('legendary creature') && grouped.Commander.length === 0) grouped.Commander.push(k);
+       else if(mitCommander && t.includes('legendary creature') && grouped.Commander.length === 0) grouped.Commander.push(k);
        else if(t.includes('creature')) grouped.Kreaturen.push(k);
        else if(t.includes('planeswalker')) grouped.Planeswalker.push(k);
        else if(t.includes('artifact')) grouped.Artefakte.push(k);
