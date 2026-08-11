@@ -125,8 +125,9 @@ async def test_single_unambiguous_result_is_accepted():
     assert resp.status_code == 200
 
 
+
 # ----------------------------------------------------------------------
-# Übersetzung mit Bestätigung
+# Übersetzung mit Auswahl aus ECHTEN Kartennamen
 # ----------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def cache():
@@ -135,36 +136,126 @@ def cache():
         yield fake
 
 
-@pytest.mark.asyncio
-async def test_translation_is_confirmed_by_scryfall():
-    """Der reale Fall: literale Übersetzung trifft über die Fuzzy-Suche."""
-    async def kandidaten(begriff):
-        return ["Fearsome Goblin Duo", "Terrifying Goblin Pair"]
+def _scryfall(exakt=None, fuzzy=None, suche=None):
+    """Baut ein Scryfall-Double aus drei Zuordnungen: Name -> Ergebnis."""
+    exakt, fuzzy, suche = exakt or {}, fuzzy or {}, suche or {}
 
     async def fake_request(client, method, url, **kw):
-        if "Fearsome+Goblin+Duo" in url or "Fearsome%20Goblin%20Duo" in url:
-            return FakeResponse(200, {"name": "Fearsome Goblin Pair"})
+        import urllib.parse as up
+        frage = up.unquote_plus(url.split("?", 1)[1] if "?" in url else "")
+        if "/cards/named" in url:
+            tabelle = exakt if frage.startswith("exact=") else fuzzy
+            name = frage.split("=", 1)[1]
+            treffer = tabelle.get(name)
+            return FakeResponse(200, {"name": treffer}) if treffer else FakeResponse(404)
+        if "/cards/search" in url:
+            wort = frage.split("name:", 1)[1].split("&")[0]
+            namen = suche.get(wort, [])
+            return FakeResponse(200, {
+                "total_cards": len(namen),
+                "data": [{"name": n} for n in namen],
+            })
         return FakeResponse(404)
 
-    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
-         patch.object(ml, "scryfall_request", fake_request):
-        karte = await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
-
-    assert karte["name"] == "Fearsome Goblin Pair"
+    return fake_request
 
 
 @pytest.mark.asyncio
-async def test_hallucinated_card_is_rejected():
-    """Erfindet das Modell eine Karte, bestätigt Scryfall sie nicht -- und es
-    darf NICHTS ausgeliefert werden."""
+async def test_exact_proposal_is_returned_directly():
+    """Kennt das Modell den offiziellen Namen, braucht es keine Auswahlrunde."""
     async def kandidaten(begriff):
-        return ["Totally Made Up Card", "Another Invention"]
-
-    async def fake_request(client, method, url, **kw):
-        return FakeResponse(404)
+        return ["Lightning Bolt"]
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
-         patch.object(ml, "scryfall_request", fake_request):
+         patch.object(ml, "scryfall_request", _scryfall(exakt={"Lightning Bolt": "Lightning Bolt"})):
+        karte = await ml.finde_karte_sprachunabhaengig(None, "Blitzschlag")
+
+    assert karte["name"] == "Lightning Bolt"
+
+
+@pytest.mark.asyncio
+async def test_wrong_card_from_fuzzy_drift_is_rejected():
+    """DER gemeldete Fehler: die Suche nach "Steinstimmen-Goblins" lieferte
+    "Stoneforge Mystic". Ursache war Scryfalls grosszügige Fuzzy-Suche, die auf
+    Wortanfängen matcht. Ein Fuzzy-Treffer, der dem Vorschlag nicht wirklich
+    ähnelt, darf nicht mehr durchgehen."""
+    assert ml._passt_klar_zusammen("Stonevoice Goblins", "Stoneforge Mystic") is False
+    assert ml._passt_klar_zusammen("Stonespeaker Goblins", "Stonespeaker Crystal") is False
+    assert ml._passt_klar_zusammen("Goblin Warrior", "Goblin Soldier") is False
+    # Echte Entsprechungen müssen weiterhin durchkommen.
+    assert ml._passt_klar_zusammen("Stone-Voiced Goblins", "Stony-Voiced Goblins") is True
+    assert ml._passt_klar_zusammen("Lightning Bolt", "Lightning Bolt") is True
+
+
+@pytest.mark.asyncio
+async def test_real_card_is_found_via_word_search():
+    """Vollständiger Ablauf des gemeldeten Falls: kein exakter Treffer, Fuzzy
+    driftet weg -- die richtige Karte kommt über die Wortsuche und wird vom
+    Modell aus echten Namen ausgewählt."""
+    async def kandidaten(begriff):
+        return ["Stonevoice Goblins"]
+
+    scryfall = _scryfall(
+        fuzzy={"Stonevoice Goblins": "Stoneforge Mystic"},   # der alte Fehltreffer
+        suche={"goblins": ["Stony-Voiced Goblins", "Scarwood Goblins", "Goblin Shrine"]},
+        exakt={"Stony-Voiced Goblins": "Stony-Voiced Goblins"},
+    )
+
+    vorgelegt = {}
+
+    async def waehlt(begriff, auswahl):
+        vorgelegt["auswahl"] = auswahl
+        return "Stony-Voiced Goblins"
+
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", waehlt), \
+         patch.object(ml, "scryfall_request", scryfall):
+        karte = await ml.finde_karte_sprachunabhaengig(None, "Steinstimmen-Goblins")
+
+    assert karte["name"] == "Stony-Voiced Goblins"
+    assert "Stoneforge Mystic" not in vorgelegt["auswahl"], \
+        "Der Fehltreffer darf gar nicht erst zur Auswahl stehen"
+
+
+@pytest.mark.asyncio
+async def test_model_answer_outside_the_list_is_rejected():
+    """Das Modell kann nichts erfinden: eine Antwort, die nicht wörtlich in der
+    vorgelegten Liste steht, wird verworfen."""
+    auswahl = ["Stony-Voiced Goblins", "Scarwood Goblins"]
+
+    class FakeAntwort:
+        text = "Goblin des Steins"
+
+    class FakeModell:
+        def generate_content(self, *a, **kw):
+            return FakeAntwort()
+
+    with patch("services.ai_service.model_lite", FakeModell()):
+        assert await ml._modell_waehlt_aus_echten_namen("Steinstimmen-Goblins", auswahl) is None
+
+
+@pytest.mark.asyncio
+async def test_model_may_answer_none():
+    class FakeAntwort:
+        text = "KEINE"
+
+    class FakeModell:
+        def generate_content(self, *a, **kw):
+            return FakeAntwort()
+
+    with patch("services.ai_service.model_lite", FakeModell()):
+        assert await ml._modell_waehlt_aus_echten_namen("Irgendwas", ["Sol Ring"]) is None
+
+
+@pytest.mark.asyncio
+async def test_hallucinated_card_yields_nothing():
+    """Erfindet das Modell eine Karte, existiert dazu nichts -- und es darf
+    NICHTS ausgeliefert werden."""
+    async def kandidaten(begriff):
+        return ["Totally Made Up Card"]
+
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "scryfall_request", _scryfall()):
         assert await ml.finde_karte_sprachunabhaengig(None, "Irgendein Fantasiename") is None
 
 
@@ -176,11 +267,9 @@ async def test_result_is_cached_so_model_runs_once(cache):
         aufrufe["n"] += 1
         return ["Fearsome Goblin Duo"]
 
-    async def fake_request(client, method, url, **kw):
-        return FakeResponse(200, {"name": "Fearsome Goblin Pair"})
-
+    scryfall = _scryfall(exakt={"Fearsome Goblin Duo": "Fearsome Goblin Duo"})
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
-         patch.object(ml, "scryfall_request", fake_request):
+         patch.object(ml, "scryfall_request", scryfall):
         await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
         await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
 
@@ -196,11 +285,8 @@ async def test_negative_result_is_cached_too(cache):
         aufrufe["n"] += 1
         return ["Nichts Passendes"]
 
-    async def fake_request(client, method, url, **kw):
-        return FakeResponse(404)
-
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
-         patch.object(ml, "scryfall_request", fake_request):
+         patch.object(ml, "scryfall_request", _scryfall()):
         await ml.finde_karte_sprachunabhaengig(None, "Unauffindbarer Kartenname")
         await ml.finde_karte_sprachunabhaengig(None, "Unauffindbarer Kartenname")
 
@@ -216,20 +302,19 @@ async def test_negative_cache_expires_so_a_card_is_not_lost_for_a_day(cache):
 
     async def kandidaten(begriff):
         aufrufe["n"] += 1
-        return ["Fearsome Goblin Duo"]
+        return ["Fearsome Goblin Pair"]
 
     gefunden = {"ja": False}
 
-    async def fake_request(client, method, url, **kw):
-        if gefunden["ja"]:
+    async def scryfall(client, method, url, **kw):
+        if gefunden["ja"] and "exact=" in url:
             return FakeResponse(200, {"name": "Fearsome Goblin Pair"})
         return FakeResponse(404)
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
-         patch.object(ml, "scryfall_request", fake_request):
+         patch.object(ml, "scryfall_request", scryfall):
         assert await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo") is None
 
-        # Cache-Eintrag künstlich altern lassen.
         for eintrag in cache.daten.values():
             eintrag["zeit"] -= ml.NEGATIV_CACHE_SEKUNDEN + 1
 
@@ -248,19 +333,17 @@ async def test_missing_model_is_not_remembered_as_a_failure(cache):
     async def kein_modell(begriff):
         return []
 
-    async def fake_request(client, method, url, **kw):
-        return FakeResponse(200, {"name": "Fearsome Goblin Pair"})
-
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kein_modell):
         assert await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo") is None
 
     assert cache.daten == {}, "Ein technischer Ausfall darf nichts zementieren"
 
     async def kandidaten(begriff):
-        return ["Fearsome Goblin Duo"]
+        return ["Fearsome Goblin Pair"]
 
+    scryfall = _scryfall(exakt={"Fearsome Goblin Pair": "Fearsome Goblin Pair"})
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
-         patch.object(ml, "scryfall_request", fake_request):
+         patch.object(ml, "scryfall_request", scryfall):
         karte = await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
 
     assert karte["name"] == "Fearsome Goblin Pair"
@@ -293,6 +376,19 @@ async def test_gibberish_does_not_trigger_a_model_call():
             assert await ml.finde_karte_sprachunabhaengig(None, unsinn) is None
 
     assert aufrufe["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_unspecific_word_search_is_skipped():
+    """Ein Wort, das auf hunderte Karten passt, ergibt keine sinnvolle Auswahl
+    -- daraus darf nichts abgeleitet werden."""
+    async def scryfall(client, method, url, **kw):
+        if "/cards/search" in url:
+            return FakeResponse(200, {"total_cards": 5000, "data": [{"name": "Sol Ring"}]})
+        return FakeResponse(404)
+
+    with patch.object(ml, "scryfall_request", scryfall):
+        assert await ml._echte_namen_zu(None, "Dragon Something") == []
 
 
 @pytest.mark.asyncio
