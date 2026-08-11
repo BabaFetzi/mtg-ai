@@ -71,6 +71,10 @@ MAX_WORTSUCHE = 2
 MAX_WORTTREFFER = 400
 # Soviele echte Namen bekommt das Modell zur Auswahl vorgelegt.
 MAX_AUSWAHL = 12
+# Ab welcher Ähnlichkeit ein Fuzzy-Treffer als Abkürzung gilt (siehe
+# _passt_klar_zusammen). Hoch angesetzt: "Stone Mystic" -> "Stoneforge Mystic"
+# erreicht 0.83 und ist trotzdem falsch.
+FUZZY_SCHWELLE = 0.88
 
 # Wie lange ein ERFOLGLOSER Versuch gemerkt wird. Bewusst kurz: der Zweck ist
 # nur, Modellaufrufe bei Tippen/Neuladen zu bündeln. Wäre er so lang wie die
@@ -220,9 +224,16 @@ def _passt_klar_zusammen(vorschlag: str, echter_name: str) -> bool:
     landete bei der Suche nach "Steinstimmen-Goblins" ein "Stoneforge Mystic"
     im Deck. Ein Fuzzy-Treffer allein ist deshalb KEIN Beweis -- der
     zurückgegebene Name muss dem Vorschlag auch wirklich ähneln.
+
+    Die Schwelle ist bewusst hoch angesetzt. Nachgemessen an echten Fällen
+    kostet das nichts: die richtige Karte kommt ohnehin über die Wortsuche in
+    die Auswahl (geprüft an Goblin-Duo, Steinstimmen-Goblins, Azogs Untergang,
+    Bolgs Gefolge, Der Grosse Ork). Die Fuzzy-Stufe ist damit nur noch eine
+    Abkürzung für offensichtliche Treffer -- und kann keine fremde Karte mehr
+    einschleusen.
     """
     wort, zeichen = _aehnlichkeit(vorschlag, echter_name)
-    return wort >= 0.72 and zeichen >= 0.72
+    return wort >= FUZZY_SCHWELLE and zeichen >= FUZZY_SCHWELLE
 
 
 async def _hole(client, url: str):

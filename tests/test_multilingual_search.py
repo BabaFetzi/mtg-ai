@@ -182,6 +182,9 @@ async def test_wrong_card_from_fuzzy_drift_is_rejected():
     assert ml._passt_klar_zusammen("Stonevoice Goblins", "Stoneforge Mystic") is False
     assert ml._passt_klar_zusammen("Stonespeaker Goblins", "Stonespeaker Crystal") is False
     assert ml._passt_klar_zusammen("Goblin Warrior", "Goblin Soldier") is False
+    # Der knappste Fall: sieht sehr ähnlich aus (0.83), ist aber eine andere
+    # Karte -- genau der Treffer, der im Deck landete.
+    assert ml._passt_klar_zusammen("Stone Mystic", "Stoneforge Mystic") is False
     # Echte Entsprechungen müssen weiterhin durchkommen.
     assert ml._passt_klar_zusammen("Stone-Voiced Goblins", "Stony-Voiced Goblins") is True
     assert ml._passt_klar_zusammen("Lightning Bolt", "Lightning Bolt") is True
