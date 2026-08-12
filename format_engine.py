@@ -10,35 +10,51 @@ class ValidationResult(BaseModel):
     details: Dict
 
 # Simple helper to clean and parse deck lines
-def parse_deck_liste_with_commander(deck_liste: str) -> List[Tuple[int, str, bool]]:
+def parse_deck_bereiche(deck_liste: str) -> List[Tuple[int, str, bool, bool]]:
+    """Zerlegt eine Deckliste in (anzahl, name, ist_commander, ist_sideboard).
+
+    Die Überschrift "Sideboard" wurde bisher zwar erkannt, aber nicht gemerkt:
+    alle folgenden Karten landeten im selben Topf wie das Hauptdeck. Ein
+    reguläres 60er-Deck mit 15er-Sideboard wurde dadurch als 75-Karten-Deck
+    geprüft, und in Commander (exakt 100 Karten) meldete die Prüfung fälschlich
+    einen Fehler. Zugleich blieb das Sideboard ungeprüft -- die 15-Karten-Grenze
+    existierte nicht.
+    """
     parsed = []
     lines = deck_liste.strip().split('\n')
     current_section_is_commander = False
-    
+    current_section_is_sideboard = False
+
     metadata_headers = {"deck", "commander", "companion", "sideboard", "mainboard", "main"}
     for line in lines:
         line = line.strip()
         if not line:
             continue
-            
+
         # Check if this line is a section header
         if line.lower() in metadata_headers:
-            if line.lower() == "commander":
-                current_section_is_commander = True
-            else:
-                current_section_is_commander = False
+            current_section_is_commander = line.lower() == "commander"
+            current_section_is_sideboard = line.lower() == "sideboard"
             continue
 
         if line.startswith('#') or line.startswith('//'):
             lower_line = line.lower()
+            # "// Sideboard" ist die zweite verbreitete Schreibweise neben der
+            # blossen Überschrift (Arena exportiert ohne, viele Seiten mit).
+            if re.match(r'^(?://|#)\s*side\s*board\b', lower_line):
+                current_section_is_sideboard = True
+                current_section_is_commander = False
+                continue
             if "commander" in lower_line or "cmdr" in lower_line:
                 header_match = re.match(r'^(?://|#)\s*(commander|cmdr)s?\b', lower_line)
                 if header_match:
                     current_section_is_commander = True
+                    current_section_is_sideboard = False
                     continue
             header_reset = re.match(r'^(?://|#)\s*(?!commander|cmdr)\w+', lower_line)
             if header_reset:
                 current_section_is_commander = False
+                current_section_is_sideboard = False
                 continue
             
             # If it's a generic comment, check if it contains commander keyword inline, else skip
@@ -61,9 +77,17 @@ def parse_deck_liste_with_commander(deck_liste: str) -> List[Tuple[int, str, boo
             is_cmdr = True
             name = re.sub(cmdr_tag_pattern, '', name, flags=re.IGNORECASE).strip()
             
-        parsed.append((count, name, is_cmdr))
-        
+        # Eine ausdrücklich als Commander markierte Karte gehört nie ins Sideboard.
+        parsed.append((count, name, is_cmdr, current_section_is_sideboard and not is_cmdr))
+
     return parsed
+
+
+def parse_deck_liste_with_commander(deck_liste: str) -> List[Tuple[int, str, bool]]:
+    """Unveränderte Signatur für bestehende Aufrufer: alle Karten ohne
+    Unterscheidung nach Bereich."""
+    return [(anzahl, name, cmdr) for anzahl, name, cmdr, _ in parse_deck_bereiche(deck_liste)]
+
 
 def parse_deck_liste(deck_liste: str) -> List[Tuple[int, str]]:
     return [(count, name) for count, name, _ in parse_deck_liste_with_commander(deck_liste)]
@@ -92,9 +116,15 @@ class FormatValidator:
     @staticmethod
     async def validate_deck(deck_liste: str, format_name: str, card_details_provider) -> ValidationResult:
         format_name = format_name.lower().strip()
-        parsed_cards_with_cmdr = parse_deck_liste_with_commander(deck_liste)
+        bereiche = parse_deck_bereiche(deck_liste)
+        parsed_cards_with_cmdr = [(a, n, c) for a, n, c, _ in bereiche]
         parsed_cards = [(count, name) for count, name, _ in parsed_cards_with_cmdr]
-        
+
+        # Sideboard-Karten zählen NICHT zum Hauptdeck. Die Kopiengrenze gilt
+        # dagegen über beide Bereiche zusammen -- so sagen es die Turnierregeln.
+        sideboard_karten = sum(a for a, _, _, sb in bereiche if sb)
+        hat_sideboard_abschnitt = any(sb for _, _, _, sb in bereiche)
+
         if not parsed_cards:
             return ValidationResult(
                 legal=False,
@@ -120,7 +150,11 @@ class FormatValidator:
         
         unresolved_cards = []
         
-        for count, raw_name in parsed_cards:
+        # Über bereiche laufen statt über parsed_cards: nur so ist bekannt, welche
+        # Karte im Sideboard steht. total_cards zählt AUSSCHLIESSLICH das
+        # Hauptdeck -- card_counts dagegen beide Bereiche, weil die
+        # Kopiengrenze über Haupt- und Sideboard zusammen gilt.
+        for count, raw_name, _ist_cmdr, ist_sideboard in bereiche:
             normalized = raw_name.lower().strip()
             # Try to match resolved card info
             info = None
@@ -128,19 +162,21 @@ class FormatValidator:
                 if k == normalized or v.get("name", "").lower().strip() == normalized:
                     info = v
                     break
-                    
+
             if not info:
                 unresolved_cards.append(raw_name)
-                total_cards += count
+                if not ist_sideboard:
+                    total_cards += count
                 continue
-                
+
             scryfall_name = info["name"]
             norm_scryfall = scryfall_name.lower().strip()
-            
+
             card_counts[norm_scryfall] = card_counts.get(norm_scryfall, 0) + count
             original_names[norm_scryfall] = scryfall_name
             cards_info[norm_scryfall] = info
-            total_cards += count
+            if not ist_sideboard:
+                total_cards += count
 
         if unresolved_cards:
             errors.append(f"Folgende Karten wurden in Scryfall nicht gefunden: {', '.join(unresolved_cards)}")
@@ -215,10 +251,27 @@ class FormatValidator:
                         colors_str = ", ".join([get_color_identity_symbol_name(c) for c in offending_colors])
                         errors.append(f"Die Karte '{original_names[norm_name]}' enthält illegale Farben ({colors_str}) für die Farbidentität deines Commanders ({''.join(sorted(list(commander_identity))) or 'Farblos'}).")
 
+            # 5. Commander kennt kein Sideboard (ausser dem Companion, der als
+            #    eigener Abschnitt exportiert wird und hier nicht als Sideboard
+            #    gilt). Ein Sideboard-Abschnitt deutet auf eine falsch
+            #    zusammengesetzte Liste hin -- als Warnung, nicht als Fehler,
+            #    weil manche Runden hausintern damit spielen.
+            if sideboard_karten:
+                warnings.append(
+                    f"Commander kennt kein Sideboard. Die {sideboard_karten} Karten "
+                    "im Sideboard-Abschnitt wurden nicht zu den 100 Karten gezählt."
+                )
+
         else:
             # 60+ cards deck for Standard, Modern, Legacy, Vintage, Pioneer, Pauper
             if total_cards < 60:
                 errors.append(f"Das Deck muss mindestens 60 Karten enthalten. Dein Deck hat {total_cards} Karten.")
+
+            # Sideboard: höchstens 15 Karten in allen Turnierformaten.
+            if sideboard_karten > 15:
+                errors.append(
+                    f"Das Sideboard darf höchstens 15 Karten enthalten. Deines hat {sideboard_karten}."
+                )
                 
             # Max 4 copies of any non-basic land
             for norm_name, count in card_counts.items():
@@ -260,7 +313,11 @@ class FormatValidator:
             warnings=warnings,
             details={
                 "format": format_name,
+                # Hauptdeck ohne Sideboard -- das ist die Zahl, gegen die die
+                # 60er- bzw. 100er-Regel geprüft wird.
                 "total_cards": total_cards,
+                "sideboard_cards": sideboard_karten,
+                "has_sideboard": hat_sideboard_abschnitt,
                 "valid_cards_count": len(cards_info)
             }
         )

@@ -111,7 +111,10 @@ async def get_decks(benutzername: str, current_user: str = Depends(get_current_u
         decks = []
         for r in rows:
             parsed = parsed_per_deck[r["id"]]
-            card_count = sum(p["count"] for p in parsed)
+            # Nur das Hauptdeck: die Anzeige "x / 60+" bzw. "x / 100" vergleicht
+            # gegen die Formatvorgabe, und dort zählt das Sideboard nicht mit.
+            card_count = sum(p["count"] for p in parsed if not p.get("sideboard"))
+            sideboard_count = sum(p["count"] for p in parsed if p.get("sideboard"))
             color_counts = {"W": 0, "U": 0, "B": 0, "R": 0, "G": 0}
             cmc_curve = {}
             gesamt_preis = 0.0
@@ -146,6 +149,7 @@ async def get_decks(benutzername: str, current_user: str = Depends(get_current_u
                 "liste": r["liste"],
                 "format": r.get("format") or "commander",
                 "card_count": card_count,
+                "sideboard_count": sideboard_count,
                 "colors": color_counts,
                 "cmc_curve": cmc_curve,
                 "price": f"{gesamt_preis:.2f}",
@@ -271,7 +275,11 @@ async def deck_visualize(req: DeckAnalyseReq, request: Request, current_user: st
                 "image": scryfall_data[name_lower]["image"],
                 "type": scryfall_data[name_lower]["type"],
                 "cmc": scryfall_data[name_lower].get("cmc", 0),
-                "price": scryfall_data[name_lower].get("price", "0.00")
+                "price": scryfall_data[name_lower].get("price", "0.00"),
+                # Der Starthand-Simulator baut seine Bibliothek aus dieser
+                # Liste. Ohne die Kennzeichnung mischte er Sideboard-Karten
+                # mit ein -- aus dem Sideboard zieht man aber nie.
+                "sideboard": bool(p.get("sideboard")),
             })
         else:
             karten.append({
@@ -280,7 +288,8 @@ async def deck_visualize(req: DeckAnalyseReq, request: Request, current_user: st
                 "image": "",
                 "type": "Unbekannt",
                 "cmc": 0,
-                "price": "0.00"
+                "price": "0.00",
+                "sideboard": bool(p.get("sideboard")),
             })
             
     return {"karten": karten}

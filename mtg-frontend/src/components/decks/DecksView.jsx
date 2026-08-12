@@ -517,7 +517,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         return;
     }
     let deckArray = [];
-    visualDeck.forEach(k => { if(k && k.name && !k.name.includes("(Nicht gefunden)")) { for(let i=0; i<(k.count||1); i++) deckArray.push(k); }});
+    // Sideboard-Karten gehören NICHT in die Bibliothek -- aus dem Sideboard
+    // wird nie gezogen. Vorher landeten sie mit im Stapel und verfälschten
+    // jede Starthand.
+    visualDeck.forEach(k => { if(k && k.name && !k.sideboard && !k.name.includes("(Nicht gefunden)")) { for(let i=0; i<(k.count||1); i++) deckArray.push(k); }});
     for (let i = deckArray.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [deckArray[i], deckArray[j]] = [deckArray[j], deckArray[i]];
@@ -530,7 +533,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   // Bibliothek legen, wie du Mulligans genommen hast.
   const doMulligan = () => {
     let deckArray = [];
-    visualDeck.forEach(k => { if(k && k.name && !k.name.includes("(Nicht gefunden)")) { for(let i=0; i<(k.count||1); i++) deckArray.push(k); }});
+    // Sideboard-Karten gehören NICHT in die Bibliothek -- aus dem Sideboard
+    // wird nie gezogen. Vorher landeten sie mit im Stapel und verfälschten
+    // jede Starthand.
+    visualDeck.forEach(k => { if(k && k.name && !k.sideboard && !k.name.includes("(Nicht gefunden)")) { for(let i=0; i<(k.count||1); i++) deckArray.push(k); }});
     for (let i = deckArray.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [deckArray[i], deckArray[j]] = [deckArray[j], deckArray[i]];
@@ -755,7 +761,8 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       "Spontanzauber & Hexereien": [], 
       Verzauberungen: [], 
       Länder: [],
-      Sonstige: []
+      Sonstige: [],
+      Sideboard: []
     };
     
     visualDeck.forEach(k => {
@@ -763,7 +770,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
        const t = (k.type || "").toLowerCase();
        const isNotFound = k.type === "Unbekannt" || !k.image || (k.name && k.name.includes("(Nicht gefunden)"));
        
-       if(isNotFound) grouped.Unbekannt.push(k);
+       // Sideboard bekommt einen eigenen Abschnitt -- vorher standen die
+       // Karten unsortiert zwischen den Hauptdeck-Karten.
+       if(k.sideboard && !isNotFound) { grouped.Sideboard.push(k); }
+       else if(isNotFound) grouped.Unbekannt.push(k);
        else if(mitCommander && t.includes('legendary creature') && grouped.Commander.length === 0) grouped.Commander.push(k);
        else if(t.includes('creature')) grouped.Kreaturen.push(k);
        else if(t.includes('planeswalker')) grouped.Planeswalker.push(k);

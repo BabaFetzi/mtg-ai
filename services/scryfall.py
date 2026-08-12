@@ -279,28 +279,42 @@ def parse_decklist(deck_liste: str) -> List[Dict[str, Any]]:
     Parst eine Deckliste im Format "1x Sol Ring" oder "1 Sol Ring".
 
     Ignoriert Kommentare (#, //) und Kategorie-Header (Zeilen die mit : enden).
-    Gibt eine Liste von Dicts mit 'count' und 'name' zurück.
+    Gibt eine Liste von Dicts mit 'count', 'name' und 'sideboard' zurück.
+
+    'sideboard' ist neu: Die Überschrift "Sideboard" wurde zwar übersprungen,
+    aber nicht gemerkt -- alle folgenden Karten zählten wie Hauptdeck-Karten.
+    Ein 60er-Deck mit 15er-Sideboard erschien dadurch in der Deck-Bibliothek als
+    "75 / 60+". Aufrufer, die den Schlüssel nicht auswerten, verhalten sich
+    unverändert.
     """
     lines = deck_liste.strip().split('\n')
     parsed = []
     metadata_headers = {"deck", "commander", "companion", "sideboard", "mainboard", "main"}
+    im_sideboard = False
     for line in lines:
         line = line.strip()
         if not line:
             continue
         # Kommentare und Kategorie-Header überspringen
         if line.startswith('#') or line.startswith('//') or line.lower().endswith(':'):
+            # "// Sideboard" ist die zweite verbreitete Schreibweise.
+            if re.match(r'^(?://|#)\s*side\s*board\b', line.lower()):
+                im_sideboard = True
+            elif re.match(r'^(?://|#)\s*\w+', line.lower()):
+                im_sideboard = False
             continue
         if line.lower() in metadata_headers:
+            im_sideboard = line.lower() == "sideboard"
             continue
         match = re.match(r'^(\d+)[xX]?\s+(.+)$', line)
         if match:
             parsed.append({
                 "count": int(match.group(1)),
                 "name": clean_card_name(match.group(2).strip()),
+                "sideboard": im_sideboard,
             })
         else:
-            parsed.append({"count": 1, "name": clean_card_name(line)})
+            parsed.append({"count": 1, "name": clean_card_name(line), "sideboard": im_sideboard})
     return parsed
 
 
