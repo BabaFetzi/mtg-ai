@@ -14,15 +14,53 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+# Mindestlänge für den Token-Schlüssel. HS256 arbeitet mit einem 256-Bit-
+# Geheimnis; alles darunter schwächt die Signatur messbar ab.
+MIN_SECRET_LAENGE = 32
+
+# In der Produktion darf ein fehlender Schlüssel den Start NICHT überleben.
+# Vorher war es nur eine Warnung -- und genau deshalb lief die Anwendung mit
+# einem flüchtigen Zufallsschlüssel: bei jedem Neustart wurden alle Anmeldungen
+# ungültig, und mit mehreren Arbeitsprozessen schlug die Anmeldung sporadisch
+# im laufenden Betrieb fehl, weil Worker A ein Token nicht prüfen konnte, das
+# Worker B ausgestellt hatte. Eine Warnung, die man überlesen kann, ist hier
+# keine Absicherung.
+GRANA_ENV = os.getenv("GRANA_ENV", "development").strip().lower()
+IST_PRODUKTION = GRANA_ENV in {"production", "prod", "produktion"}
+
+_SCHLUESSEL_HINWEIS = (
+    "Erzeuge einen Schlüssel mit\n"
+    "    python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+    "und trage ihn als JWT_SECRET_KEY in die .env ein."
+)
+
+SECRET_KEY = (os.getenv("JWT_SECRET_KEY") or "").strip()
+
 if not SECRET_KEY:
+    if IST_PRODUKTION:
+        raise RuntimeError(
+            "JWT_SECRET_KEY fehlt, GRANA_ENV steht aber auf Produktion. Ohne "
+            "festen Schlüssel wird jede Anmeldung beim nächsten Neustart "
+            "ungültig.\n" + _SCHLUESSEL_HINWEIS
+        )
     SECRET_KEY = secrets.token_hex(32)
     logger.warning(
-        "JWT_SECRET_KEY ist nicht gesetzt! Es wird ein zufälliger, "
-        "flüchtiger Schlüssel für diesen Prozess verwendet – bestehende Tokens "
-        "werden bei jedem Neustart ungültig und Tokens sind zwischen mehreren "
-        "Workern nicht kompatibel. Setze JWT_SECRET_KEY in der Produktionsumgebung!"
+        "JWT_SECRET_KEY ist nicht gesetzt! Es wird ein zufälliger, flüchtiger "
+        "Schlüssel für diesen Prozess verwendet – bestehende Anmeldungen werden "
+        "bei jedem Neustart ungültig und sind zwischen mehreren Workern nicht "
+        "kompatibel.\n%s", _SCHLUESSEL_HINWEIS,
     )
+elif len(SECRET_KEY) < MIN_SECRET_LAENGE:
+    if IST_PRODUKTION:
+        raise RuntimeError(
+            f"JWT_SECRET_KEY ist mit {len(SECRET_KEY)} Zeichen zu kurz "
+            f"(mindestens {MIN_SECRET_LAENGE}).\n" + _SCHLUESSEL_HINWEIS
+        )
+    logger.warning(
+        "JWT_SECRET_KEY ist mit %d Zeichen kürzer als die empfohlenen %d Zeichen.",
+        len(SECRET_KEY), MIN_SECRET_LAENGE,
+    )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 30
