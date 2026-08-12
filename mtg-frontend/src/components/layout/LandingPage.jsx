@@ -5,6 +5,21 @@ import { ChevronRight, Infinity, Compass, HelpCircle, Flame, RefreshCw, CheckCir
 function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
   const [showLoginDrawer, setShowLoginDrawer] = useState(false);
 
+  // Ist Scryfall langsam oder nicht erreichbar, zeigte der Browser bisher den
+  // rohen Alt-Text quer über das Layout -- auf der Startseite der erste
+  // Eindruck für jeden neuen Besucher. Statt dessen bleibt eine ruhige
+  // Kartenrückseite stehen.
+  const handleBildFehler = (e) => {
+    e.currentTarget.onerror = null;
+    e.currentTarget.removeAttribute('alt');
+    e.currentTarget.style.visibility = 'hidden';
+    const huelle = e.currentTarget.parentElement;
+    if (huelle) {
+      huelle.style.background =
+        'linear-gradient(150deg, #2C2A26 0%, #3B372F 45%, #24221F 100%)';
+    }
+  };
+
   // 3D Tilt Card Hover Effect
   const handleMouseMove = (e) => {
     const card = e.currentTarget;
@@ -80,18 +95,20 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
             </span>
           </div>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-            <button 
-              className="secondary-btn" 
+          {/* Abstand und Innenabstand schrumpfen mit: bei 320px (iPhone SE)
+              ragten die beiden Schaltflächen sonst 37px über den Rand. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(6px, 3vw, 20px)', flexShrink: 0 }}>
+            <button
+              className="secondary-btn"
               onClick={() => setShowLoginDrawer(true)}
-              style={{ padding: '8px 18px', fontSize: '0.85rem', background: 'transparent', color: 'var(--text-main)', cursor: 'pointer' }}
+              style={{ padding: '8px clamp(8px, 3vw, 18px)', fontSize: '0.85rem', background: 'transparent', color: 'var(--text-main)', cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               Anmelden
             </button>
-            <button 
-              className="primary-btn" 
+            <button
+              className="primary-btn"
               onClick={() => setShowLoginDrawer(true)}
-              style={{ padding: '8px 20px', fontSize: '0.85rem', background: 'var(--accent-color)', color: 'var(--accent-text)', borderRadius: '20px', cursor: 'pointer' }}
+              style={{ padding: '8px clamp(10px, 3.5vw, 20px)', fontSize: '0.85rem', background: 'var(--accent-color)', color: 'var(--accent-text)', borderRadius: '20px', cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               Registrieren
             </button>
@@ -100,24 +117,34 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
       </nav>
 
       {/* 2. HERO SECTION */}
+      {/* Der Hero war bei 390px Breite (iPhone 14/15) um 41px abgeschnitten:
+          das Raster stand fest auf 1.2fr/0.8fr, wodurch der Textspalte nur rund
+          174px blieben, und die Überschrift auf festen 4.2rem. Statt einen
+          Breakpoint daraufzusetzen ist beides jetzt flüssig -- die Spalten
+          brechen um, sobald sie unter 19rem fallen, und die Schriftgrössen
+          skalieren mit der Bildschirmbreite. */}
       <section style={{
         maxWidth: '1200px',
         margin: '0 auto',
-        padding: '120px 20px 80px 20px',
+        padding: 'clamp(48px, 10vw, 120px) 20px clamp(40px, 8vw, 80px) 20px',
         display: 'grid',
-        gridTemplateColumns: '1.2fr 0.8fr',
-        gap: '60px',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 19rem), 1fr))',
+        gap: 'clamp(32px, 5vw, 60px)',
         alignItems: 'center',
         boxSizing: 'border-box'
       }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '25px', textAlign: 'left' }}>
-          <h1 style={{ fontSize: '4.2rem', fontWeight: 800, lineHeight: 1.1, letterSpacing: '-0.03em', margin: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '25px', textAlign: 'left', minWidth: 0 }}>
+          <h1 style={{
+            fontSize: 'clamp(2.1rem, 7.5vw, 4.2rem)',
+            fontWeight: 800, lineHeight: 1.1, letterSpacing: '-0.03em', margin: 0,
+            overflowWrap: 'break-word', textWrap: 'balance'
+          }}>
             Beherrsche den Stack.<br />
             <span style={{ background: 'linear-gradient(135deg, #C4923E 0%, #B89324 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
               Optimiere dein Deck.
             </span>
           </h1>
-          <p style={{ fontSize: '1.25rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.6, maxWidth: '600px' }}>
+          <p style={{ fontSize: 'clamp(1rem, 3.2vw, 1.25rem)', color: 'var(--text-muted)', margin: 0, lineHeight: 1.6, maxWidth: '600px' }}>
             Schließe dich ambitionierten MTG-Spielern an. Analysiere deine Decks mit unserer KI-gestützten Rules-Engine, finde verborgene Combos und checke deine Deckliste auf Format-Konformität in Sekunden. Unfehlbar wie ein Pro Tour Judge.
           </p>
           <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginTop: '10px' }}>
@@ -139,7 +166,7 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
         </div>
 
         {/* Tactile 3D-Tilt Card Previews */}
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative', height: '400px' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative', height: 'clamp(280px, 45vw, 400px)', minWidth: 0 }}>
           
           {/* Card 1 Wrapper (Godo) */}
           <div style={{
@@ -166,7 +193,9 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
             >
               <img 
                 src="https://api.scryfall.com/cards/named?exact=Godo,%20Bandit%20Warlord&format=image" 
-                alt="Godo, Bandit Warlord" 
+                alt="Godo, Bandit Warlord"
+                loading="eager"
+                onError={handleBildFehler}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
               <div className="glare-overlay" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', opacity: 0, transition: 'opacity 0.1s ease' }} />
@@ -198,7 +227,9 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
             >
               <img 
                 src="https://api.scryfall.com/cards/named?exact=Helm%20of%20the%20Host&format=image" 
-                alt="Helm of the Host" 
+                alt="Helm of the Host"
+                loading="eager"
+                onError={handleBildFehler}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
               <div className="glare-overlay" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', opacity: 0, transition: 'opacity 0.1s ease' }} />
@@ -227,11 +258,13 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
 
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          // min(100%, …) statt fester 320px: bei einem 320px breiten Bildschirm
+          // ist nach dem Seitenrand weniger Platz, und die Kachel ragte hinaus.
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 20rem), 1fr))',
           gap: '40px'
         }}>
           {/* Feature 1 */}
-          <div className="content-card" style={{ padding: '40px', display: 'flex', flexDirection: 'column', gap: '20px', margin: 0 }}>
+          <div className="content-card" style={{ padding: 'clamp(24px, 5vw, 40px)', display: 'flex', flexDirection: 'column', gap: '20px', margin: 0, minWidth: 0 }}>
             <div style={{ color: '#C4923E', background: 'rgba(196, 146, 62, 0.1)', padding: '12px', borderRadius: '12px', width: 'fit-content' }}>
               <HelpCircle size={28} />
             </div>
@@ -242,7 +275,7 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
           </div>
 
           {/* Feature 2 */}
-          <div className="content-card" style={{ padding: '40px', display: 'flex', flexDirection: 'column', gap: '20px', margin: 0 }}>
+          <div className="content-card" style={{ padding: 'clamp(24px, 5vw, 40px)', display: 'flex', flexDirection: 'column', gap: '20px', margin: 0, minWidth: 0 }}>
             <div style={{ color: '#0071E3', background: 'rgba(0, 113, 227, 0.1)', padding: '12px', borderRadius: '12px', width: 'fit-content' }}>
               <Infinity size={28} />
             </div>
@@ -253,7 +286,7 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
           </div>
 
           {/* Feature 3 */}
-          <div className="content-card" style={{ padding: '40px', display: 'flex', flexDirection: 'column', gap: '20px', margin: 0 }}>
+          <div className="content-card" style={{ padding: 'clamp(24px, 5vw, 40px)', display: 'flex', flexDirection: 'column', gap: '20px', margin: 0, minWidth: 0 }}>
             <div style={{ color: '#30D158', background: 'rgba(48, 209, 88, 0.1)', padding: '12px', borderRadius: '12px', width: 'fit-content' }}>
               <Compass size={28} />
             </div>
@@ -322,12 +355,14 @@ function LandingPage({ onLoginSuccess, activeTheme, setActiveTheme }) {
       <section style={{
         maxWidth: '800px',
         margin: '0 auto',
-        padding: '120px 20px',
+        padding: 'clamp(56px, 12vw, 120px) 20px',
         textAlign: 'center',
         boxSizing: 'border-box'
       }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '30px', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '3rem', fontWeight: 800, margin: 0, letterSpacing: '-0.03em' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '30px', alignItems: 'center', minWidth: 0 }}>
+          {/* "Win-Rate" ist ein langes, nicht trennbares Wort -- bei 320px ragte
+              die Überschrift darüber hinaus. */}
+          <h2 style={{ fontSize: 'clamp(1.7rem, 6.5vw, 3rem)', fontWeight: 800, margin: 0, letterSpacing: '-0.03em', overflowWrap: 'break-word', textWrap: 'balance' }}>
             Bist du bereit, deine Win-Rate zu maximieren?
           </h2>
           <p style={{ fontSize: '1.2rem', color: 'var(--text-muted)', margin: 0, maxWidth: '600px', lineHeight: 1.6 }}>
