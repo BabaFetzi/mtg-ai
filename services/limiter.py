@@ -30,11 +30,16 @@ def _resolve_storage_uri():
         client = redis.from_url(redis_url, socket_timeout=1)
         client.ping()
         return redis_url
-    except Exception:
+    except Exception as fehler:
+        # Kein Traceback: "kein Redis vorhanden" ist der Normalfall einer lokalen
+        # Installation. Der volle Stack schrieb bei jedem Start 40 Zeilen ins Log
+        # und liess einen harmlosen Fallback wie einen Absturz aussehen -- echte
+        # Fehler gingen darin unter. Der Grund steht weiterhin in der Meldung.
         logger.warning(
-            "Redis für Rate-Limiter nicht erreichbar (Nutze In-Memory-Fallback, "
-            "nur für lokale Entwicklung geeignet, nicht für Multi-Worker-Deployments)",
-            exc_info=True,
+            "Redis für Rate-Limiter nicht erreichbar (%s: %s) – nutze "
+            "In-Memory-Fallback. Nur für lokale Entwicklung geeignet: bei "
+            "mehreren Arbeitsprozessen zählt jeder Prozess für sich.",
+            type(fehler).__name__, fehler,
         )
         return None
 
