@@ -88,6 +88,23 @@ class UserSession(Base):
     laeuft_ab = Column(DateTime, nullable=False)
     erstellt_am = Column(DateTime, default=datetime.utcnow)
 
+class PasswortReset(Base):
+    """Einmal-Token zum Zurücksetzen des Passworts.
+
+    Gespeichert wird NUR der SHA-256-Hash des Tokens. Wer die Datenbank liest,
+    kann daraus kein gültiges Token bauen -- dieselbe Überlegung wie beim
+    Passwort selbst. Ein Eintrag ist genau einmal brauchbar (benutzt_am) und
+    verfällt nach kurzer Zeit (laeuft_ab).
+    """
+    __tablename__ = 'passwort_resets'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    benutzername = Column(String(50), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    laeuft_ab = Column(DateTime, nullable=False)
+    benutzt_am = Column(DateTime, nullable=True)
+    erstellt_am = Column(DateTime, default=datetime.utcnow)
+
+
 class SynergyJob(Base):
     __tablename__ = 'synergy_jobs'
     job_id = Column(String(36), primary_key=True)

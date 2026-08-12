@@ -17,11 +17,13 @@ Abhängigkeiten:
     - schemas     → LoginData, UpdateRoleReq
 """
 
+import asyncio
+import hashlib
+import logging
 import os
 import re
 import time
 import urllib.parse
-import hashlib
 from typing import Optional
 
 import httpx
@@ -59,6 +61,8 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5175")
 # ======================================================================
 # Router-Instanz
 # ======================================================================
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/api",
     tags=["Auth"],
@@ -472,3 +476,198 @@ async def discord_callback(code: str):
         
         redirect_url = f"{FRONTEND_URL}/?status=success&user={username}&token={jwt_token}&role={role}"
         return RedirectResponse(redirect_url)
+
+
+# ======================================================================
+# Passwort vergessen / zurücksetzen
+# ======================================================================
+# Bis hierher gab es keinen Weg zurück ins eigene Konto: Wer sein Passwort
+# verlor, verlor seine Sammlung. Bei einem Bezahlprodukt ist das ein
+# garantierter Supportfall und ein Rückerstattungsgrund.
+#
+# Zwei Grundsätze prägen die Umsetzung:
+#
+# 1. KEINE Auskunft darüber, ob es ein Konto gibt. Beide Endpunkte antworten
+#    immer gleich. Sonst wird "Passwort vergessen" zum Werkzeug, um gültige
+#    E-Mail-Adressen und Benutzernamen durchzuprobieren.
+# 2. In der Datenbank steht nur der HASH des Tokens. Wer sie liest, kann daraus
+#    kein gültiges Token bauen -- dieselbe Überlegung wie beim Passwort.
+
+RESET_GUELTIG_MINUTEN = int(os.getenv("PASSWORT_RESET_MINUTEN", "60"))
+MIN_PASSWORT_LAENGE = 8
+
+# Immer dieselbe Antwort, egal ob es das Konto gibt.
+_RESET_ANTWORT = {
+    "erfolg": True,
+    "hinweis": (
+        "Falls ein Konto zu dieser Angabe existiert, haben wir eine E-Mail mit "
+        "einem Link zum Zurücksetzen verschickt. Der Link ist "
+        f"{RESET_GUELTIG_MINUTEN} Minuten gültig."
+    ),
+}
+
+
+class PasswortVergessenReq(BaseModel):
+    # Benutzername ODER E-Mail -- Leute merken sich mal das eine, mal das andere.
+    kennung: str
+
+
+class PasswortZuruecksetzenReq(BaseModel):
+    token: str
+    neues_passwort: str
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _reset_mailtext(benutzername: str, link: str) -> tuple:
+    text = (
+        f"Hallo {benutzername},\n\n"
+        "für dein Grana-Konto wurde das Zurücksetzen des Passworts angefordert.\n"
+        "Über diesen Link vergibst du ein neues Passwort:\n\n"
+        f"{link}\n\n"
+        f"Der Link ist {RESET_GUELTIG_MINUTEN} Minuten gültig und funktioniert nur einmal.\n\n"
+        "Warst du das nicht, kannst du diese Nachricht ignorieren -- dein "
+        "Passwort bleibt dann unverändert.\n\n"
+        "Grana"
+    )
+    html = (
+        f"<p>Hallo {benutzername},</p>"
+        "<p>für dein Grana-Konto wurde das Zurücksetzen des Passworts angefordert.</p>"
+        f'<p><a href="{link}">Neues Passwort vergeben</a></p>'
+        f"<p>Der Link ist {RESET_GUELTIG_MINUTEN} Minuten gültig und funktioniert nur einmal.</p>"
+        "<p>Warst du das nicht, kannst du diese Nachricht ignorieren – dein "
+        "Passwort bleibt dann unverändert.</p>"
+        "<p>Grana</p>"
+    )
+    return text, html
+
+
+@router.post(
+    "/passwort/vergessen",
+    summary="Zurücksetzen des Passworts anfordern",
+    description="Verschickt einen Einmal-Link. Antwortet immer gleich, "
+                "unabhängig davon, ob das Konto existiert.",
+)
+async def passwort_vergessen(req: PasswortVergessenReq, request: Request):
+    from datetime import datetime, timedelta
+    import secrets as _secrets
+    from services.mailer import sende_mail, MailVersandFehler
+
+    kennung = (req.kennung or "").strip()
+    if not kennung:
+        return _RESET_ANTWORT
+
+    async with get_db_session() as session:
+        treffer = await session.execute(
+            text(
+                "SELECT benutzername, email FROM nutzer "
+                "WHERE lower(benutzername) = lower(:k) OR lower(email) = lower(:k)"
+            ),
+            {"k": kennung},
+        )
+        nutzer = treffer.mappings().first()
+
+        # Kein Konto oder kein hinterlegtes Postfach: identische Antwort, keine
+        # Mail. Der Aufrufer erfährt daraus nichts.
+        if not nutzer or not (nutzer["email"] or "").strip():
+            return _RESET_ANTWORT
+
+        benutzername = nutzer["benutzername"]
+
+        # Ältere, noch offene Anfragen entwerten -- es soll immer nur ein
+        # gültiger Link im Umlauf sein.
+        await session.execute(
+            text(
+                "UPDATE passwort_resets SET benutzt_am = :jetzt "
+                "WHERE benutzername = :name AND benutzt_am IS NULL"
+            ),
+            {"jetzt": datetime.utcnow(), "name": benutzername},
+        )
+
+        roh_token = _secrets.token_urlsafe(32)
+        await session.execute(
+            text(
+                "INSERT INTO passwort_resets (benutzername, token_hash, laeuft_ab, erstellt_am) "
+                "VALUES (:name, :hash, :ablauf, :jetzt)"
+            ),
+            {
+                "name": benutzername,
+                "hash": _token_hash(roh_token),
+                "ablauf": datetime.utcnow() + timedelta(minutes=RESET_GUELTIG_MINUTEN),
+                "jetzt": datetime.utcnow(),
+            },
+        )
+
+    link = f"{FRONTEND_URL.rstrip('/')}/passwort-neu?token={urllib.parse.quote(roh_token)}"
+    text_teil, html_teil = _reset_mailtext(benutzername, link)
+    try:
+        await asyncio.to_thread(
+            sende_mail, nutzer["email"], "Grana: Passwort zurücksetzen", text_teil, html_teil
+        )
+    except MailVersandFehler:
+        # Auch hier keine abweichende Antwort -- sonst verrät der Fehlerfall,
+        # dass es das Konto gibt. Im Log steht der Grund vollständig.
+        logger.error("Passwort-Reset-Mail konnte nicht zugestellt werden.", exc_info=True)
+
+    return _RESET_ANTWORT
+
+
+@router.post(
+    "/passwort/zuruecksetzen",
+    summary="Neues Passwort mit Einmal-Token setzen",
+)
+async def passwort_zuruecksetzen(req: PasswortZuruecksetzenReq):
+    from datetime import datetime
+
+    neues = req.neues_passwort or ""
+    if len(neues) < MIN_PASSWORT_LAENGE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Das Passwort muss mindestens {MIN_PASSWORT_LAENGE} Zeichen lang sein.",
+        )
+
+    async with get_db_session() as session:
+        # Gültigkeit in SQL prüfen, nicht in Python: SQLite liefert die
+        # Zeitspalte als Zeichenkette zurück, PostgreSQL als datetime. Ein
+        # Vergleich im Python-Code funktioniert deshalb nur auf einer der
+        # beiden Datenbanken -- die Datenbank kennt ihre eigenen Typen.
+        treffer = await session.execute(
+            text(
+                "SELECT id, benutzername FROM passwort_resets "
+                "WHERE token_hash = :hash AND benutzt_am IS NULL AND laeuft_ab > :jetzt"
+            ),
+            {"hash": _token_hash((req.token or "").strip()), "jetzt": datetime.utcnow()},
+        )
+        eintrag = treffer.mappings().first()
+
+        # Unbekannt, schon benutzt oder abgelaufen -- alles dieselbe Meldung.
+        if not eintrag:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Dieser Link ist nicht mehr gültig. Fordere bitte einen neuen an.",
+            )
+
+        benutzername = eintrag["benutzername"]
+
+        await session.execute(
+            text("UPDATE nutzer SET passwort_hash = :hash WHERE benutzername = :name"),
+            {"hash": bcrypt_hash(neues), "name": benutzername},
+        )
+        await session.execute(
+            text("UPDATE passwort_resets SET benutzt_am = :jetzt WHERE id = :id"),
+            {"jetzt": datetime.utcnow(), "id": eintrag["id"]},
+        )
+        # Wer das Passwort zurücksetzt, will in aller Regel auch bestehende
+        # Sitzungen loswerden -- etwa weil jemand anderes Zugriff hatte.
+        await session.execute(
+            text("DELETE FROM sessions WHERE benutzername = :name"),
+            {"name": benutzername},
+        )
+
+    logger.info("Passwort zurückgesetzt für %s", benutzername)
+    return {
+        "erfolg": True,
+        "hinweis": "Dein Passwort wurde geändert. Du kannst dich jetzt anmelden.",
+    }

@@ -20,6 +20,7 @@ import Footer from './components/layout/Footer'
 import Impressum from './components/legal/Impressum'
 import Datenschutz from './components/legal/Datenschutz'
 import AGB from './components/legal/AGB'
+import PasswortNeu from './components/auth/PasswortNeu'
 
 const globalStyles = `
 /* --- THEME VARIABLES (Harmonisiert & Pro) --- */
@@ -625,7 +626,7 @@ function App() {
   // Rechtsseiten sind oeffentlich: sie muessen auch ohne Anmeldung erreichbar
   // sein. Frueher landete jeder ausgeloggte Aufruf auf der Landing Page -- ein
   // Link auf /impressum haette also ins Leere gefuehrt.
-  const RECHTSSEITEN = ['/impressum', '/datenschutz', '/agb'];
+  const RECHTSSEITEN = ['/impressum', '/datenschutz', '/agb', '/passwort-neu'];
   if (RECHTSSEITEN.includes(location.pathname)) {
     return (
       <>
@@ -634,6 +635,7 @@ function App() {
           <Route path="/impressum" element={<Impressum />} />
           <Route path="/datenschutz" element={<Datenschutz />} />
           <Route path="/agb" element={<AGB />} />
+          <Route path="/passwort-neu" element={<PasswortNeu />} />
         </Routes>
         <Footer />
       </>
