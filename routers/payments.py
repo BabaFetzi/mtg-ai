@@ -11,8 +11,10 @@ Abhängigkeiten:
     - schemas.models  → CheckoutReq
 """
 
+import asyncio
 import logging
 import os
+import time
 import urllib.parse
 from typing import Optional
 
@@ -23,6 +25,7 @@ from sqlalchemy import text
 
 from auth import get_current_user
 from database import get_db_session
+from services.cache import scryfall_cache
 from schemas.models import CheckoutReq, VerifySessionReq
 
 logger = logging.getLogger(__name__)
@@ -47,6 +50,38 @@ def get_stripe_val(obj, key, default=None):
         return obj[key]
     except Exception:
         return getattr(obj, key, default)
+
+# Der Abo-Preis ändert sich vielleicht einmal im Jahr -- das Frontend fragt ihn
+# aber bei jedem Seitenaufbau ab, und gleich aus zwei Komponenten (Preisseite und
+# Upgrade-Dialog, der dauerhaft in der App hängt). Ohne Zwischenspeicher wurde
+# daraus je Aufruf ein echter Stripe-Aufruf: im Log eines einzigen Besuchs über
+# ein Dutzend. Bei mehreren tausend Nutzern wäre das ein Vielfaches der
+# Stripe-Ratengrenze -- und jeder Aufruf verzögert den Seitenaufbau.
+PREIS_CACHE_SEKUNDEN = int(os.getenv("PREMIUM_PRICE_CACHE_SECONDS", "600"))
+_PREIS_CACHE_KEY = "checkout:preis:v1"
+
+
+def _preis_cache_schluessel(price_id: str) -> str:
+    # Die Preis-ID gehört in den Schlüssel: wird in der Konfiguration ein anderer
+    # Preis hinterlegt, ist der alte Eintrag damit sofort gegenstandslos statt
+    # noch zehn Minuten weiterzuleben.
+    return f"{_PREIS_CACHE_KEY}:{price_id}"
+
+
+def _preis_aus_cache(price_id: str):
+    eintrag = scryfall_cache.get(_preis_cache_schluessel(price_id))
+    if not isinstance(eintrag, dict):
+        return None
+    if time.time() - float(eintrag.get("zeit") or 0) >= PREIS_CACHE_SEKUNDEN:
+        return None
+    return eintrag.get("daten")
+
+
+def _preis_merken(price_id: str, daten: dict) -> None:
+    scryfall_cache.set(
+        _preis_cache_schluessel(price_id), {"daten": daten, "zeit": time.time()}
+    )
+
 
 def _fallback_price():
     """Operator-konfigurierbarer Anzeige-Preis, falls Stripe (noch) nicht vollständig
@@ -89,23 +124,36 @@ async def get_checkout_price():
     Umgebung (PREMIUM_PRICE_DISPLAY) zurückgegeben, damit die Preisseite nicht
     "Preis nicht verfügbar" anzeigt.
     """
+    # Konfiguration ZUERST prüfen, dann erst den Zwischenspeicher: Fehlt der
+    # Schlüssel oder die Preis-ID, darf kein zuvor gemerkter Preis mehr
+    # ausgeliefert werden.
     stripe_key = os.getenv("STRIPE_SECRET_KEY")
     price_id = os.getenv("STRIPE_PRICE_ID")
     if not stripe_key or not price_id:
         return _fallback_price() or {"konfiguriert": False}
 
+    gecacht = _preis_aus_cache(price_id)
+    if gecacht is not None:
+        return gecacht
+
     try:
         stripe.api_key = stripe_key
-        price = stripe.Price.retrieve(price_id)
+        # Der Aufruf geht über das Netz und blockiert sonst den Event-Loop für
+        # alle anderen Anfragen.
+        price = await asyncio.to_thread(stripe.Price.retrieve, price_id)
         betrag = (price.unit_amount or 0) / 100
         waehrung = (price.currency or "").upper()
         intervall = price.recurring.interval if price.recurring else "month"
-        return {
+        ergebnis = {
             "konfiguriert": True,
             "betrag": betrag,
             "waehrung": waehrung,
             "intervall": intervall,
         }
+        # Nur Erfolge merken: eine Störung bei Stripe soll sich nicht für zehn
+        # Minuten festsetzen.
+        _preis_merken(price_id, ergebnis)
+        return ergebnis
     except Exception as e:
         logger.exception("Error fetching Stripe price")
         return _fallback_price() or {"konfiguriert": False, "error": str(e)}

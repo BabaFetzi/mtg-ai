@@ -372,3 +372,84 @@ async def test_verify_session_rejects_unpaid(mock_get_db, monkeypatch):
 async def test_verify_session_requires_auth():
     resp = client.post("/api/checkout/verify-session", json={"session_id": "cs_test_123"})
     assert resp.status_code == 401
+
+
+# ============================================================================
+# Zwischenspeicher für den Abo-Preis
+#
+# Im Log eines einzigen Besuchs standen über ein Dutzend Aufrufe von
+# /api/checkout/price -- und JEDER löste einen echten Stripe-Aufruf aus. Das
+# Frontend fragt aus zwei Komponenten (Preisseite und dem dauerhaft
+# eingehängten Upgrade-Dialog), also bei jedem Seitenaufbau mehrfach. Bei
+# mehreren tausend Nutzern wäre das ein Vielfaches der Stripe-Ratengrenze, und
+# jeder Aufruf verzögert den Seitenaufbau. Der Preis ändert sich dagegen
+# vielleicht einmal im Jahr.
+# ============================================================================
+def _preis_cache_leeren():
+    from services.cache import scryfall_cache
+    from routers.payments import _preis_cache_schluessel
+    for pid in ("price_dummy", "price_anders"):
+        scryfall_cache.delete(_preis_cache_schluessel(pid))
+
+
+@pytest.mark.asyncio
+async def test_wiederholte_preisabfragen_kosten_nur_einen_stripe_aufruf(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_dummy")
+    _preis_cache_leeren()
+
+    fake_price = MagicMock()
+    fake_price.unit_amount = 390
+    fake_price.currency = "chf"
+    fake_price.recurring.interval = "month"
+
+    with patch('stripe.Price.retrieve', return_value=fake_price) as mock_retrieve:
+        antworten = [client.get("/api/checkout/price") for _ in range(12)]
+
+    assert all(a.status_code == 200 for a in antworten)
+    # Alle zwölf liefern dasselbe Ergebnis ...
+    assert all(a.json()["betrag"] == 3.90 for a in antworten)
+    # ... aber Stripe wurde genau einmal gefragt.
+    assert mock_retrieve.call_count == 1, (
+        f"Erwartet: 1 Stripe-Aufruf für 12 Anfragen, tatsächlich: {mock_retrieve.call_count}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_geaenderte_preis_id_wird_nicht_aus_dem_cache_beantwortet(monkeypatch):
+    """Ein Wechsel der Preis-ID muss sofort durchschlagen, nicht erst nach
+    Ablauf des Zwischenspeichers."""
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    _preis_cache_leeren()
+
+    alt = MagicMock(unit_amount=390, currency="chf")
+    alt.recurring.interval = "month"
+    neu = MagicMock(unit_amount=990, currency="chf")
+    neu.recurring.interval = "month"
+
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_dummy")
+    with patch('stripe.Price.retrieve', return_value=alt):
+        assert client.get("/api/checkout/price").json()["betrag"] == 3.90
+
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_anders")
+    with patch('stripe.Price.retrieve', return_value=neu):
+        assert client.get("/api/checkout/price").json()["betrag"] == 9.90
+
+
+@pytest.mark.asyncio
+async def test_stoerung_bei_stripe_setzt_sich_nicht_fest(monkeypatch):
+    """Nur Erfolge werden gemerkt -- sonst würde eine kurze Störung bei Stripe
+    zehn Minuten lang 'Preis nicht verfügbar' zementieren."""
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_dummy")
+    monkeypatch.delenv("PREMIUM_PRICE_DISPLAY", raising=False)
+    _preis_cache_leeren()
+
+    with patch('stripe.Price.retrieve', side_effect=RuntimeError("Stripe down")):
+        assert client.get("/api/checkout/price").json()["konfiguriert"] is False
+
+    gut = MagicMock(unit_amount=390, currency="chf")
+    gut.recurring.interval = "month"
+    with patch('stripe.Price.retrieve', return_value=gut) as mock_retrieve:
+        assert client.get("/api/checkout/price").json()["betrag"] == 3.90
+        assert mock_retrieve.call_count == 1, "Nach der Störung muss neu gefragt werden"

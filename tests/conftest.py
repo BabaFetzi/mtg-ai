@@ -37,10 +37,11 @@ def isolierter_cache():
 
     # Module, die das Singleton direkt importiert haben, mitziehen.
     import importlib
-    betroffen = [
-        "services.scryfall", "services.card_query_tool",
-        "routers.ai", "routers.cards", "routers.decks",
-    ]
+    # Jedes Modul, das `from services.cache import scryfall_cache` macht, hält
+    # eine eigene Referenz auf das Singleton und muss hier stehen. Fehlt eines,
+    # schreibt es im Test in die ECHTE Cache-Datei -- so fiel routers.payments
+    # auf, als der Abo-Preis zwischengespeichert wurde.
+    betroffen = betroffen_module()
     originale = {}
     for name in betroffen:
         try:
@@ -70,3 +71,40 @@ def leerer_cache_pro_test(isolierter_cache):
     except Exception:
         pass
     yield
+
+
+def test_conftest_kennt_alle_module_mit_eigener_cache_referenz():
+    """Wächter gegen eine veraltete Liste oben.
+
+    Jedes Modul mit `from services.cache import scryfall_cache` hält eine
+    eigene Referenz auf das Singleton. Fehlt es in `betroffen`, schreibt es im
+    Test in die ECHTE Cache-Datei -- ein Testlauf kann dann einem späteren
+    echten Nutzer eine erfundene Antwort ausliefern. Genau so fiel
+    routers.payments auf.
+    """
+    import pathlib
+    import re
+
+    wurzel = pathlib.Path(__file__).resolve().parent.parent
+    gefunden = set()
+    for datei in list((wurzel / "routers").glob("*.py")) + list((wurzel / "services").glob("*.py")):
+        text = datei.read_text(encoding="utf-8")
+        if re.search(r"^from services\.cache import .*scryfall_cache", text, re.M):
+            gefunden.add(f"{datei.parent.name}.{datei.stem}")
+
+    fehlend = gefunden - set(betroffen_module())
+    assert not fehlend, (
+        "Diese Module halten eine eigene scryfall_cache-Referenz, stehen aber "
+        f"nicht in der Liste in conftest.py: {sorted(fehlend)}"
+    )
+
+
+def betroffen_module():
+    """Die Liste aus isolierter_cache -- hier einmal zentral, damit der Wächter
+    oben sie prüfen kann."""
+    return [
+        "services.scryfall", "services.card_query_tool",
+        "services.multilingual_search",
+        "routers.ai", "routers.cards", "routers.collection",
+        "routers.decks", "routers.payments",
+    ]
