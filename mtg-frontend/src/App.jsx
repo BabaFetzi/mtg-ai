@@ -16,6 +16,10 @@ import PremiumUpgradeModal from './components/premium/PremiumUpgradeModal'
 import LandingPage from './components/layout/LandingPage'
 import MobileCamera from './components/playfield/MobileCamera'
 import PlayfieldView from './components/playfield/PlayfieldView'
+import Footer from './components/layout/Footer'
+import Impressum from './components/legal/Impressum'
+import Datenschutz from './components/legal/Datenschutz'
+import AGB from './components/legal/AGB'
 
 const globalStyles = `
 /* --- THEME VARIABLES (Harmonisiert & Pro) --- */
@@ -618,6 +622,24 @@ function App() {
   // Geteilte Decks sind öffentlich (read-only) und dürfen ohne Login geöffnet werden.
   const isSharedDeckView = location.pathname.startsWith('/shared/decks/');
 
+  // Rechtsseiten sind oeffentlich: sie muessen auch ohne Anmeldung erreichbar
+  // sein. Frueher landete jeder ausgeloggte Aufruf auf der Landing Page -- ein
+  // Link auf /impressum haette also ins Leere gefuehrt.
+  const RECHTSSEITEN = ['/impressum', '/datenschutz', '/agb'];
+  if (RECHTSSEITEN.includes(location.pathname)) {
+    return (
+      <>
+        <style>{globalStyles}</style>
+        <Routes>
+          <Route path="/impressum" element={<Impressum />} />
+          <Route path="/datenschutz" element={<Datenschutz />} />
+          <Route path="/agb" element={<AGB />} />
+        </Routes>
+        <Footer />
+      </>
+    );
+  }
+
   if (isSharedDeckView) {
     return (
       <>
@@ -638,6 +660,7 @@ function App() {
           activeTheme={activeTheme} 
           setActiveTheme={setActiveTheme} 
         />
+        <Footer />
       </>
     );
   }
@@ -675,6 +698,7 @@ function App() {
           )}
         </Routes>
       </main>
+      {!isCameraView && <Footer />}
       {!isCameraView && (
         <>
           <JudgeWidget open={isJudgeOpen} setOpen={setIsJudgeOpen} currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />
