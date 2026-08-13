@@ -808,7 +808,13 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                          onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k?.name, "Portfolio"); }}
                        />
                        <div style={{ flexGrow: 1 }}>
-                         <div style={{ fontWeight: 600, fontSize: '1.05rem', color: 'var(--text-main)' }}>{k?.name}</div>
+                         <div style={{ fontWeight: 600, fontSize: '1.05rem', color: 'var(--text-main)' }}>
+                           {k?.name}
+                           {/* Foils sind ein Vielfaches wert -- die Ausführung
+                               muss auf einen Blick erkennbar sein, sonst ist der
+                               Sammlungswert nicht nachvollziehbar. */}
+                           {k?.foil && <span title="Foil-Ausführung" style={{ marginLeft: '8px', color: 'var(--accent-color)', fontWeight: 700 }}>✦ Foil</span>}
+                         </div>
                          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>In: {k?.albumName}</div>
                        </div>
                        <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--price-color)' }}>{formatEuro(k?.livePreis || k?.preis)}</div>
@@ -862,7 +868,10 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                       onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(karte?.name, "Karte"); }}
                     />
                    <span style={{fontWeight: 600, fontSize: '0.95rem', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '5px'}} title={karte?.name}>{karte?.name}</span>
-                   <span className="gallery-price-tag" style={{color: 'var(--text-main)', background: 'var(--bg-main)'}}>{formatEuro(karte?.livePreis || karte?.preis)}</span>
+                   <span className="gallery-price-tag" style={{color: 'var(--text-main)', background: 'var(--bg-main)'}}>
+                     {karte?.foil && <span title="Foil-Ausführung" style={{color: 'var(--accent-color)', marginRight: '4px'}}>✦</span>}
+                     {formatEuro(karte?.livePreis || karte?.preis)}
+                   </span>
                  </div>
                )})}
              </div>

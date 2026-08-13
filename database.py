@@ -66,6 +66,12 @@ class Collection(Base):
     kartentyp = Column(String(100), nullable=True)
     anzahl = Column(Integer, default=1)
     zustand = Column(String(20), default='NM')
+    # Foil oder nicht. Ohne dieses Merkmal war der Sammlungswert angreifbar:
+    # die Preisauswahl fiel von 'eur' auf 'eur_foil' durch, sodass eine ganz
+    # normale Karte mit dem Foil-Preis bewertet werden konnte -- bei begehrten
+    # Karten schnell Faktor fünf. NULL wird überall wie False behandelt, damit
+    # bestehende Einträge ohne Migrationsschritt weiterlaufen.
+    foil = Column(Boolean, default=False)
     hinzugefuegt_am = Column(DateTime, default=datetime.utcnow)
 
 class Deck(Base):
@@ -154,6 +160,40 @@ async def init_db():
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sammlung_user_album ON sammlung_alben (benutzername, album_name)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sammlung_karten_name ON sammlung_alben (karten_name)"))
         await conn.execute(text("CREATE TABLE IF NOT EXISTS import_jobs (job_id TEXT PRIMARY KEY, status TEXT, result TEXT, error TEXT, erstellt_am TIMESTAMP)"))
+
+        # create_all legt nur FEHLENDE Tabellen an, keine fehlenden Spalten.
+        # Bestehende Installationen brauchen deshalb einen ausdrücklichen
+        # Schritt, sonst schlägt jeder Zugriff auf die neue Spalte fehl.
+        await _spalte_ergaenzen(conn, "sammlung_alben", "foil", "BOOLEAN DEFAULT 0")
+
+
+async def _spalte_ergaenzen(conn, tabelle: str, spalte: str, definition: str) -> None:
+    """Ergänzt eine Spalte, falls sie noch fehlt. Idempotent.
+
+    Bewusst über die vorhandenen Spalten geprüft statt über ein try/except:
+    ein verschlucktes ALTER TABLE würde einen echten Fehler (falsche Rechte,
+    Tippfehler in der Definition) genauso stillschweigend übergehen wie den
+    harmlosen Fall "gibt es schon".
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    def _vorhandene_spalten(sync_conn):
+        return {s["name"] for s in sa_inspect(sync_conn).get_columns(tabelle)}
+
+    try:
+        spalten = await conn.run_sync(_vorhandene_spalten)
+    except Exception:
+        logger.warning("Konnte Spalten von %s nicht lesen -- Migration übersprungen.", tabelle)
+        return
+
+    if spalte in spalten:
+        return
+
+    # PostgreSQL kennt kein 0/1 für BOOLEAN.
+    if conn.dialect.name == "postgresql":
+        definition = definition.replace("DEFAULT 0", "DEFAULT FALSE")
+    await conn.execute(text(f"ALTER TABLE {tabelle} ADD COLUMN {spalte} {definition}"))
+    logger.info("Spalte %s.%s ergänzt.", tabelle, spalte)
 
 async def get_db():
     async with async_session() as session:

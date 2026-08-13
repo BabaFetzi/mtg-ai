@@ -337,17 +337,33 @@ def best_market_price(preise: List[str]) -> str:
     return f"{min(werte):.2f}" if werte else "0.00"
 
 
-def _pick_eur(prices: dict) -> str | None:
-    """Wählt einen realen EUR-Preis aus einem Scryfall prices-Objekt (eur → eur_foil
-    → eur_etched). Gibt None zurück, wenn keiner der Werte gesetzt ist -- so lässt
-    sich ein echtes Fehlen von einem tatsächlichen 0-Preis unterscheiden."""
+def preis_fuer_variante(prices: dict, foil: bool = False) -> str | None:
+    """Wählt den EUR-Preis passend zur AUSFÜHRUNG der Karte.
+
+    Vorher fiel die Auswahl der Reihe nach über eur -> eur_foil -> eur_etched
+    durch. Für eine Edition ohne Normalpreis wurde damit der FOIL-Preis für eine
+    normale Karte angesetzt -- bei begehrten Karten schnell Faktor fünf. Weil
+    die Sammlung bis dahin gar kein Foil-Merkmal kannte, fiel das nirgends auf.
+
+    Jetzt bleibt jede Ausführung bei ihren eigenen Preisen:
+    - normal: nur `eur`
+    - foil:   `eur_foil`, ersatzweise `eur_etched` (beides sind Folienausgaben)
+
+    Gibt None zurück, wenn für die Ausführung kein Preis vorliegt -- so lässt
+    sich ein echtes Fehlen von einem tatsächlichen 0-Preis unterscheiden.
+    """
     if not prices:
         return None
-    for key in ("eur", "eur_foil", "eur_etched"):
+    for key in (("eur_foil", "eur_etched") if foil else ("eur",)):
         val = prices.get(key)
         if val:
             return val
     return None
+
+
+def _pick_eur(prices: dict) -> str | None:
+    """Normalpreis -- eigener Name, weil viele Stellen ihn so aufrufen."""
+    return preis_fuer_variante(prices, foil=False)
 
 
 def _extract_card_info(card_data: dict) -> Dict[str, Any]:

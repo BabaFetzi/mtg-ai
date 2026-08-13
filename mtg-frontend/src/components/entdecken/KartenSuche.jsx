@@ -25,6 +25,9 @@ function KartenSuche({ currentUser }) {
   const [existingAlben, setExistingAlben] = useState([]);
   const [albumMode, setAlbumMode] = useState("select");
   const [albumName, setAlbumName] = useState("");
+  // Standard ist die normale Ausführung -- sie ist die häufigere, und eine
+  // fälschlich als Foil geführte Karte verfälscht den Sammlungswert nach oben.
+  const [istFoil, setIstFoil] = useState(false);
   const [loadedImages, setLoadedImages] = useState({});
   const [popularTags, setPopularTags] = useState([]);
   const [nichtGefunden, setNichtGefunden] = useState(null);
@@ -91,7 +94,7 @@ function KartenSuche({ currentUser }) {
     try {
       const res = await fetch(`/api/sammlung/hinzufuegen`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: speicherPreis })
+          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: speicherPreis, foil: istFoil })
       });
       const data = await res.json();
       if (data && data.erfolg) { 
@@ -378,6 +381,21 @@ function KartenSuche({ currentUser }) {
                       )}
                       <button className="primary-btn" style={{padding: '14px 35px'}} onClick={handleSichernKlick}>Sichern</button>
                     </div>
+
+                    {/* Die Ausführung bestimmt den Preis: Foils sind ein
+                        Vielfaches wert. Ohne diese Angabe wurde jede Karte als
+                        normal bewertet -- und über den früheren Fall-through in
+                        der Preisauswahl konnte umgekehrt eine normale Karte den
+                        Foil-Preis bekommen. */}
+                    <label style={{display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px', cursor: 'pointer', fontSize: '0.92rem', color: 'var(--text-muted)'}}>
+                      <input
+                        type="checkbox"
+                        checked={istFoil}
+                        onChange={e => setIstFoil(e.target.checked)}
+                        style={{width: '18px', height: '18px', cursor: 'pointer'}}
+                      />
+                      <span>Foil-Ausführung {istFoil && <strong style={{color: 'var(--accent-color)'}}>✦</strong>}</span>
+                    </label>
 
                     <button className="secondary-btn" style={{padding: '20px', height: '100%', borderRadius: '20px', border: '1px solid var(--border-color)', background: 'var(--bg-card)'}} onClick={handleWunschlisteKlick}>
                         <Icons.Heart /> Auf Wunschliste

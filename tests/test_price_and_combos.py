@@ -40,12 +40,36 @@ def test_best_market_price_handles_comma_decimal():
     assert best_market_price(["1,21"]) == "1.21"
 
 
-def test_pick_eur_prefers_eur_then_foil_then_none():
+def test_normalpreis_greift_nie_auf_foil_zurueck():
+    """Korrigiert eine Erwartung, die den Fehler festhielt.
+
+    Bisher fiel die Auswahl von eur auf eur_foil und eur_etched durch. Für eine
+    Edition ohne Normalpreis wurde damit der FOIL-Preis für eine ganz normale
+    Karte angesetzt -- bei begehrten Karten schnell Faktor fünf. Der alte Test
+    verlangte genau das ("eur: None, eur_foil: 9.00" -> "9.00") und schrieb den
+    Fehler damit fest.
+
+    Fehlt der Normalpreis, ist die richtige Antwort "kein Preis bekannt". Für
+    diesen Fall gibt es die Anreicherung über den günstigsten Papier-Print
+    (siehe _build_card_info) -- und die vergleicht Normalpreise mit Normalpreisen.
+    """
     assert _pick_eur({"eur": "5.00", "eur_foil": "9.00"}) == "5.00"
-    assert _pick_eur({"eur": None, "eur_foil": "9.00"}) == "9.00"
-    assert _pick_eur({"eur": None, "eur_foil": None, "eur_etched": "3.00"}) == "3.00"
+    assert _pick_eur({"eur": None, "eur_foil": "9.00"}) is None
+    assert _pick_eur({"eur": None, "eur_foil": None, "eur_etched": "3.00"}) is None
     assert _pick_eur({"eur": None, "eur_foil": None}) is None
     assert _pick_eur({}) is None
+
+
+def test_foilpreis_greift_nie_auf_den_normalpreis_zurueck():
+    """Die Gegenrichtung ist genauso wichtig: Eine Foil-Karte darf nicht mit dem
+    (meist deutlich niedrigeren) Normalpreis bewertet werden."""
+    from services.scryfall import preis_fuer_variante
+
+    assert preis_fuer_variante({"eur": "5.00", "eur_foil": "9.00"}, foil=True) == "9.00"
+    assert preis_fuer_variante({"eur": "5.00", "eur_foil": None}, foil=True) is None
+    # Etched ist ebenfalls eine Folienausgabe und darf einspringen.
+    assert preis_fuer_variante({"eur": "5.00", "eur_etched": "12.00"}, foil=True) == "12.00"
+    assert preis_fuer_variante({}, foil=True) is None
 
 
 # ======================================================================

@@ -33,7 +33,7 @@ from sqlalchemy import text
 
 from auth import get_current_user
 from database import get_db_session, check_user_premium
-from services.scryfall import fetch_card_details_cached
+from services.scryfall import fetch_card_details_cached, preis_fuer_variante
 
 
 # ======================================================================
@@ -169,10 +169,37 @@ logger = logging.getLogger(__name__)
 _SAMMLUNG_INSERT_SQL = (
     "INSERT INTO sammlung_alben "
     "(benutzername, karten_name, album_name, bild_url, preis, "
-    " edition, seltenheit, farben, manakosten, kartentyp) "
+    " edition, seltenheit, farben, manakosten, kartentyp, foil) "
     "VALUES (:user, :name, :album, :url, :price, "
-    " :edition, :seltenheit, :farben, :manakosten, :kartentyp)"
+    " :edition, :seltenheit, :farben, :manakosten, :kartentyp, :foil)"
 )
+
+
+def ist_foil(row) -> bool:
+    """NULL wie False lesen -- Zeilen aus der Zeit vor der Foil-Spalte haben
+    keinen Wert und sind normale Karten."""
+    try:
+        return bool(row["foil"])
+    except (KeyError, IndexError, TypeError):
+        return False
+
+
+def live_preis_fuer(card_info: Optional[Dict[str, Any]], row, ersatz) -> str:
+    """Aktueller Marktpreis passend zur Ausführung dieser Zeile.
+
+    Vorher wurde immer card_info["price"] genommen -- also der Normalpreis,
+    auch für eine Foil-Karte. Damit war der Sammlungswert einer Foil-Sammlung
+    systematisch zu niedrig, und über den früheren Fall-through konnte umgekehrt
+    eine normale Karte den Foil-Preis bekommen.
+    """
+    if not card_info:
+        return ersatz
+    passend = preis_fuer_variante(card_info.get("prices") or {}, foil=ist_foil(row))
+    if passend:
+        return passend
+    # Keine Angabe für diese Ausführung: lieber der zuletzt gespeicherte Wert
+    # als ein Preis der jeweils anderen Ausführung.
+    return ersatz
 
 
 def karten_metadaten(card_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -266,6 +293,10 @@ class AddKarteData(BaseModel):
     album_name: str
     bild_url: str = ""
     preis: str = "0.00"
+    # Standard ist die normale Ausführung -- sie ist die häufigere, und eine
+    # falsch als Foil geführte Karte würde den Sammlungswert nach oben
+    # verfälschen. Bestehende Einträge gelten aus demselben Grund als nicht Foil.
+    foil: bool = False
 
 # ======================================================================
 # Router-Instanz
@@ -308,7 +339,7 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
         karten_name = row["karten_name"]
         card_info = scryfall_data.get(karten_name.lower().strip())
 
-        live_preis = card_info.get("price", row["preis"]) if card_info else row["preis"]
+        live_preis = live_preis_fuer(card_info, row, row["preis"])
         live_bild = card_info.get("image", row["bild_url"]) if card_info else row["bild_url"]
 
         alben[album].append({
@@ -316,7 +347,8 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
             "name": karten_name,
             "bild_url": live_bild,
             "preis": row["preis"],
-            "livePreis": live_preis
+            "livePreis": live_preis,
+            "foil": ist_foil(row),
         })
     return {"erfolg": True, "alben": alben}
 
@@ -340,11 +372,22 @@ async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_
             logger.warning("Kartenmetadaten für %r nicht auflösbar", data.karten_name, exc_info=True)
 
     meta = karten_metadaten(card_info)
+
+    # Preis passend zur Ausführung festhalten. Übergibt der Client keinen
+    # (oder den Normalpreis für eine Foil-Karte), wird er hier korrigiert --
+    # sonst stünde eine Foil-Karte mit dem deutlich niedrigeren Normalpreis in
+    # der Sammlung.
+    preis = data.preis
+    if card_info:
+        passend = preis_fuer_variante(card_info.get("prices") or {}, foil=data.foil)
+        if passend:
+            preis = passend
+
     async with get_db_session() as session:
         await session.execute(
             text(_SAMMLUNG_INSERT_SQL),
             {"user": current_user, "name": data.karten_name, "album": data.album_name,
-             "url": data.bild_url, "price": data.preis, **meta}
+             "url": data.bild_url, "price": preis, "foil": bool(data.foil), **meta}
         )
     return {"erfolg": True}
 
@@ -500,8 +543,9 @@ async def sammlung_filter(
                 "rarity": card_info.get("rarity", ""),
                 "set": card_info.get("set", ""),
                 "image_url": card_info.get("image", row["bild_url"]),
-                "price": card_info.get("price", row["preis"]),
+                "price": live_preis_fuer(card_info, row, row["preis"]),
                 "originalPrice": row["preis"],
+                "foil": ist_foil(row),
                 "album_name": row["album_name"]
             })
 
@@ -632,6 +676,10 @@ async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, alb
                     "album": r["album"],
                     "url": bild_url,
                     "price": str(price_val),
+                    # CSV-Import kennt (noch) keine Foil-Spalte: importierte
+                    # Karten gelten als normal. Das ist die sichere Annahme --
+                    # sie bewertet eher zu niedrig als zu hoch.
+                    "foil": False,
                     **meta,
                 })
             imported += r["anzahl"]
@@ -748,9 +796,11 @@ async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get
 
         aggregated = {}
         for row in rows:
-            key = (row["karten_name"], row["album_name"])
+            # Nach Ausführung getrennt: normale und Foil-Karten haben eigene
+            # Preise und gehören im Export in eigene Zeilen.
+            key = (row["karten_name"], row["album_name"], ist_foil(row))
             if key not in aggregated:
-                aggregated[key] = {"anzahl": 0, "preis": row["preis"]}
+                aggregated[key] = {"anzahl": 0, "preis": row["preis"], "foil": ist_foil(row)}
             aggregated[key]["anzahl"] += 1
 
         unique_names = list(set(k[0] for k in aggregated.keys()))
@@ -758,18 +808,19 @@ async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Kartenname", "Anzahl", "Edition", "Album", "Preis_EUR"])
+        writer.writerow(["Kartenname", "Anzahl", "Edition", "Album", "Foil", "Preis_EUR"])
 
-        for (karten_name, album_name), info in sorted(aggregated.items()):
+        for (karten_name, album_name, foil), info in sorted(aggregated.items()):
             name_lower = karten_name.lower().strip()
             card_info = scryfall_data.get(name_lower, {})
             edition_code = card_info.get("set", "")
-            price_eur = card_info.get("price", info["preis"]) or info["preis"]
+            price_eur = preis_fuer_variante(card_info.get("prices") or {}, foil=foil) or info["preis"]
             writer.writerow([
                 card_info.get("name", karten_name),
                 info["anzahl"],
                 edition_code,
                 album_name,
+                "ja" if foil else "nein",
                 price_eur
             ])
 
