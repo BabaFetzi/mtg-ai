@@ -9,6 +9,25 @@ import CSVImportExport from './CSVImportExport';
 import { formatEuro } from '../../utils/format';
 import { useMeldung } from '../layout/Meldungen';
 
+// Die elf Druck-Sprachen. Fehlt die Angabe, steht nichts da -- eine Karte
+// ohne erfasste Sprache als "Englisch" auszuweisen wäre erfunden.
+const SPRACHNAMEN = {
+  en: 'Englisch', de: 'Deutsch', fr: 'Französisch', it: 'Italienisch',
+  es: 'Spanisch', pt: 'Portugiesisch', ja: 'Japanisch', ko: 'Koreanisch',
+  ru: 'Russisch', zhs: 'Chinesisch (verein.)', zht: 'Chinesisch (trad.)',
+  ph: 'Phyrexianisch',
+};
+
+function sprachKuerzel(code) {
+  if (!code) return null;
+  return String(code).toUpperCase();
+}
+
+function sprachName(code) {
+  if (!code) return null;
+  return SPRACHNAMEN[String(code).toLowerCase()] || String(code).toUpperCase();
+}
+
 function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal }) {
   const { melde, bestaetige } = useMeldung();
   const location = useLocation();
@@ -880,6 +899,11 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                                muss auf einen Blick erkennbar sein, sonst ist der
                                Sammlungswert nicht nachvollziehbar. */}
                            {k?.foil && <span title="Foil-Ausführung" style={{ marginLeft: '8px', color: 'var(--accent-color)', fontWeight: 700 }}>✦ Foil</span>}
+                           {k?.sprache && (
+                             <span title={sprachName(k.sprache)} style={{ marginLeft: '8px', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1px 6px' }}>
+                               {sprachKuerzel(k.sprache)}
+                             </span>
+                           )}
                          </div>
                          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>In: {k?.albumName}</div>
                        </div>
@@ -933,7 +957,14 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                       loading="lazy"
                       onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(karte?.name, "Karte"); }}
                     />
-                   <span style={{fontWeight: 600, fontSize: '0.95rem', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '5px'}} title={karte?.name}>{karte?.name}</span>
+                   <span style={{fontWeight: 600, fontSize: '0.95rem', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '5px'}} title={karte?.name}>
+                     {karte?.name}
+                     {karte?.sprache && (
+                       <span title={sprachName(karte.sprache)} style={{marginLeft: '6px', fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)'}}>
+                         {sprachKuerzel(karte.sprache)}
+                       </span>
+                     )}
+                   </span>
                    <span className="gallery-price-tag" style={{color: 'var(--text-main)', background: 'var(--bg-main)'}}>
                      {karte?.foil && <span title="Foil-Ausführung" style={{color: 'var(--accent-color)', marginRight: '4px'}}>✦</span>}
                      {formatEuro(karte?.livePreis || karte?.preis)}

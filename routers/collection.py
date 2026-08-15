@@ -45,6 +45,8 @@ _NAME_KEYS = {"kartenname", "name", "card", "card name", "cardname", "karte"}
 _COUNT_KEYS = {"anzahl", "menge", "count", "quantity", "qty", "amount"}
 _EDITION_KEYS = {"edition", "set", "set code", "set_code", "auflage"}
 _ALBUM_KEYS = {"album", "ordner", "folder", "binder", "sammlung"}
+_SPRACHE_KEYS = {"sprache", "language", "lang", "sprache_karte"}
+_FOIL_KEYS = {"foil", "veredelt", "premium"}
 
 # Führende Menge im Kartennamen: "1 Sol Ring", "2x Lightning Bolt", "3X Forest".
 _LEADING_QTY = re.compile(r"^\s*(\d+)\s*[xX]?\s+(.+)$")
@@ -101,9 +103,10 @@ def parse_import_csv(csv_text: str, default_album: str) -> List[Dict[str, Any]]:
     # Spalten-Mapping über Header bestimmen, sonst Standard-Positionen.
     header = [(c or "").strip().lower() for c in rows[0]]
     has_header = any(h in _NAME_KEYS for h in header)
-    col = {"name": 0, "count": 1, "edition": 2, "album": 3}
+    col = {"name": 0, "count": 1, "edition": 2, "album": 3, "sprache": None, "foil": None}
     if has_header:
-        col = {"name": None, "count": None, "edition": None, "album": None}
+        col = {"name": None, "count": None, "edition": None, "album": None,
+               "sprache": None, "foil": None}
         for idx, h in enumerate(header):
             if col["name"] is None and h in _NAME_KEYS:
                 col["name"] = idx
@@ -113,6 +116,10 @@ def parse_import_csv(csv_text: str, default_album: str) -> List[Dict[str, Any]]:
                 col["edition"] = idx
             elif col["album"] is None and h in _ALBUM_KEYS:
                 col["album"] = idx
+            elif col["sprache"] is None and h in _SPRACHE_KEYS:
+                col["sprache"] = idx
+            elif col["foil"] is None and h in _FOIL_KEYS:
+                col["foil"] = idx
         if col["name"] is None:
             col["name"] = 0
         data_rows = rows[1:]
@@ -148,11 +155,17 @@ def parse_import_csv(csv_text: str, default_album: str) -> List[Dict[str, Any]]:
             anzahl = 1
 
         album = _cell(row, "album") or default_album
+        # Sprache und Foil nur übernehmen, wenn die Datei sie nennt. Fehlt die
+        # Spalte, bleibt die Angabe leer statt geraten -- ein eigener Export
+        # der App liest sich damit wieder vollständig ein.
+        foil_zelle = _cell(row, "foil").lower()
         parsed.append({
             "name": name,
             "anzahl": anzahl,
             "edition": _cell(row, "edition"),
             "album": album,
+            "sprache": _cell(row, "sprache").lower(),
+            "foil": foil_zelle in {"ja", "yes", "true", "1", "x", "foil"},
         })
     return parsed
 
@@ -169,9 +182,9 @@ logger = logging.getLogger(__name__)
 _SAMMLUNG_INSERT_SQL = (
     "INSERT INTO sammlung_alben "
     "(benutzername, karten_name, album_name, bild_url, preis, "
-    " edition, seltenheit, farben, manakosten, kartentyp, foil) "
+    " edition, seltenheit, farben, manakosten, kartentyp, foil, sprache) "
     "VALUES (:user, :name, :album, :url, :price, "
-    " :edition, :seltenheit, :farben, :manakosten, :kartentyp, :foil)"
+    " :edition, :seltenheit, :farben, :manakosten, :kartentyp, :foil, :sprache)"
 )
 
 
@@ -182,6 +195,28 @@ def ist_foil(row) -> bool:
         return bool(row["foil"])
     except (KeyError, IndexError, TypeError):
         return False
+
+
+SPRACHEN = {
+    "en": "Englisch", "de": "Deutsch", "fr": "Französisch", "it": "Italienisch",
+    "es": "Spanisch", "pt": "Portugiesisch", "ja": "Japanisch", "ko": "Koreanisch",
+    "ru": "Russisch", "zhs": "Chinesisch (vereinfacht)", "zht": "Chinesisch (traditionell)",
+    "ph": "Phyrexianisch",
+}
+
+
+def sprache_von(row) -> Optional[str]:
+    """Sprache der Zeile oder None.
+
+    NULL heisst "nicht erfasst" -- Zeilen aus der Zeit vor dieser Spalte
+    einfach als Englisch auszugeben, wäre eine erfundene Angabe.
+    """
+    try:
+        wert = row["sprache"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    wert = (wert or "").strip().lower()
+    return wert or None
 
 
 def live_preis_fuer(card_info: Optional[Dict[str, Any]], row, ersatz) -> str:
@@ -297,6 +332,9 @@ class AddKarteData(BaseModel):
     # falsch als Foil geführte Karte würde den Sammlungswert nach oben
     # verfälschen. Bestehende Einträge gelten aus demselben Grund als nicht Foil.
     foil: bool = False
+    # Sprache der physischen Karte ("en", "de", ...). Leer bedeutet
+    # "nicht angegeben" und wird auch so gespeichert, statt Englisch zu raten.
+    sprache: str = ""
 
 # ======================================================================
 # Router-Instanz
@@ -349,6 +387,7 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
             "preis": row["preis"],
             "livePreis": live_preis,
             "foil": ist_foil(row),
+            "sprache": sprache_von(row),
         })
     return {"erfolg": True, "alben": alben}
 
@@ -387,7 +426,8 @@ async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_
         await session.execute(
             text(_SAMMLUNG_INSERT_SQL),
             {"user": current_user, "name": data.karten_name, "album": data.album_name,
-             "url": data.bild_url, "price": preis, "foil": bool(data.foil), **meta}
+             "url": data.bild_url, "price": preis, "foil": bool(data.foil),
+             "sprache": (data.sprache or "").strip().lower() or None, **meta}
         )
     return {"erfolg": True}
 
@@ -546,6 +586,7 @@ async def sammlung_filter(
                 "price": live_preis_fuer(card_info, row, row["preis"]),
                 "originalPrice": row["preis"],
                 "foil": ist_foil(row),
+                "sprache": sprache_von(row),
                 "album_name": row["album_name"]
             })
 
@@ -676,10 +717,11 @@ async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, alb
                     "album": r["album"],
                     "url": bild_url,
                     "price": str(price_val),
-                    # CSV-Import kennt (noch) keine Foil-Spalte: importierte
-                    # Karten gelten als normal. Das ist die sichere Annahme --
-                    # sie bewertet eher zu niedrig als zu hoch.
-                    "foil": False,
+                    # Nennt die Datei eine Foil-Spalte, wird sie übernommen;
+                    # sonst gilt die Karte als normal. Das ist die sichere
+                    # Annahme -- sie bewertet eher zu niedrig als zu hoch.
+                    "foil": bool(r.get("foil")),
+                    "sprache": (r.get("sprache") or "").strip().lower() or None,
                     **meta,
                 })
             imported += r["anzahl"]
@@ -798,7 +840,7 @@ async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get
         for row in rows:
             # Nach Ausführung getrennt: normale und Foil-Karten haben eigene
             # Preise und gehören im Export in eigene Zeilen.
-            key = (row["karten_name"], row["album_name"], ist_foil(row))
+            key = (row["karten_name"], row["album_name"], ist_foil(row), sprache_von(row) or "")
             if key not in aggregated:
                 aggregated[key] = {"anzahl": 0, "preis": row["preis"], "foil": ist_foil(row)}
             aggregated[key]["anzahl"] += 1
@@ -808,9 +850,9 @@ async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Kartenname", "Anzahl", "Edition", "Album", "Foil", "Preis_EUR"])
+        writer.writerow(["Kartenname", "Anzahl", "Edition", "Album", "Foil", "Sprache", "Preis_EUR"])
 
-        for (karten_name, album_name, foil), info in sorted(aggregated.items()):
+        for (karten_name, album_name, foil, sprache), info in sorted(aggregated.items()):
             name_lower = karten_name.lower().strip()
             card_info = scryfall_data.get(name_lower, {})
             edition_code = card_info.get("set", "")
@@ -821,6 +863,7 @@ async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get
                 edition_code,
                 album_name,
                 "ja" if foil else "nein",
+                sprache,
                 price_eur
             ])
 

@@ -41,8 +41,8 @@ def test_parse_comma():
     txt = "Kartenname,Anzahl,Edition,Album\nSol Ring,1,C21,Ordner A\nLightning Bolt,2,M10,Ordner B\n"
     out = parse_import_csv(txt, "Default")
     assert out == [
-        {"name": "Sol Ring", "anzahl": 1, "edition": "C21", "album": "Ordner A"},
-        {"name": "Lightning Bolt", "anzahl": 2, "edition": "M10", "album": "Ordner B"},
+        {"name": "Sol Ring", "anzahl": 1, "edition": "C21", "album": "Ordner A", "sprache": "", "foil": False},
+        {"name": "Lightning Bolt", "anzahl": 2, "edition": "M10", "album": "Ordner B", "sprache": "", "foil": False},
     ]
 
 
@@ -67,9 +67,9 @@ def test_parse_leading_quantity_in_name():
     txt = "Kartenname,Album\n1 Sol Ring,Ordner A\n2x Lightning Bolt,Ordner B\n3X Forest,Ordner B\n"
     out = parse_import_csv(txt, "Default")
     assert out == [
-        {"name": "Sol Ring", "anzahl": 1, "edition": "", "album": "Ordner A"},
-        {"name": "Lightning Bolt", "anzahl": 2, "edition": "", "album": "Ordner B"},
-        {"name": "Forest", "anzahl": 3, "edition": "", "album": "Ordner B"},
+        {"name": "Sol Ring", "anzahl": 1, "edition": "", "album": "Ordner A", "sprache": "", "foil": False},
+        {"name": "Lightning Bolt", "anzahl": 2, "edition": "", "album": "Ordner B", "sprache": "", "foil": False},
+        {"name": "Forest", "anzahl": 3, "edition": "", "album": "Ordner B", "sprache": "", "foil": False},
     ]
 
 
@@ -78,8 +78,8 @@ def test_parse_reordered_columns_by_header():
     txt = "Album,Anzahl,Kartenname\nOrdner A,1,Sol Ring\nOrdner B,3,Llanowar Elves\n"
     out = parse_import_csv(txt, "Default")
     assert out == [
-        {"name": "Sol Ring", "anzahl": 1, "edition": "", "album": "Ordner A"},
-        {"name": "Llanowar Elves", "anzahl": 3, "edition": "", "album": "Ordner B"},
+        {"name": "Sol Ring", "anzahl": 1, "edition": "", "album": "Ordner A", "sprache": "", "foil": False},
+        {"name": "Llanowar Elves", "anzahl": 3, "edition": "", "album": "Ordner B", "sprache": "", "foil": False},
     ]
 
 

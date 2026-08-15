@@ -30,6 +30,9 @@ function KartenSuche({ currentUser }) {
   // Standard ist die normale Ausführung -- sie ist die häufigere, und eine
   // fälschlich als Foil geführte Karte verfälscht den Sammlungswert nach oben.
   const [istFoil, setIstFoil] = useState(false);
+  // Sprache der physischen Karte. Leer heisst "nicht angegeben" und wird auch
+  // so gespeichert -- Englisch zu unterstellen wäre eine erfundene Angabe.
+  const [sprache, setSprache] = useState("");
   const [loadedImages, setLoadedImages] = useState({});
   const [popularTags, setPopularTags] = useState([]);
   const [nichtGefunden, setNichtGefunden] = useState(null);
@@ -96,7 +99,7 @@ function KartenSuche({ currentUser }) {
     try {
       const res = await fetch(`/api/sammlung/hinzufuegen`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: speicherPreis, foil: istFoil })
+          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: speicherPreis, foil: istFoil, sprache })
       });
       const data = await res.json();
       if (data && data.erfolg) { 
@@ -397,6 +400,32 @@ function KartenSuche({ currentUser }) {
                         style={{width: '18px', height: '18px', cursor: 'pointer'}}
                       />
                       <span>Foil-Ausführung {istFoil && <strong style={{color: 'var(--accent-color)'}}>✦</strong>}</span>
+                    </label>
+
+                    {/* Magic-Karten erscheinen in elf Sprachen. Wer eine
+                        deutsche Sammlung führt, muss sie beim Tauschen und
+                        Verkaufen von einer englischen unterscheiden können. */}
+                    <label style={{display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px', fontSize: '0.92rem', color: 'var(--text-muted)'}}>
+                      <span>Sprache</span>
+                      <select
+                        value={sprache}
+                        onChange={e => setSprache(e.target.value)}
+                        style={{padding: '8px 12px', borderRadius: '8px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', color: 'var(--text-main)', width: 'auto'}}
+                      >
+                        <option value="">Keine Angabe</option>
+                        <option value="de">Deutsch</option>
+                        <option value="en">Englisch</option>
+                        <option value="fr">Französisch</option>
+                        <option value="it">Italienisch</option>
+                        <option value="es">Spanisch</option>
+                        <option value="pt">Portugiesisch</option>
+                        <option value="ja">Japanisch</option>
+                        <option value="ko">Koreanisch</option>
+                        <option value="ru">Russisch</option>
+                        <option value="zhs">Chinesisch (vereinfacht)</option>
+                        <option value="zht">Chinesisch (traditionell)</option>
+                        <option value="ph">Phyrexianisch</option>
+                      </select>
                     </label>
 
                     <button className="secondary-btn" style={{padding: '20px', height: '100%', borderRadius: '20px', border: '1px solid var(--border-color)', background: 'var(--bg-card)'}} onClick={handleWunschlisteKlick}>

@@ -72,6 +72,12 @@ class Collection(Base):
     # Karten schnell Faktor fünf. NULL wird überall wie False behandelt, damit
     # bestehende Einträge ohne Migrationsschritt weiterlaufen.
     foil = Column(Boolean, default=False)
+    # Sprache der physischen Karte als Scryfall-Kürzel ("en", "de", "ja", ...).
+    # Magic-Karten werden in elf Sprachen gedruckt; wer eine deutsche Sammlung
+    # führt, muss sie von einer englischen unterscheiden können -- beim
+    # Tauschen, beim Verkaufen und beim Zusammenstellen eines Decks für ein
+    # Turnier. NULL bedeutet "nicht erfasst", nicht "englisch".
+    sprache = Column(String(5), nullable=True)
     hinzugefuegt_am = Column(DateTime, default=datetime.utcnow)
 
 class Deck(Base):
@@ -165,6 +171,7 @@ async def init_db():
         # Bestehende Installationen brauchen deshalb einen ausdrücklichen
         # Schritt, sonst schlägt jeder Zugriff auf die neue Spalte fehl.
         await _spalte_ergaenzen(conn, "sammlung_alben", "foil", "BOOLEAN DEFAULT 0")
+        await _spalte_ergaenzen(conn, "sammlung_alben", "sprache", "VARCHAR(5)")
 
 
 async def _spalte_ergaenzen(conn, tabelle: str, spalte: str, definition: str) -> None:
