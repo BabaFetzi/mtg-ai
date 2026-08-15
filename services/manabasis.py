@@ -35,23 +35,45 @@ ZIEL_WAHRSCHEINLICHKEIT = 0.90
 MAX_ZUG = 6
 
 _SYMBOL = re.compile(r"\{([^}]+)\}")
-_ADD_BELIEBIG = re.compile(r"add\s+\w+\s+mana\s+of\s+any\s+(?:one\s+)?color", re.IGNORECASE)
+_ADD_BELIEBIG = re.compile(r"\badds?\b\s+\w+\s+mana\s+of\s+any\s+(?:one\s+)?color", re.IGNORECASE)
+# Wortgrenze ist hier entscheidend: "add" steckt auch in "additional".
+_ADD_WORT = re.compile(r"\badds?\b", re.IGNORECASE)
 
 
-def farbbedarf(mana_cost: str) -> Dict[str, int]:
-    """Zählt farbige Manasymbole einer Kostenzeile.
+def farbbedarf(mana_cost: str) -> Dict[Tuple[str, ...], int]:
+    """Zerlegt eine Kostenzeile in Farbanforderungen.
 
-    Hybride Symbole ({R/G}, {2/R}) zählen für JEDE beteiligte Farbe, weil sie
-    sich mit jeder davon bezahlen lassen -- der Bedarf an einer einzelnen Farbe
-    steigt dadurch nicht. Phyrexianische Symbole ({R/P}) zählen aus demselben
-    Grund mit, sind aber notfalls über Lebenspunkte bezahlbar.
+    Der Schlüssel ist die GRUPPE von Farben, aus der ein Symbol bezahlt werden
+    darf -- nicht die einzelne Farbe:
+
+        {1}{R}{R}       -> {("R",): 2}
+        {1}{U/R}{U/R}   -> {("R", "U"): 2}
+        {2}{W}{U}       -> {("W",): 1, ("U",): 1}
+
+    Genau hier lag der Fehler: {U/R}{U/R} wurde als "2x Blau UND 2x Rot"
+    gezählt. Eclipsed Flamekin ({1}{U/R}{U/R}) galt damit in einem
+    blau-roten Deck mit 21 Ländern als nicht bezahlbar, obwohl JEDES dieser
+    Länder eines der beiden Symbole bezahlt. Die Karte braucht zwei Mana aus
+    dem gemeinsamen Vorrat, nicht zwei je Farbe.
+
+    Nicht als Farbanforderung zählen:
+      * {2/R} -- zwei generische Mana tun es auch, die Karte wird nur teurer;
+      * {R/P} -- phyrexianisch, notfalls mit zwei Lebenspunkten bezahlbar;
+      * {C}, {S}, {X} und Zahlen -- keine Farbe.
     """
-    bedarf: Dict[str, int] = {}
+    bedarf: Dict[Tuple[str, ...], int] = {}
     for symbol in _SYMBOL.findall(mana_cost or ""):
         teile = [t.strip().upper() for t in symbol.split("/")]
-        farben = {t for t in teile if t in FARBEN}
-        for f in farben:
-            bedarf[f] = bedarf.get(f, 0) + 1
+        if any(t == "P" for t in teile):
+            continue
+        if any(t.isdigit() for t in teile):
+            continue
+        # In WUBRG-Reihenfolge, wie Magic Farben immer nennt -- alphabetisch
+        # käme "Rot/Blau" heraus.
+        farben = tuple(sorted({t for t in teile if t in FARBEN}, key=FARBEN.index))
+        if not farben:
+            continue
+        bedarf[farben] = bedarf.get(farben, 0) + 1
     return bedarf
 
 
@@ -78,13 +100,17 @@ def erzeugte_farben(info: Dict[str, Any]) -> set:
     # alle Farbsymbole des Satzes, in dem "Add" vorkommt -- nicht die des
     # ganzen Regeltextes, sonst würde "{1}{R}: ..." einer Fähigkeit
     # mitgezählt.
+    #
+    # Mit Wortgrenze: "add" steckt auch in "additional". Ohne sie galt jede
+    # Karte mit "as an additional cost, pay {1}{R}" oder "Kicker {2}{U}" als
+    # Manaquelle -- und tauchte in der Analyse als Quelle einer Farbe auf, die
+    # sie nie erzeugt.
     gefunden: set = set()
     for satz in re.split(r"(?<=[.;])\s+|\n", text):
-        if "add" not in satz.lower():
+        treffer = _ADD_WORT.search(satz)
+        if not treffer:
             continue
-        _, _, nach_add = satz.lower().partition("add")
-        versatz = len(satz) - len(nach_add)
-        for symbol in _SYMBOL.findall(satz[versatz:]):
+        for symbol in _SYMBOL.findall(satz[treffer.end():]):
             for teil in symbol.split("/"):
                 teil = teil.strip().upper()
                 if teil in FARBEN:
@@ -143,18 +169,20 @@ def analysiere(karten: Iterable[Tuple[int, Dict[str, Any]]],
     karten = [(int(a), i) for a, i in karten if i]
     deckgroesse = sum(a for a, _ in karten)
 
-    laender: Dict[str, int] = {f: 0 for f in FARBEN}
-    andere_quellen: Dict[str, int] = {f: 0 for f in FARBEN}
-    # Härtester Bedarf je Farbe: (Symbolzahl, frühester Zug, Kartenname)
-    haerteste: Dict[str, Tuple[int, int, str]] = {}
-    gesamt_symbole: Dict[str, int] = {f: 0 for f in FARBEN}
+    # Quellen je Gruppe zählen wir NICHT farbweise auf, sondern über die
+    # Vereinigung: ein Land, das Blau oder Rot liefert, bezahlt ein {U/R}
+    # genau einmal -- doppelt zählen würde die Basis schönrechnen.
+    land_farben: List[Tuple[int, set]] = []
+    andere_farben: List[Tuple[int, set]] = []
+
+    # Härtester Bedarf je Gruppe: (Symbolzahl, frühester Zug, Kartenname)
+    haerteste: Dict[Tuple[str, ...], Tuple[int, int, str]] = {}
+    gesamt_symbole: Dict[Tuple[str, ...], int] = {}
 
     for anzahl, info in karten:
         farben = erzeugte_farben(info)
         if farben:
-            ziel = laender if _ist_land(info) else andere_quellen
-            for f in farben:
-                ziel[f] += anzahl
+            (land_farben if _ist_land(info) else andere_farben).append((anzahl, farben))
 
         if _ist_land(info):
             continue
@@ -168,31 +196,40 @@ def analysiere(karten: Iterable[Tuple[int, Dict[str, Any]]],
             zug = 0
         zug = max(1, min(zug or 1, MAX_ZUG))
 
-        for f, anzahl_symbole in bedarf.items():
-            gesamt_symbole[f] += anzahl_symbole * anzahl
-            bisher = haerteste.get(f)
+        for gruppe, anzahl_symbole in bedarf.items():
+            gesamt_symbole[gruppe] = gesamt_symbole.get(gruppe, 0) + anzahl_symbole * anzahl
+            bisher = haerteste.get(gruppe)
             # Härter ist: mehr Symbole; bei gleicher Symbolzahl der frühere Zug.
             if (bisher is None
                     or anzahl_symbole > bisher[0]
                     or (anzahl_symbole == bisher[0] and zug < bisher[1])):
-                haerteste[f] = (anzahl_symbole, zug, info.get("name", ""))
+                haerteste[gruppe] = (anzahl_symbole, zug, info.get("name", ""))
 
+    def quellen_fuer(gruppe: Tuple[str, ...], liste: List[Tuple[int, set]]) -> int:
+        ziel = set(gruppe)
+        return sum(anzahl for anzahl, farben in liste if farben & ziel)
+
+    # Nur Gruppen, die das Deck tatsächlich verlangt. Eine Zeile "Weiss --
+    # keine Karte verlangt diese Farbe" ist reines Rauschen.
     ergebnis: List[Dict[str, Any]] = []
-    for f in FARBEN:
-        if not haerteste.get(f) and not laender[f] and not andere_quellen[f]:
-            continue
-        symbole, zug, kartenname = haerteste.get(f, (0, 1, ""))
+    for gruppe in sorted(haerteste, key=lambda g: (len(g), [FARBEN.index(f) for f in g])):
+        symbole, zug, kartenname = haerteste[gruppe]
         gesehen = gesehene_karten(zug, auf_dem_spiel)
-        quellen = laender[f]
-        p = wahrscheinlichkeit(deckgroesse, quellen, gesehen, symbole) if symbole else 1.0
-        noetig = noetige_quellen(deckgroesse, gesehen, symbole) if symbole else 0
+        quellen = quellen_fuer(gruppe, land_farben)
+        p = wahrscheinlichkeit(deckgroesse, quellen, gesehen, symbole)
+        noetig = noetige_quellen(deckgroesse, gesehen, symbole)
 
         ergebnis.append({
-            "farbe": f,
-            "farbname": FARBNAMEN[f],
+            # Schlüssel und Anzeigename für eine Gruppe: ("R", "U") wird zu
+            # "U/R" bzw. "Blau/Rot" -- eine Anforderung, kein Farbpaar.
+            "schluessel": "/".join(gruppe),
+            "farben": list(gruppe),
+            "farbe": gruppe[0],
+            "farbname": "/".join(FARBNAMEN[f] for f in gruppe),
+            "hybrid": len(gruppe) > 1,
             "laender": quellen,
-            "weitere_quellen": andere_quellen[f],
-            "symbole_gesamt": gesamt_symbole[f],
+            "weitere_quellen": quellen_fuer(gruppe, andere_farben),
+            "symbole_gesamt": gesamt_symbole.get(gruppe, 0),
             "haertester_bedarf": symbole,
             "haerteste_karte": kartenname,
             "zug": zug,

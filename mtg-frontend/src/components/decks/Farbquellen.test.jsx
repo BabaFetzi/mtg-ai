@@ -81,3 +81,19 @@ test('sehr kleine Werte werden nicht zu null gerundet', () => {
 
   expect(screen.getByText(/unter 1 %/)).toBeInTheDocument();
 });
+
+test('eine Hybridanforderung steht als eine Zeile mit beiden Symbolen', () => {
+  // Der gemeldete Fall: Eclipsed Flamekin ({1}{U/R}{U/R}) ergab zwei Warnungen
+  // ("11 zu wenig Blau", "10 zu wenig Rot"). Richtig ist eine Anforderung
+  // gegen alle Länder beider Farben.
+  render(<Farbquellen daten={daten([{
+    schluessel: 'U/R', farben: ['U', 'R'], farbe: 'U', farbname: 'Blau/Rot', hybrid: true,
+    laender: 21, weitere_quellen: 2, symbole_gesamt: 8, haertester_bedarf: 2,
+    haerteste_karte: 'Eclipsed Flamekin', zug: 3, wahrscheinlichkeit: 0.94,
+    empfohlene_laender: 20, fehlende_laender: 0, reicht: true,
+  }])} />);
+
+  expect(screen.getByText(/2× Blau\/Rot \(eines von beiden\) auf Zug 3/)).toBeInTheDocument();
+  expect(screen.getByText('21 Länder')).toBeInTheDocument();
+  expect(screen.getByText('reicht')).toBeInTheDocument();
+});

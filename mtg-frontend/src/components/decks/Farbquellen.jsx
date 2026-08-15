@@ -45,7 +45,13 @@ function Zeile({ farbe }) {
       padding: '14px 0',
       borderTop: '1px solid var(--border-color)',
     }}>
-      <img src={SYMBOL[farbe.farbe]} alt={farbe.farbname} style={{ width: '22px', height: '22px' }} />
+      {/* Bei einer Hybridanforderung stehen beide Symbole nebeneinander:
+          {U/R} ist EINE Anforderung an den gemeinsamen Vorrat, nicht zwei. */}
+      <span style={{ display: 'flex', gap: '3px' }}>
+        {(farbe.farben || [farbe.farbe]).map((f) => (
+          <img key={f} src={SYMBOL[f]} alt="" style={{ width: '22px', height: '22px' }} />
+        ))}
+      </span>
 
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
@@ -74,7 +80,7 @@ function Zeile({ farbe }) {
         <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
           {farbe.haertester_bedarf > 0 ? (
             <>
-              Schwerste Anforderung: {farbe.haertester_bedarf}× {farbe.farbname} auf Zug {farbe.zug}
+              Schwerste Anforderung: {farbe.haertester_bedarf}× {farbe.hybrid ? `${farbe.farbname} (eines von beiden)` : farbe.farbname} auf Zug {farbe.zug}
               {farbe.haerteste_karte ? ` (${farbe.haerteste_karte})` : ''} —{' '}
               {prozent(farbe.wahrscheinlichkeit)} Chance, das rechtzeitig zu haben.
             </>
@@ -124,7 +130,7 @@ function Farbquellen({ daten }) {
           : `${knappe.length === 1 ? 'Eine Farbe hat' : `${knappe.length} Farben haben`} zu wenige Quellen: ${knappe.map((f) => f.farbname).join(', ')}.`}
       </p>
 
-      {daten.farben.map((f) => <Zeile key={f.farbe} farbe={f} />)}
+      {daten.farben.map((f) => <Zeile key={f.schluessel || f.farbe} farbe={f} />)}
 
       <p style={{ margin: '18px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
         Gerechnet wird die Wahrscheinlichkeit, bis zu dem Zug, in dem die Karte

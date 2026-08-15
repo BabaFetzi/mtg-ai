@@ -39,8 +39,8 @@ INSEL = karte("Island", typ="Basic Land — Island", cmc=0, produced=["U"])
 # Farbbedarf aus den Manakosten
 # ----------------------------------------------------------------------
 def test_zaehlt_farbige_symbole():
-    assert farbbedarf("{1}{R}{R}") == {"R": 2}
-    assert farbbedarf("{2}{W}{U}") == {"W": 1, "U": 1}
+    assert farbbedarf("{1}{R}{R}") == {("R",): 2}
+    assert farbbedarf("{2}{W}{U}") == {("W",): 1, ("U",): 1}
 
 
 def test_generisches_mana_zaehlt_nicht():
@@ -48,10 +48,37 @@ def test_generisches_mana_zaehlt_nicht():
     assert farbbedarf("") == {}
 
 
-def test_hybrid_zaehlt_fuer_beide_farben():
-    """{R/G} lässt sich mit Rot ODER Grün bezahlen -- der Bedarf an einer
-    einzelnen Farbe steigt dadurch nicht."""
-    assert farbbedarf("{R/G}") == {"R": 1, "G": 1}
+def test_hybrid_ist_eine_anforderung_an_beide_farben_zusammen():
+    """Der gemeldete Fehler: {U/R}{U/R} wurde als "2x Blau UND 2x Rot"
+    gezählt. Eclipsed Flamekin ({1}{U/R}{U/R}) galt damit in einem blau-roten
+    Deck mit 21 Ländern als nicht bezahlbar -- obwohl JEDES dieser Länder eines
+    der beiden Symbole bezahlt. Die Karte braucht zwei Mana aus dem
+    gemeinsamen Vorrat."""
+    assert farbbedarf("{R/G}") == {("R", "G"): 1}
+    assert farbbedarf("{1}{U/R}{U/R}") == {("U", "R"): 2}
+
+
+def test_farben_stehen_in_wubrg_reihenfolge():
+    """Magic nennt Farben immer in dieser Reihenfolge; alphabetisch käme
+    "Rot/Blau" heraus."""
+    assert list(farbbedarf("{U/R}")) == [("U", "R")]
+    assert list(farbbedarf("{G/W}")) == [("W", "G")]
+
+
+def test_generisch_hybrides_symbol_ist_keine_farbanforderung():
+    """{2/R} lässt sich mit zwei generischen Mana bezahlen -- die Karte wird
+    nur teurer, sie verlangt kein Rot."""
+    assert farbbedarf("{2/R}{2/R}") == {}
+
+
+def test_phyrexianisches_symbol_ist_keine_farbanforderung():
+    """{U/P} lässt sich mit zwei Lebenspunkten bezahlen."""
+    assert farbbedarf("{U/P}") == {}
+    assert farbbedarf("{1}{W/P}{W/P}") == {}
+
+
+def test_farbloses_und_generisches_mana_bleiben_aussen_vor():
+    assert farbbedarf("{X}{C}{S}{7}") == {}
 
 
 # ----------------------------------------------------------------------
@@ -197,3 +224,73 @@ def test_leeres_deck_stuerzt_nicht_ab():
     ergebnis = analysiere([])
     assert ergebnis["deckgroesse"] == 0
     assert ergebnis["farben"] == []
+
+
+# ----------------------------------------------------------------------
+# Der gemeldete Fall: blau-rotes Deck mit Hybridkosten
+# ----------------------------------------------------------------------
+def test_hybridkarte_zieht_aus_beiden_farben_zusammen():
+    """Das gemeldete Deck: 10 Gebirge, 9 Inseln, 2 Länder für beide Farben --
+    und Eclipsed Flamekin ({1}{U/R}{U/R}).
+
+    Vorher standen dort zwei Warnungen ("11 zu wenig Blau", "10 zu wenig Rot"),
+    weil die Anforderung doppelt gezählt wurde. Richtig ist eine einzige
+    Anforderung gegen alle 21 Länder.
+    """
+    dual = karte("Dual", typ="Land", cmc=0, produced=["U", "R"])
+    deck = [
+        (10, BERG), (9, INSEL), (2, dual),
+        (4, karte("Eclipsed Flamekin", "{1}{U/R}{U/R}", cmc=3)),
+        (35, karte("Fueller", "{2}", cmc=2)),
+    ]
+    ergebnis = analysiere(deck)
+
+    assert len(ergebnis["farben"]) == 1, ergebnis["farben"]
+    zeile = ergebnis["farben"][0]
+    assert zeile["hybrid"] is True
+    assert zeile["farbname"] == "Blau/Rot"
+    assert zeile["laender"] == 21, "alle 21 Länder bezahlen eines der Symbole"
+    assert zeile["haertester_bedarf"] == 2
+
+
+def test_land_fuer_zwei_farben_zaehlt_in_der_gruppe_nur_einmal():
+    """Ein Land, das Blau UND Rot liefert, bezahlt ein {U/R} genau einmal.
+    Doppelt zu zählen würde die Manabasis schönrechnen."""
+    dual = karte("Dual", typ="Land", cmc=0, produced=["U", "R"])
+    deck = [(20, dual), (4, karte("Hybridkarte", "{U/R}", cmc=1)), (36, karte("Fueller", "{2}", cmc=2))]
+
+    zeile = analysiere(deck)["farben"][0]
+    assert zeile["laender"] == 20
+
+
+def test_reine_und_hybride_anforderung_stehen_nebeneinander():
+    deck = [
+        (4, karte("Counterspell", "{U}{U}", cmc=2)),
+        (4, karte("Hybridkarte", "{U/R}{U/R}", cmc=3)),
+        (20, INSEL), (12, BERG), (20, karte("Fueller", "{2}", cmc=2)),
+    ]
+    zeilen = {f["farbname"]: f for f in analysiere(deck)["farben"]}
+
+    assert set(zeilen) == {"Blau", "Blau/Rot"}
+    assert zeilen["Blau"]["laender"] == 20
+    assert zeilen["Blau/Rot"]["laender"] == 32
+
+
+def test_zusatzkosten_machen_aus_einer_karte_keine_manaquelle():
+    """"additional" enthält "add". Ohne Wortgrenze galt jede Karte mit
+    "as an additional cost, pay {1}{R}" als rote Manaquelle -- und tauchte in
+    der Analyse als Quelle einer Farbe auf, die sie nie erzeugt."""
+    zusatzkosten = {"name": "Ashling's Command", "type": "Instant",
+                    "oracle_text": "As an additional cost to cast this spell, pay {1}{R}."}
+    kicker = {"name": "Kicker-Karte", "type": "Creature",
+              "oracle_text": "Kicker {2}{U} (You may pay an additional {2}{U} as you cast this spell.)"}
+
+    assert erzeugte_farben(zusatzkosten) == set()
+    assert erzeugte_farben(kicker) == set()
+
+
+def test_manaquelle_in_der_dritten_person_wird_erkannt():
+    """Regeltexte schreiben auch "adds" -- die Wortgrenze darf das nicht
+    ausschliessen."""
+    land = {"name": "Testland", "type": "Land", "oracle_text": "This land adds {G} instead."}
+    assert erzeugte_farben(land) == {"G"}
