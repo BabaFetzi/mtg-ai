@@ -66,3 +66,18 @@ test('nicht gefundene Karten werden genannt', () => {
 
   expect(screen.getByText(/Nicht gefunden und daher nicht mitgerechnet: Fantasiekarte/)).toBeInTheDocument();
 });
+
+test('fast sichere Werte werden nicht zu glatten 100 Prozent gerundet', () => {
+  // 99,8 Prozent als "100 %" auszuweisen behauptet eine Sicherheit, die es
+  // nicht gibt -- und darauf verlässt sich beim Deckbau jemand.
+  render(<Farbquellen daten={daten([{ ...BLAU_OK, wahrscheinlichkeit: 0.998 }])} />);
+
+  expect(screen.getByText(/über 99 %/)).toBeInTheDocument();
+  expect(screen.queryByText(/100 % Chance/)).not.toBeInTheDocument();
+});
+
+test('sehr kleine Werte werden nicht zu null gerundet', () => {
+  render(<Farbquellen daten={daten([{ ...ROT_KNAPP, wahrscheinlichkeit: 0.004 }])} />);
+
+  expect(screen.getByText(/unter 1 %/)).toBeInTheDocument();
+});

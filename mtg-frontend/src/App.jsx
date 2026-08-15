@@ -685,6 +685,19 @@ button:disabled, .primary-btn:disabled, .secondary-btn:disabled {
 }
 .handy-link:active { background: var(--btn-secondary); border-radius: 10px; }
 
+/* Abschnitt innerhalb der Analyse-Seite (Manakurve, Farbquellen,
+   Sammlungsabgleich). Die vier Werte standen an fünf Stellen wortgleich als
+   Inline-Stil; als Klasse bleiben sie beim nächsten Abschnitt gleich, statt
+   abzudriften. Bewusst nur dieses eine wiederkehrende Muster -- ein
+   flächendeckender Umbau aller Inline-Stile wäre reine Umsortierung mit
+   Regressionsrisiko. */
+.analyse-block {
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 30px;
+}
+
 /* Einheitliches Raster für Deck- und Ordnerkacheln. Vorher 280px bei den
    Decks, 260px bei den Ordnern und 220px im Standard-Raster -- dieselbe Art
    Kachel sprang je nach Seite in der Breite. In rem statt px, damit eine

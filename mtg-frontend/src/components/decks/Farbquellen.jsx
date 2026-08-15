@@ -22,7 +22,12 @@ const SYMBOL = {
 };
 
 function prozent(wert) {
-  return `${formatZahl((Number(wert) || 0) * 100, 0)} %`;
+  const p = (Number(wert) || 0) * 100;
+  // Gerundet würden aus 99,8 Prozent glatte "100 %" -- eine Sicherheit, die
+  // es nicht gibt. Dasselbe umgekehrt: 0,4 Prozent sind nicht "0 %".
+  if (p >= 99.5 && p < 100) return 'über 99 %';
+  if (p > 0 && p < 0.5) return 'unter 1 %';
+  return `${formatZahl(p, 0)} %`;
 }
 
 function Zeile({ farbe }) {
@@ -103,13 +108,7 @@ function Farbquellen({ daten }) {
   const knappe = daten.farben.filter((f) => !f.reicht);
 
   return (
-    <div style={{
-      background: 'rgba(0, 0, 0, 0.15)',
-      border: '1px solid var(--border-color)',
-      borderRadius: '20px',
-      padding: '30px',
-      marginBottom: '40px',
-    }}>
+    <div className="analyse-block" style={{ marginBottom: '40px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '15px', flexWrap: 'wrap' }}>
         <h4 style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
           Farbquellen

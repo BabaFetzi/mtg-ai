@@ -48,10 +48,7 @@ function Zeile({ karte }) {
 function SammlungsAbgleich({ daten, laedt }) {
   if (laedt) {
     return (
-      <div style={{
-        background: 'rgba(0, 0, 0, 0.15)', border: '1px solid var(--border-color)',
-        borderRadius: '20px', padding: '30px', marginBottom: '40px', textAlign: 'center',
-      }}>
+      <div className="analyse-block" style={{ marginBottom: '40px', textAlign: 'center' }}>
         <div className="spinner" />
         <p style={{ marginTop: '15px', color: 'var(--text-muted)' }}>Sammlung wird abgeglichen...</p>
       </div>
@@ -63,13 +60,7 @@ function SammlungsAbgleich({ daten, laedt }) {
   const fehlende = daten.karten.filter((k) => k.fehlt > 0 && !k.standardland);
 
   return (
-    <div style={{
-      background: 'rgba(0, 0, 0, 0.15)',
-      border: '1px solid var(--border-color)',
-      borderRadius: '20px',
-      padding: '30px',
-      marginBottom: '40px',
-    }}>
+    <div className="analyse-block" style={{ marginBottom: '40px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '15px', flexWrap: 'wrap' }}>
         <h4 style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
           Abgleich mit deiner Sammlung

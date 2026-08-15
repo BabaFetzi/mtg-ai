@@ -1553,7 +1553,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                     <div style={{display: 'flex', flexDirection: 'column', gap: '40px', marginBottom: '50px'}}>
                       
                       {/* MANAKURVE */}
-                      <div style={{background: 'rgba(0, 0, 0, 0.15)', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '30px'}}>
+                      <div className="analyse-block">
                         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '15px'}}>
                           <h4 style={{color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0}}>
                             Manakurve
@@ -1657,7 +1657,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                       {/* FARBVERTEILUNG -- ein gestapelter Balken statt vier
                           großer Chips, darunter eine kompakte Legende. Zeigt
                           dieselbe Information auf einen Bruchteil der Fläche. */}
-                      <div style={{background: 'rgba(0, 0, 0, 0.15)', border: '1px solid var(--border-color)', borderRadius: '20px', padding: '30px'}}>
+                      <div className="analyse-block">
                         <h4 style={{color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 20px 0'}}>
                           Farbverteilung
                         </h4>
