@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { formatEuro } from '../../utils/format';
 
 /**
@@ -7,6 +8,9 @@ import { formatEuro } from '../../utils/format';
  * was muss ich noch besorgen und was kostet das? Bisher musste man dafür jede
  * Karte einzeln in der Sammlung nachschlagen.
  */
+
+// So viele fehlende Karten stehen ohne Aufklappen da.
+const GEKUERZT = 12;
 
 function Zeile({ karte }) {
   const fehlt = karte.fehlt > 0;
@@ -45,7 +49,11 @@ function Zeile({ karte }) {
   );
 }
 
-function SammlungsAbgleich({ daten, laedt }) {
+function SammlungsAbgleich({ daten, laedt, onUebernehmen, uebernimmt }) {
+  // Standardländer sind beliebig austauschbar und werden von den wenigsten
+  // Spielern einzeln erfasst -- deshalb standardmässig aus.
+  const [mitLaendern, setMitLaendern] = useState(false);
+  const [alleZeigen, setAlleZeigen] = useState(false);
   if (laedt) {
     return (
       <div className="analyse-block" style={{ marginBottom: '40px', textAlign: 'center' }}>
@@ -58,6 +66,8 @@ function SammlungsAbgleich({ daten, laedt }) {
   if (!daten || !Array.isArray(daten.karten) || daten.karten.length === 0) return null;
 
   const fehlende = daten.karten.filter((k) => k.fehlt > 0 && !k.standardland);
+  // Bei 41 fehlenden Karten wird die Seite sonst zur Endlosliste.
+  const sichtbare = alleZeigen ? fehlende : fehlende.slice(0, GEKUERZT);
 
   return (
     <div className="analyse-block" style={{ marginBottom: '40px' }}>
@@ -91,7 +101,50 @@ function SammlungsAbgleich({ daten, laedt }) {
 
       {fehlende.length > 0 && (
         <div style={{ marginTop: '10px' }}>
-          {fehlende.map((k) => <Zeile key={k.name} karte={k} />)}
+          {sichtbare.map((k) => <Zeile key={k.name} karte={k} />)}
+          {fehlende.length > GEKUERZT && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setAlleZeigen((z) => !z)}
+              style={{ marginTop: '12px' }}
+            >
+              {alleZeigen
+                ? 'Weniger anzeigen'
+                : `Alle ${fehlende.length} fehlenden Karten anzeigen`}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Die fehlenden Karten in die Sammlung übernehmen. Ergänzt werden genau
+          die fehlenden Exemplare -- zweimal Drücken ändert beim zweiten Mal
+          nichts. */}
+      {onUebernehmen && (daten.fehlend > 0 || daten.standardlaender_fehlend > 0) && (
+        <div style={{
+          marginTop: '20px', paddingTop: '18px', borderTop: '1px solid var(--border-color)',
+          display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap',
+        }}>
+          <button
+            type="button"
+            className="primary-btn"
+            disabled={uebernimmt}
+            onClick={() => onUebernehmen({ mitStandardlaendern: mitLaendern })}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}
+          >
+            {uebernimmt && <span className="spinner" style={{ width: '14px', height: '14px', borderWidth: '2px', margin: 0 }} />}
+            {uebernimmt ? 'Wird übernommen...' : 'Fehlende Karten in die Sammlung übernehmen'}
+          </button>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={mitLaendern}
+              onChange={(e) => setMitLaendern(e.target.checked)}
+              style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+            />
+            Standardländer mit übernehmen
+          </label>
         </div>
       )}
 

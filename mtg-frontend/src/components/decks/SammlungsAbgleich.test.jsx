@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import SammlungsAbgleich from './SammlungsAbgleich';
 
 // Fachlicher Zweck: "Was aus diesem Deck habe ich schon, was muss ich noch
@@ -51,4 +52,61 @@ test('vollständiges Deck wird als solches gemeldet', () => {
   }} />);
 
   expect(screen.getByText('Du besitzt alle Karten dieses Decks.')).toBeInTheDocument();
+});
+
+test('der Übernahme-Knopf meldet die Auswahl nach oben', async () => {
+  const nutzer = userEvent.setup();
+  const uebernehmen = vi.fn();
+  render(<SammlungsAbgleich
+    daten={{ karten: [BOLT, BERG], benoetigt: 28, vorhanden: 2, fehlend: 2,
+             standardlaender_fehlend: 24, fehlender_wert: '6.00' }}
+    onUebernehmen={uebernehmen}
+  />);
+
+  await nutzer.click(screen.getByRole('button', { name: /Fehlende Karten in die Sammlung/ }));
+  expect(uebernehmen).toHaveBeenCalledWith({ mitStandardlaendern: false });
+
+  // Standardländer sind bewusst abgewählt -- wer sie will, hakt sie an.
+  await nutzer.click(screen.getByLabelText(/Standardländer mit übernehmen/));
+  await nutzer.click(screen.getByRole('button', { name: /Fehlende Karten in die Sammlung/ }));
+  expect(uebernehmen).toHaveBeenLastCalledWith({ mitStandardlaendern: true });
+});
+
+test('während der Übernahme ist der Knopf gesperrt', () => {
+  render(<SammlungsAbgleich
+    daten={{ karten: [BOLT], benoetigt: 4, vorhanden: 2, fehlend: 2,
+             standardlaender_fehlend: 0, fehlender_wert: '6.00' }}
+    onUebernehmen={() => {}}
+    uebernimmt
+  />);
+
+  expect(screen.getByRole('button', { name: /Wird übernommen/ })).toBeDisabled();
+});
+
+test('ohne fehlende Karten gibt es nichts zu übernehmen', () => {
+  render(<SammlungsAbgleich
+    daten={{ karten: [SOL], benoetigt: 1, vorhanden: 1, fehlend: 0,
+             standardlaender_fehlend: 0, fehlender_wert: '0.00' }}
+    onUebernehmen={() => {}}
+  />);
+
+  expect(screen.queryByRole('button', { name: /in die Sammlung/ })).not.toBeInTheDocument();
+});
+
+test('lange Fehlliste wird gekürzt und lässt sich aufklappen', async () => {
+  const nutzer = userEvent.setup();
+  const viele = Array.from({ length: 20 }, (_, i) => ({
+    name: `Karte ${i + 1}`, benoetigt: 2, vorhanden: 0, fehlt: 2,
+    preis: '1.00', standardland: false, gefunden: true,
+  }));
+  render(<SammlungsAbgleich daten={{
+    karten: viele, benoetigt: 40, vorhanden: 0, fehlend: 40,
+    standardlaender_fehlend: 0, fehlender_wert: '40.00',
+  }} />);
+
+  expect(screen.getByText('Karte 12')).toBeInTheDocument();
+  expect(screen.queryByText('Karte 13')).not.toBeInTheDocument();
+
+  await nutzer.click(screen.getByRole('button', { name: /Alle 20 fehlenden Karten anzeigen/ }));
+  expect(screen.getByText('Karte 20')).toBeInTheDocument();
 });

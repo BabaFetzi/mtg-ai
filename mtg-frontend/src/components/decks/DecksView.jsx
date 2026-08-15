@@ -222,6 +222,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const [validation, setValidation] = useState(null);
   const [manabasis, setManabasis] = useState(null);
   const [abgleich, setAbgleich] = useState(null);
+  const [uebernimmt, setUebernimmt] = useState(false);
   const [newDeckFormat, setNewDeckFormat] = useState("commander");
 
   const createInputRef = useRef(null);
@@ -507,6 +508,72 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       return;
     }
     setAnalyse(data);
+  };
+
+  // Fehlende Deckkarten in die Sammlung übernehmen. Angelegt werden genau die
+  // fehlenden Exemplare, deshalb ist ein zweiter Druck folgenlos.
+  const uebernehmeInSammlung = async ({ mitStandardlaendern }) => {
+    if (!selectedDeck?.id || uebernimmt || !abgleich) return;
+
+    const anzahl = (abgleich.fehlend || 0)
+      + (mitStandardlaendern ? (abgleich.standardlaender_fehlend || 0) : 0);
+    if (anzahl <= 0) {
+      melde.info("Dir fehlt keine Karte aus diesem Deck.");
+      return;
+    }
+
+    const ok = await bestaetige({
+      titel: "Karten in die Sammlung übernehmen?",
+      text: `${anzahl} ${anzahl === 1 ? 'Exemplar wird' : 'Exemplare werden'} im Ordner `
+        + `"${selectedDeck.name}" angelegt. Bereits vorhandene Karten bleiben unberührt.`,
+      bestaetigenText: "Ja, übernehmen",
+    });
+    if (!ok) return;
+
+    setUebernimmt(true);
+    try {
+      const res = await fetch(`/api/sammlung/aus-deck`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deck_id: selectedDeck.id,
+          album_name: selectedDeck.name,
+          mit_standardlaendern: !!mitStandardlaendern,
+        }),
+      });
+      if (res.status === 403 || res.status === 404) {
+        melde.fehler("Dieses Deck lässt sich nicht übernehmen.");
+        return;
+      }
+      const data = await res.json();
+      if (!data || !data.erfolg) {
+        melde.fehler("Die Karten konnten nicht übernommen werden.");
+        return;
+      }
+
+      if (data.hinzugefuegt === 0) {
+        melde.info("Es war nichts zu ergänzen -- du besitzt schon alles davon.");
+      } else {
+        melde.erfolg(`${data.hinzugefuegt} ${data.hinzugefuegt === 1 ? 'Karte' : 'Karten'} `
+          + `in "${data.album}" übernommen.`);
+      }
+      if (data.abgeschnitten > 0) {
+        melde.info(`${data.abgeschnitten} weitere Exemplare wurden nicht angelegt -- `
+          + `pro Vorgang sind es höchstens 250.`);
+      }
+
+      // Der Abgleich stimmt jetzt nicht mehr: neu holen statt raten.
+      const neu = await fetch(`/api/deck/abgleich`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deck_liste: selectedDeck.liste }),
+      }).then(r => r.json()).catch(() => null);
+      if (neu) setAbgleich(neu);
+    } catch {
+      melde.fehler("Keine Verbindung zum Server. Es wurde nichts übernommen.");
+    } finally {
+      setUebernimmt(false);
+    }
   };
 
   const ladeStatsUndAnalyse = async () => {
@@ -1554,7 +1621,11 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
               <Farbquellen daten={manabasis} />
 
               {/* === ABGLEICH MIT DER SAMMLUNG === */}
-              <SammlungsAbgleich daten={abgleich} />
+              <SammlungsAbgleich
+                daten={abgleich}
+                onUebernehmen={uebernehmeInSammlung}
+                uebernimmt={uebernimmt}
+              />
 
               {/* === MANAKURVE === */}
               {stats && stats.cmc && Object.keys(stats.cmc).length > 0 ? (

@@ -33,7 +33,8 @@ from sqlalchemy import text
 
 from auth import get_current_user
 from database import get_db_session, check_user_premium
-from services.scryfall import fetch_card_details_cached, preis_fuer_variante
+from services.bestand import bedarf_aus_deck, bestand_aus_zeilen, fehlende_exemplare
+from services.scryfall import fetch_card_details_cached, parse_decklist, preis_fuer_variante
 
 
 # ======================================================================
@@ -322,6 +323,15 @@ class DeleteAlbumData(BaseModel):
     benutzername: str
     album_name: str
 
+class DeckUebernahmeData(BaseModel):
+    """Fehlende Karten eines Decks in die Sammlung übernehmen."""
+    deck_id: int
+    album_name: str = ""
+    # Standardländer sind vom Deckbau her beliebig austauschbar und werden von
+    # den wenigsten Spielern einzeln erfasst -- deshalb standardmässig aus.
+    mit_standardlaendern: bool = False
+
+
 class AddKarteData(BaseModel):
     benutzername: str
     karten_name: str
@@ -430,6 +440,96 @@ async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_
              "sprache": (data.sprache or "").strip().lower() or None, **meta}
         )
     return {"erfolg": True}
+
+# ======================================================================
+# POST /api/sammlung/aus-deck – fehlende Deckkarten übernehmen
+# ======================================================================
+# Obergrenze pro Aufruf. Ein Deck hat höchstens 100 Karten; alles darüber wäre
+# ein Fehler in der Liste und soll die Datenbank nicht mit tausenden Zeilen
+# fluten.
+MAX_UEBERNAHME = 250
+
+
+@router.post(
+    "/sammlung/aus-deck",
+    summary="Fehlende Karten eines Decks in die Sammlung übernehmen",
+)
+async def sammlung_aus_deck(data: DeckUebernahmeData, current_user: str = Depends(get_current_user)):
+    """Legt die Exemplare an, die dem Deck in der Sammlung noch fehlen.
+
+    Bewusst nur die fehlenden: zweimal Drücken ändert beim zweiten Mal nichts.
+    Ein "alle Karten übernehmen" würde die Sammlung bei jedem Druck verdoppeln.
+
+    Gerechnet wird mit demselben Modul wie die Anzeige "was fehlt dir noch" --
+    sonst würde hier etwas anderes angelegt, als danebensteht.
+    """
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT id, name, liste, benutzername FROM decks WHERE id = :id"),
+            {"id": data.deck_id},
+        )
+        deck = res.mappings().first()
+
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck nicht gefunden.")
+    if deck["benutzername"] != current_user:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf dieses Deck.")
+
+    parsed = parse_decklist(deck["liste"] or "")
+    if not parsed:
+        return {"erfolg": True, "hinzugefuegt": 0, "album": data.album_name or deck["name"],
+                "uebersprungene_standardlaender": 0, "abgeschnitten": 0}
+
+    async with get_db_session() as session:
+        res = await session.execute(
+            text(
+                "SELECT karten_name, COUNT(*) AS anzahl FROM sammlung_alben "
+                "WHERE benutzername = :user AND karten_name != '__PLACEHOLDER__' "
+                "GROUP BY karten_name"
+            ),
+            {"user": current_user},
+        )
+        bestand = bestand_aus_zeilen(res.mappings().all())
+
+    scryfall_data = await fetch_card_details_cached(list({p["name"] for p in parsed}))
+    bedarf = bedarf_aus_deck(parsed, scryfall_data)
+    plan = fehlende_exemplare(bedarf, bestand,
+                              mit_standardlaendern=data.mit_standardlaendern,
+                              grenze=MAX_UEBERNAHME)
+
+    album = (data.album_name or "").strip() or deck["name"]
+
+    zeilen = []
+    for posten in plan["posten"]:
+        info = posten.get("info")
+        meta = karten_metadaten(info)
+        preis = preis_fuer_variante((info or {}).get("prices") or {}, foil=False) or posten["preis"]
+        for _ in range(posten["anzahl"]):
+            zeilen.append({
+                "user": current_user,
+                "name": posten["name"],
+                "album": album,
+                "url": posten["bild"],
+                "price": str(preis),
+                # Ausführung und Sprache kennt die Deckliste nicht -- beides
+                # bleibt offen, statt "normal, englisch" zu unterstellen.
+                "foil": False,
+                "sprache": None,
+                **meta,
+            })
+
+    if zeilen:
+        async with get_db_session() as session:
+            await session.execute(text(_SAMMLUNG_INSERT_SQL), zeilen)
+
+    return {
+        "erfolg": True,
+        "hinzugefuegt": len(zeilen),
+        "album": album,
+        "uebersprungene_standardlaender": plan["uebersprungene_standardlaender"],
+        "abgeschnitten": plan["abgeschnitten"],
+    }
+
 
 # ======================================================================
 # POST /api/sammlung/loeschen – Karte entfernen
