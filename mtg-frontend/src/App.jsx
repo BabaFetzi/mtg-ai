@@ -373,9 +373,9 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
 .proxy-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; margin-top: 20px; }
 
 /* --- KI JUDGE WIDGET (Mini) --- */
-.judge-widget-btn { position: fixed; bottom: 30px; right: 30px; width: 60px; height: 60px; border-radius: 50%; background: var(--accent-color); color: var(--accent-text); border: none; box-shadow: 0 10px 30px var(--shadow-color); cursor: pointer; z-index: 10000; transition: transform 0.2s; display: flex; align-items: center; justify-content: center; }
+.judge-widget-btn { position: fixed; bottom: 24px; right: 24px; width: 60px; height: 60px; border-radius: 50%; background: var(--accent-color); color: var(--accent-text); border: none; box-shadow: 0 10px 30px var(--shadow-color); cursor: pointer; z-index: 10000; transition: transform 0.2s; display: flex; align-items: center; justify-content: center; }
 .judge-widget-btn:hover { transform: scale(1.1); }
-.judge-chat-window { position: fixed; bottom: 100px; right: 30px; width: 350px; max-width: calc(100vw - 40px); max-height: min(500px, calc(100vh - 130px)); background: var(--bg-card); border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); border: 1px solid var(--border-color); z-index: 10000; display: flex; flex-direction: column; overflow: hidden; animation: slideUp 0.3s ease; }
+.judge-chat-window { position: fixed; bottom: 94px; right: 24px; width: 350px; max-width: calc(100vw - 40px); max-height: min(500px, calc(100vh - 130px)); background: var(--bg-card); border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); border: 1px solid var(--border-color); z-index: 10000; display: flex; flex-direction: column; overflow: hidden; animation: slideUp 0.3s ease; }
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 .judge-header { background: var(--accent-color); color: var(--accent-text); padding: 15px 20px; font-weight: 600; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center;}
 .judge-body { padding: 20px; overflow-y: auto; flex-grow: 1; max-height: 350px; font-size: 0.95rem; line-height: 1.5; color: var(--text-main); }
@@ -479,6 +479,18 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Einheitliches Raster für Deck- und Ordnerkacheln. Vorher 280px bei den
+   Decks, 260px bei den Ordnern und 220px im Standard-Raster -- dieselbe Art
+   Kachel sprang je nach Seite in der Breite. In rem statt px, damit eine
+   grössere Schriftgrösse im Browser das Raster mitzieht; min(100%, …)
+   verhindert das seitliche Überlaufen auf schmalen Fenstern. */
+.karten-raster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: 25px;
+  margin-top: 20px;
 }
 
 /* ==================================================================
@@ -633,6 +645,11 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
   gap: 10px;
   width: min(30rem, calc(100vw - 32px));
   pointer-events: none;
+}
+/* In schmalen Fenstern reicht die Einblendung bis unter den Judge-Knopf --
+   dann rutscht sie darüber, statt sich mit ihm zu überlagern. */
+@media (max-width: 700px) {
+  .meldungs-liste { bottom: 96px; }
 }
 .meldung {
   pointer-events: auto;

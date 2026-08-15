@@ -1211,7 +1211,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
               </div>
             </div>
           ) : (
-            <div className="gallery-grid" style={{gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))'}}>
+            <div className="gallery-grid karten-raster">
               {(decks || []).map((d, idx) => {
                 if(!d) return null;
                 const isCurrentActive = String(d.id) === String(deckId);

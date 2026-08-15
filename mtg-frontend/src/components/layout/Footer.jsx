@@ -19,7 +19,10 @@ function Footer() {
     <footer style={{
       borderTop: '1px solid var(--border-color)',
       background: 'var(--bg-main)',
-      padding: 'clamp(24px, 5vw, 40px) 20px',
+      // Unten zusätzlich Platz für den fest schwebenden Judge-Knopf
+      // (60px hoch, 24px über dem Rand). Ohne diese Reserve lag er am
+      // Seitenende genau über den Pflichtlinks.
+      padding: 'clamp(24px, 5vw, 40px) 20px calc(clamp(24px, 5vw, 40px) + 84px)',
       marginTop: '60px',
     }}>
       <div style={{

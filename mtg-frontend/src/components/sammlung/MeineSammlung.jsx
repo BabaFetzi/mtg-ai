@@ -433,12 +433,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                   </div>
                 </div>
               ) : (
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                  gap: '25px',
-                  marginBottom: '40px'
-                }}>
+                <div className="karten-raster" style={{ marginBottom: '40px' }}>
                   {Object.entries(portfolioAlben).map(([name, karten]) => {
                     const cardCount = karten.length;
                     const albumWert = berechneAlbumWert(karten);

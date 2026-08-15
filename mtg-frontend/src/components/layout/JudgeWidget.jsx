@@ -33,7 +33,13 @@ function JudgeWidget({ open, setOpen, currentUser, userRole, onShowPremiumModal 
 
   return (
     <>
-      <button className="judge-widget-btn" onClick={() => setOpen(!open)} title="Regelfragen klären">
+      <button
+        className="judge-widget-btn"
+        onClick={() => setOpen(!open)}
+        title="Regelfragen klären"
+        aria-label={open ? 'Rules Judge schliessen' : 'Rules Judge öffnen'}
+        aria-expanded={open}
+      >
         <Icons.Chat />
       </button>
       {open && (
