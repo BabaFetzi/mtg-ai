@@ -142,6 +142,21 @@ function MiniManaCurve({ cmcCurve, barWidth = 7, gap = 3, maxHeight = 28 }) {
   );
 }
 
+/**
+ * Was hat sich am ausgewählten Deck geändert?
+ *
+ * Vorher wurde nur die Deck-ID verglichen. Nach dem Bearbeiten lud die
+ * Deckliste zwar neu, das ausgewählte Deck behielt aber den alten Text --
+ * Analyse, Farbquellen und Sammlungsabgleich rechneten weiter auf dem alten
+ * Stand, bis man einmal das Deck wechselte. Genau das war der gemeldete
+ * "erst in ein anderes Menü wechseln"-Effekt.
+ */
+export function deckAenderung(bisher, neu) {
+  const anderesDeck = !bisher || String(bisher.id) !== String(neu?.id);
+  const listeGeaendert = !!bisher && !anderesDeck && (bisher.liste || "") !== (neu?.liste || "");
+  return { anderesDeck, listeGeaendert };
+}
+
 function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -669,15 +684,28 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     if (deckId && decks.length > 0) {
       const match = decks.find(d => String(d.id) === String(deckId));
       if (match) {
-        if (!selectedDeck || String(selectedDeck.id) !== String(match.id)) {
+        // Auch bei GLEICHER Deck-ID übernehmen, sobald sich die Kartenliste
+        // geändert hat. Vorher wurde nur auf die ID geprüft: nach dem
+        // Bearbeiten lud die Deckliste zwar neu, das ausgewählte Deck behielt
+        // aber den alten Text -- Analyse, Farbquellen und Sammlungsabgleich
+        // rechneten weiter auf dem alten Stand, bis man einmal das Deck
+        // wechselte.
+        const { anderesDeck, listeGeaendert } = deckAenderung(selectedDeck, match);
+
+        if (anderesDeck || listeGeaendert) {
           setSelectedDeck(match);
-          setSelectedFormat(match.format || "commander");
+          // Zwischenergebnisse gehören zur alten Liste und wären sonst falsch.
           setVisualDeck(null);
           setStats(null);
           setAnalyse(null);
           setDeckWert(null);
-          setRoastData(null);
-          setCompareDeckId("");
+          setManabasis(null);
+          setAbgleich(null);
+          if (anderesDeck) {
+            setSelectedFormat(match.format || "commander");
+            setRoastData(null);
+            setCompareDeckId("");
+          }
         }
       } else {
         setSelectedDeck(null);
