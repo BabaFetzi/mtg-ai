@@ -14,6 +14,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   const location = useLocation();
   const navigate = useNavigate();
   const currentTab = new URLSearchParams(location.search).get('tab') || 'alben';
+  const focusParam = new URLSearchParams(location.search).get('focus');
 
   const [alben, setAlben] = useState({});
   const [newAlbumName, setNewAlbumName] = useState("");
@@ -22,6 +23,19 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   const [ordnerFormularOffen, setOrdnerFormularOffen] = useState(false);
   const [legtOrdnerAn, setLegtOrdnerAn] = useState(false);
   const ordnerInputRef = useRef(null);
+
+  // "Neuen Ordner anlegen" aus der Navigation landet mit ?focus=neu hier und
+  // klappt das Feld auf -- sonst wäre der Menüpunkt nur ein Sprung auf die
+  // Übersicht und das Versprechen im Namen bliebe unerfüllt.
+  useEffect(() => {
+    if (currentTab !== 'alben' || focusParam !== 'neu') return undefined;
+    setOrdnerFormularOffen(true);
+    const t = setTimeout(() => {
+      ordnerInputRef.current?.focus();
+      ordnerInputRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [currentTab, focusParam]);
 
   const oeffneOrdnerFormular = () => {
     setOrdnerFormularOffen(true);

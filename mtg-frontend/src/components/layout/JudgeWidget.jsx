@@ -47,7 +47,14 @@ function JudgeWidget({ open, setOpen, currentUser, userRole, onShowPremiumModal 
           {userRole !== 'premium' && <PremiumOverlay onShowPremiumModal={onShowPremiumModal} />}
           <div className="judge-header">
             <span>Rules Judge</span>
-            <button onClick={() => setOpen(false)} style={{background: 'none', border: 'none', color: 'var(--accent-text)', cursor: 'pointer', fontSize: '1.2rem'}}>✕</button>
+            {/* 44px statt 28px: darunter trifft man auf dem Handy daneben. */}
+            <button
+              onClick={() => setOpen(false)}
+              aria-label="Judge-Fenster schliessen"
+              style={{background: 'none', border: 'none', color: 'var(--accent-text)', cursor: 'pointer', fontSize: '1.2rem', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '-8px -10px -8px 0'}}
+            >
+              ✕
+            </button>
           </div>
           <div className="judge-body">
             {(chat || []).map((m, i) => (

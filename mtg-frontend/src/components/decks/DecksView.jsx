@@ -327,7 +327,15 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
   const loescheDeck = async (id, name) => {
     const finalName = name || selectedDeck?.name || "Dieses Deck";
-    if(!window.confirm(`Möchtest du das Deck "${finalName}" wirklich löschen?`)) return;
+    // Letzter verbliebener nativer Dialog. Auf dem Handy zeigt der die
+    // technische Herkunftsadresse an und wirkt bei einem Bezahlprodukt unfertig.
+    const ok = await bestaetige({
+      titel: 'Deck löschen?',
+      text: `"${finalName}" wird mitsamt Kartenliste gelöscht. Das lässt sich nicht rückgängig machen.`,
+      bestaetigenText: 'Ja, löschen',
+      gefaehrlich: true,
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`/api/decks/loeschen`, {
         method: "POST",

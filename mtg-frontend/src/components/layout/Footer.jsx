@@ -13,6 +13,11 @@ function Footer() {
     textDecoration: 'none',
     fontSize: '0.88rem',
     whiteSpace: 'nowrap',
+    // Die Links waren 23px hoch -- auf dem Handy kaum zu treffen.
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: '44px',
+    padding: '0 2px',
   };
 
   return (

@@ -312,6 +312,41 @@ button:disabled, .primary-btn:disabled, .secondary-btn:disabled {
 .segmented-control { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; background: var(--btn-secondary); padding: 6px; border-radius: 12px; width: fit-content; margin-bottom: 40px; border: 1px solid var(--border-color); margin-left: auto; margin-right: auto;}
 .segment-btn { padding: 10px 24px; border: none; background: transparent; color: var(--text-muted); font-size: 0.95rem; font-weight: 600; cursor: pointer; border-radius: 8px; transition: all 0.2s; }
 .segment-btn.active { background: var(--bg-card); color: var(--text-main); box-shadow: 0 2px 8px var(--shadow-color); }
+/* Auf dem Handy waren die Reiter 37px hoch und die Gruppe umbrach in drei
+   Zeilen. 44px ist die Grösse, ab der man mit dem Daumen zuverlässig trifft;
+   statt umzubrechen scrollt die Gruppe jetzt seitlich. */
+@media (max-width: 900px) {
+  .segmented-control {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+    scrollbar-width: none;
+  }
+  .segmented-control::-webkit-scrollbar { display: none; }
+  /* Schattenkante an der Seite, auf der noch etwas kommt -- sonst sieht man
+     einer abgeschnittenen Reiterzeile nicht an, dass sie scrollt.
+     "local" bewegt die Deckfarbe mit dem Inhalt, "scroll" lässt den Schatten
+     stehen; überlagert sich beides, verschwindet der Schatten am Rand. */
+  .segmented-control {
+    background-image:
+      linear-gradient(to right, var(--btn-secondary), var(--btn-secondary)),
+      linear-gradient(to left, var(--btn-secondary), var(--btn-secondary)),
+      linear-gradient(to right, var(--shadow-color), transparent),
+      linear-gradient(to left, var(--shadow-color), transparent);
+    background-position: left center, right center, left center, right center;
+    background-repeat: no-repeat;
+    background-size: 24px 100%, 24px 100%, 14px 100%, 14px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+  .segment-btn {
+    min-height: 44px;
+    padding: 10px 18px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+}
 
 .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start;}
 @media (max-width: 900px) { .dashboard-grid { grid-template-columns: 1fr; } }
@@ -327,6 +362,25 @@ button:disabled, .primary-btn:disabled, .secondary-btn:disabled {
 .gallery-remove-btn { position: absolute; top: -10px; right: -10px; background: var(--danger-color); color: white; border: none; width: 28px; height: 28px; border-radius: 50%; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(255, 59, 48, 0.4); transition: transform 0.2s, opacity 0.2s; z-index: 10; opacity: 0; }
 .gallery-item:hover .gallery-remove-btn { opacity: 1; } 
 .gallery-remove-btn:hover { transform: scale(1.1); }
+/* Auf Geräten ohne Mauszeiger gibt es kein "Darüberfahren": der Knopf blieb
+   unsichtbar, war aber trotzdem anklickbar -- eine unsichtbare Löschtaste in
+   der Ecke jeder Kachel. Dort ist er jetzt sichtbar und gross genug. */
+@media (hover: none) {
+  .gallery-remove-btn {
+    opacity: 1;
+    width: 36px;
+    height: 36px;
+    top: 8px;
+    right: 8px;
+    /* Sichtbar, aber zurückhaltend: zwei knallrote Kreise pro Kachel würden
+       die Übersicht beherrschen. Rot wird er erst beim Antippen. */
+    background: var(--btn-secondary);
+    color: var(--text-muted);
+    box-shadow: none;
+    border: 1px solid var(--border-color);
+  }
+  .gallery-remove-btn:active { background: var(--danger-color); color: #fff; }
+}
 
 /* --- DECK BUILDER & VISUALIZER --- */
 .split-editor-container { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; margin-top: 30px; }
@@ -489,6 +543,147 @@ button:disabled, .primary-btn:disabled, .secondary-btn:disabled {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* ==================================================================
+   Handy-Navigation (siehe components/layout/AppleHeader.jsx)
+   Gemessen bei 375/390/430px: die waagrechte Linkliste lief aus dem
+   Bild -- "Grana Pro Upgrade" und das Konto lagen komplett ausserhalb
+   des Fensters. Die Unterpunkte öffneten sich ausserdem nur beim
+   Darüberfahren mit der Maus, was es auf dem Handy gar nicht gibt.
+   ================================================================== */
+.handy-leiste { display: none; }
+/* Die Kopfzeile liegt normalerweise unter dem schwebenden Judge-Knopf. Solange
+   die Handy-Navigation offen ist, muss sie darüber liegen -- sonst klebt der
+   Knopf mitten im Menü. */
+.apple-nav-container.handy-offen { z-index: 10001; }
+
+@media (max-width: 900px) {
+  .apple-nav-list { display: none; }
+  .global-mega-menu { display: none; }
+  .handy-leiste {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0 8px 0 12px;
+    height: 50px;
+  }
+  .apple-main-container { padding: 28px 5%; }
+  .content-card { padding: 22px; border-radius: 18px; }
+  /* Mehrere Knöpfe kamen mit engem Innenabstand auf 36px. Bewusst nur die
+     beiden Knopfklassen -- eine Regel für jedes <button> würde auch die
+     kleinen Symbolknöpfe (Anzahl +/-, Meldung schliessen) auseinanderziehen. */
+  .primary-btn, .secondary-btn { min-height: 44px; }
+}
+
+.handy-marke {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-main);
+  cursor: pointer;
+}
+.handy-schalter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 12px;
+  background: none;
+  color: var(--text-main);
+  cursor: pointer;
+}
+.handy-schalter[aria-expanded="true"] { background: var(--btn-secondary); }
+.handy-striche { display: flex; flex-direction: column; gap: 5px; width: 22px; }
+.handy-striche i {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.handy-striche.offen i:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.handy-striche.offen i:nth-child(2) { opacity: 0; }
+.handy-striche.offen i:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+@media (prefers-reduced-motion: reduce) {
+  .handy-striche i { transition: none; }
+}
+
+/* Absolut statt fest positioniert: die Kopfzeile hat backdrop-filter und wird
+   dadurch selbst zum Bezugsrahmen für position:fixed -- die Fläche wurde auf
+   die 50px hohe Leiste zusammengeschnitten. Die Leiste selbst steht fest,
+   also steht diese Fläche mit ihr. */
+.handy-navigation {
+  position: absolute;
+  top: 50px;
+  left: 0;
+  right: 0;
+  height: calc(100vh - 50px);
+  height: calc(100dvh - 50px);
+  z-index: 9998;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg-main);
+  padding: 12px 16px calc(28px + env(safe-area-inset-bottom, 0px));
+  text-align: left;
+}
+.handy-pro {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 14px;
+  border: 1px solid var(--price-color);
+  border-radius: 14px;
+  background: none;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--price-color);
+  cursor: pointer;
+}
+.handy-bereich { border-top: 1px solid var(--border-color); padding: 10px 0; }
+.handy-bereich-titel {
+  display: block;
+  width: 100%;
+  padding: 12px 4px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+.handy-bereich-titel.als-text { cursor: default; color: var(--text-muted); font-size: 1.1rem; }
+.handy-gruppe { padding: 4px 0 10px; }
+/* Mindestens 44px hoch -- darunter trifft man auf dem Handy daneben. */
+.handy-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 4px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--text-main);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.handy-link:active { background: var(--btn-secondary); border-radius: 10px; }
 
 /* Einheitliches Raster für Deck- und Ordnerkacheln. Vorher 280px bei den
    Decks, 260px bei den Ordnern und 220px im Standard-Raster -- dieselbe Art
