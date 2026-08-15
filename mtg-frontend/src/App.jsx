@@ -482,6 +482,142 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
 }
 
 /* ==================================================================
+   Konto-Menü in der Kopfzeile (siehe components/layout/AppleHeader.jsx)
+   Die sechs Farbkreise und der Hell/Dunkel-Schalter lagen dauerhaft
+   zwischen den Seitenlinks. Sie sind Einstellungen und sitzen jetzt
+   unter dem Benutzernamen.
+   ================================================================== */
+.konto-menu { position: relative; }
+.konto-knopf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.konto-knopf:hover { color: var(--text-main); border-color: var(--border-color); }
+.konto-knopf[aria-expanded="true"] {
+  color: var(--text-main);
+  border-color: var(--border-color);
+  background: var(--btn-secondary);
+}
+.konto-knopf:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+.konto-kuerzel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-color);
+  color: var(--bg-main);
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.konto-name { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.konto-pfeil { font-size: 0.7rem; opacity: 0.7; }
+
+.konto-klappe {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 10000;
+  width: 17rem;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: 0 12px 34px var(--shadow-color);
+  text-align: left;
+}
+.konto-kopf {
+  margin: 4px 10px 10px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.konto-kopf strong { color: var(--text-main); }
+.konto-gruppe { padding: 8px 0; border-top: 1px solid var(--border-color); }
+.konto-gruppe:first-of-type { border-top: none; padding-top: 0; }
+.konto-titel {
+  display: block;
+  padding: 0 10px 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.konto-eintrag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+.konto-eintrag:hover { background: var(--btn-secondary); }
+.konto-eintrag:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+
+.konto-farben { display: flex; flex-direction: column; }
+/* Die Farbkreise tragen jetzt ihren Namen -- ein Kreis allein war nicht
+   verständlich, ohne mit der Maus darauf zu warten. */
+.konto-farbe {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+.konto-farbe:hover { background: var(--btn-secondary); }
+.konto-farbe:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
+.konto-farbe > img,
+.konto-farbe-standard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.konto-farbe-standard {
+  background: var(--text-muted);
+  color: var(--bg-card);
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+.konto-farbe.aktiv { font-weight: 700; }
+.konto-farbe.aktiv > img,
+.konto-farbe.aktiv .konto-farbe-standard { border: 2px solid var(--accent-color); }
+.konto-farbe.aktiv .konto-farbe-name::after {
+  content: ' ✓';
+  color: var(--accent-color);
+}
+
+/* ==================================================================
    Rückmeldungen und Rückfragen (siehe components/layout/Meldungen.jsx)
    Ersetzen die nativen alert()/confirm()-Dialoge, die die Seite
    blockierten und auf dem Handy die technische Adresse anzeigten.

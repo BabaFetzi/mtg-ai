@@ -1,13 +1,43 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icons from '../../utils/Icons';
 import { FEATURES } from '../../config';
+
+// Die sechs Farbkreise standen dauerhaft neben den Seitenlinks und sahen aus
+// wie Bedienelemente für die Seite, auf der man gerade ist. Sie sind eine
+// Einstellung -- und Einstellungen gehören unter den Namen.
+const FARBWELTEN = [
+  { id: 'default', color: 'transparent', symbol: '', label: 'Standard' },
+  { id: 'plains', color: '#FAF8F5', symbol: 'https://svgs.scryfall.io/card-symbols/W.svg', label: 'Ebene' },
+  { id: 'island', color: '#070F18', symbol: 'https://svgs.scryfall.io/card-symbols/U.svg', label: 'Insel' },
+  { id: 'swamp', color: '#060608', symbol: 'https://svgs.scryfall.io/card-symbols/B.svg', label: 'Sumpf' },
+  { id: 'mountain', color: '#0E0707', symbol: 'https://svgs.scryfall.io/card-symbols/R.svg', label: 'Gebirge' },
+  { id: 'forest', color: '#050A06', symbol: 'https://svgs.scryfall.io/card-symbols/G.svg', label: 'Wald' },
+];
 
 function AppleHeader({ currentUser, setCurrentUser, isDarkMode, setIsDarkMode, setIsJudgeOpen, activeTheme, setActiveTheme }) {
   const navigate = useNavigate();
   const [hoveredNav, setHoveredNav] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [kontoOffen, setKontoOffen] = useState(false);
   const timeoutRef = useRef(null);
+  const kontoRef = useRef(null);
+
+  // Klick daneben und Escape schliessen das Konto-Menü -- sonst bleibt es
+  // offen stehen, während man schon wieder auf der Seite arbeitet.
+  useEffect(() => {
+    if (!kontoOffen) return undefined;
+    const beiKlick = (e) => {
+      if (kontoRef.current && !kontoRef.current.contains(e.target)) setKontoOffen(false);
+    };
+    const beiTaste = (e) => { if (e.key === 'Escape') setKontoOffen(false); };
+    document.addEventListener('mousedown', beiKlick);
+    window.addEventListener('keydown', beiTaste);
+    return () => {
+      document.removeEventListener('mousedown', beiKlick);
+      window.removeEventListener('keydown', beiTaste);
+    };
+  }, [kontoOffen]);
 
   const handleMouseEnter = (navItem) => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -55,55 +85,78 @@ function AppleHeader({ currentUser, setCurrentUser, isDarkMode, setIsDarkMode, s
         <li className="apple-nav-item" onMouseEnter={() => handleMouseEnter(null)}>
           <span className="apple-nav-link" onClick={() => {navigate('/premium'); setIsMenuOpen(false); setHoveredNav(null);}} style={{fontWeight: 700, color: 'var(--price-color)'}}>Grana Pro Upgrade</span>
         </li>
-        <li className="apple-nav-item" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '15px'}} onMouseEnter={() => handleMouseEnter(null)}>
-          {/* WUBRG theme circles */}
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginRight: '5px' }}>
-            {[
-              { id: 'plains', color: '#FAF8F5', symbol: 'https://svgs.scryfall.io/card-symbols/W.svg', label: 'Plains' },
-              { id: 'island', color: '#070F18', symbol: 'https://svgs.scryfall.io/card-symbols/U.svg', label: 'Island' },
-              { id: 'swamp', color: '#060608', symbol: 'https://svgs.scryfall.io/card-symbols/B.svg', label: 'Swamp' },
-              { id: 'mountain', color: '#0E0707', symbol: 'https://svgs.scryfall.io/card-symbols/R.svg', label: 'Mountain' },
-              { id: 'forest', color: '#050A06', symbol: 'https://svgs.scryfall.io/card-symbols/G.svg', label: 'Forest' },
-              { id: 'default', color: 'transparent', symbol: '', label: 'Standard' }
-            ].map(t => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setActiveTheme(t.id)}
-                style={{
-                  width: '18px',
-                  height: '18px',
-                  borderRadius: '50%',
-                  background: t.id === 'default' ? 'var(--text-muted)' : t.color,
-                  border: activeTheme === t.id ? '2px solid var(--accent-color)' : '1px solid var(--border-color)',
-                  cursor: 'pointer',
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.15s ease',
-                  transform: activeTheme === t.id ? 'scale(1.15)' : 'scale(1)',
-                  boxShadow: activeTheme === t.id ? '0 0 5px var(--accent-color)' : 'none',
-                  opacity: activeTheme === t.id ? 1 : 0.65
-                }}
-                title={`Theme: ${t.label}`}
-              >
-                {t.symbol ? (
-                  <img src={t.symbol} alt="" style={{ width: '12px', height: '12px' }} />
-                ) : (
-                  <span style={{ fontSize: '7px', fontWeight: 'bold', color: 'var(--bg-card)', lineHeight: 1 }}>D</span>
-                )}
-              </button>
-            ))}
-          </div>
+        <li className="apple-nav-item" style={{marginLeft: 'auto'}} onMouseEnter={() => handleMouseEnter(null)}>
+          <div className="konto-menu" ref={kontoRef}>
+            <button
+              type="button"
+              className="konto-knopf"
+              onClick={() => setKontoOffen((offen) => !offen)}
+              aria-expanded={kontoOffen}
+              aria-haspopup="true"
+            >
+              <span className="konto-kuerzel" aria-hidden="true">
+                {(currentUser || '?').charAt(0).toUpperCase()}
+              </span>
+              <span className="konto-name">{currentUser}</span>
+              <span className="konto-pfeil" aria-hidden="true">▾</span>
+            </button>
 
-          <button className="theme-toggle" onClick={() => setIsDarkMode(!isDarkMode)} title="Theme wechseln">
-            {isDarkMode ? <Icons.Sun /> : <Icons.Moon />}
-          </button>
-          <span className="apple-nav-link" style={{color: 'var(--text-muted)'}}>{currentUser}</span>
-        </li>
-        <li className="apple-nav-item" onMouseEnter={() => handleMouseEnter(null)}>
-          <span className="apple-nav-link" onClick={() => setCurrentUser(null)}>Abmelden</span>
+            {kontoOffen && (
+              <div className="konto-klappe">
+                <p className="konto-kopf">Angemeldet als <strong>{currentUser}</strong></p>
+
+                <div className="konto-gruppe">
+                  <span className="konto-titel">Darstellung</span>
+                  <button
+                    type="button"
+                    className="konto-eintrag"
+                    onClick={() => setIsDarkMode(!isDarkMode)}
+                  >
+                    {isDarkMode ? <Icons.Sun /> : <Icons.Moon />}
+                    {isDarkMode ? 'Helles Design' : 'Dunkles Design'}
+                  </button>
+                </div>
+
+                <div className="konto-gruppe">
+                  <span className="konto-titel">Farbwelt</span>
+                  <div className="konto-farben">
+                    {FARBWELTEN.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={`konto-farbe${activeTheme === t.id ? ' aktiv' : ''}`}
+                        onClick={() => setActiveTheme(t.id)}
+                        aria-pressed={activeTheme === t.id}
+                        title={t.label}
+                      >
+                        {t.symbol
+                          ? <img src={t.symbol} alt="" style={{ background: t.color }} />
+                          : <span className="konto-farbe-standard" aria-hidden="true">S</span>}
+                        <span className="konto-farbe-name">{t.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="konto-gruppe">
+                  <button
+                    type="button"
+                    className="konto-eintrag"
+                    onClick={() => { setKontoOffen(false); navigate('/premium'); }}
+                  >
+                    Abonnement verwalten
+                  </button>
+                  <button
+                    type="button"
+                    className="konto-eintrag"
+                    onClick={() => { setKontoOffen(false); setCurrentUser(null); }}
+                  >
+                    Abmelden
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </li>
       </ul>
 
