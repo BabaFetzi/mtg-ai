@@ -222,6 +222,15 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
 .primary-btn:hover { background: var(--accent-hover); }
 .secondary-btn { background: var(--btn-secondary); color: var(--text-main); border: none; padding: 14px 28px; border-radius: 980px; font-size: 1.05rem; font-weight: 500; cursor: pointer; transition: background 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none;}
 .secondary-btn:hover { background: var(--btn-secondary-hover); }
+/* Gesperrte Knöpfe sahen bisher aus wie bedienbare und färbten sich beim
+   Darüberfahren sogar noch ein. Wer während einer laufenden Aktion darauf
+   klickte, bekam keinerlei Rückmeldung. */
+button:disabled, .primary-btn:disabled, .secondary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.primary-btn:disabled:hover { background: var(--accent-color); }
+.secondary-btn:disabled:hover { background: var(--btn-secondary); }
 
 .market-btn { background: var(--price-color); color: white; border: none; padding: 14px 28px; border-radius: 980px; font-size: 1.05rem; font-weight: 500; cursor: pointer; transition: opacity 0.2s; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
 .market-btn:hover { opacity: 0.8; }

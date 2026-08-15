@@ -67,6 +67,39 @@ describe('DecksView – Deck-Übersicht', () => {
     expect(await screen.findByPlaceholderText('Deckname...')).toBeInTheDocument();
   });
 
+  test('"Deck anlegen" lässt sich nicht doppelt auslösen', async () => {
+    // Punkt 7: mit eingefügter Deckliste dauert das Anlegen spürbar, weil jede
+    // Karte nachgeschlagen wird. Vorher liess sich der Knopf in dieser Zeit
+    // mehrfach drücken -- das ergab mehrere gleiche Decks.
+    const nutzer = userEvent.setup();
+    let offeneAnfragen = 0;
+    global.fetch = vi.fn((url) => {
+      if (url === '/api/decks/erstellen') {
+        offeneAnfragen += 1;
+        return new Promise(() => {}); // bleibt absichtlich hängen
+      }
+      if (typeof url === 'string' && url.startsWith('/api/decks/')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => DECKS });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/decks?tab=overview&focus=create']}>
+        <DecksView currentUser="tester" userRole="premium" />
+      </MemoryRouter>
+    );
+
+    await nutzer.type(await screen.findByPlaceholderText('Deckname...'), 'Testdeck');
+    const knopf = screen.getByRole('button', { name: 'Deck anlegen' });
+    await nutzer.click(knopf);
+    await nutzer.click(knopf);
+    await nutzer.click(knopf);
+
+    expect(offeneAnfragen).toBe(1);
+    expect(screen.getByRole('button', { name: /wird angelegt/i })).toBeDisabled();
+  });
+
   test('ohne Decks öffnet "Liste eintragen" dasselbe Formular mit dem Importfeld', async () => {
     const nutzer = userEvent.setup();
     zeigeUebersicht('/decks?tab=overview', []);

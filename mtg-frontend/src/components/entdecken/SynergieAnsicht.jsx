@@ -249,7 +249,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
         {activeMode === 'single' && (
             <div className="search-bar-wrapper">
                 <input value={suche} onChange={(e) => setSuche(e.target.value)} placeholder="Kartennamen eingeben..." onKeyDown={(e) => e.key === 'Enter' && handleSearchSubmit()} style={{boxShadow: '0 8px 20px var(--shadow-color)'}} />
-                <button className="primary-btn" onClick={handleSearchSubmit}>{laedt ? "Analysiere..." : "Analysieren"}</button>
+                <button className="primary-btn" onClick={handleSearchSubmit} disabled={laedt}>{laedt ? "Analysiere..." : "Analysieren"}</button>
             </div>
         )}
         {activeMode === 'decks' && (
@@ -273,7 +273,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
                     <option value="" disabled>Bitte Deck auswählen...</option>
                     {userDecks.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
-                <button className="primary-btn" onClick={runScanner} disabled={userRole !== 'premium'}>{laedt ? "Scanne..." : "Scannen"}</button>
+                <button className="primary-btn" onClick={runScanner} disabled={laedt || userRole !== 'premium'}>{laedt ? "Scanne..." : "Scannen"}</button>
             </div>
         )}
         {activeMode === 'albums' && (
@@ -283,7 +283,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
                     <option value="" disabled>Bitte Album auswählen...</option>
                     {Object.keys(userAlbums || {}).map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
-                <button className="primary-btn" onClick={runScanner} disabled={userRole !== 'premium'}>{laedt ? "Scanne..." : "Scannen"}</button>
+                <button className="primary-btn" onClick={runScanner} disabled={laedt || userRole !== 'premium'}>{laedt ? "Scanne..." : "Scannen"}</button>
             </div>
         )}
       </div>

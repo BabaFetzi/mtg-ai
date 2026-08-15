@@ -20,6 +20,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
 
   // Wie bei den Decks: erst die Ordner, das Anlegen sitzt hinter einem Knopf.
   const [ordnerFormularOffen, setOrdnerFormularOffen] = useState(false);
+  const [legtOrdnerAn, setLegtOrdnerAn] = useState(false);
   const ordnerInputRef = useRef(null);
 
   const oeffneOrdnerFormular = () => {
@@ -140,14 +141,21 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   };
 
   const erstelleLeeresAlbum = async () => {
-    if(!newAlbumName.trim()) return;
+    if(!newAlbumName.trim() || legtOrdnerAn) return;
     const albumName = newAlbumName.trim();
+    setLegtOrdnerAn(true);
     try {
-      await fetch(`/api/sammlung/hinzufuegen`, { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ benutzername: currentUser, karten_name: "__PLACEHOLDER__", album_name: albumName, bild_url: "", preis: "0.00" }) 
+      const res = await fetch(`/api/sammlung/hinzufuegen`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ benutzername: currentUser, karten_name: "__PLACEHOLDER__", album_name: albumName, bild_url: "", preis: "0.00" })
       });
+      // Vorher wurde die Antwort gar nicht angesehen: schlug das Anlegen fehl,
+      // schloss sich das Feld trotzdem und der Ordner fehlte kommentarlos.
+      if (!res.ok) {
+        melde.fehler("Der Ordner konnte nicht angelegt werden. Bitte noch einmal versuchen.");
+        return;
+      }
       setNewAlbumName("");
       setOrdnerFormularOffen(false);
       setSelectedAlbum(albumName);
@@ -155,6 +163,9 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
       ladeGefilterteSammlung(activeFilters, albumName);
     } catch (e) {
       console.error(e);
+      melde.fehler("Keine Verbindung zum Server. Der Ordner wurde nicht angelegt.");
+    } finally {
+      setLegtOrdnerAn(false);
     }
   }
 
@@ -390,7 +401,14 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                     onKeyDown={e => e.key === 'Enter' && erstelleLeeresAlbum()}
                     style={{background: 'var(--input-bg)', border: 'none', padding: '10px 14px', flexGrow: 1, borderRadius: '8px', color: 'var(--text-main)'}}
                   />
-                  <button className="primary-btn" onClick={erstelleLeeresAlbum} style={{padding: '10px 20px'}}>Erstellen</button>
+                  <button
+                    className="primary-btn"
+                    onClick={erstelleLeeresAlbum}
+                    disabled={legtOrdnerAn || !newAlbumName.trim()}
+                    style={{padding: '10px 20px'}}
+                  >
+                    {legtOrdnerAn ? 'Wird angelegt...' : 'Erstellen'}
+                  </button>
                 </div>
               )}
 

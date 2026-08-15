@@ -231,8 +231,14 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     } catch { setDecks([]); }
   };
 
+  // Anlegen und Klonen laufen über denselben Endpunkt und dauern bei einer
+  // eingefügten Deckliste spürbar (jede Karte wird nachgeschlagen). Ohne Sperre
+  // liess sich der Knopf mehrfach drücken -- das ergab mehrere gleiche Decks.
+  const [legtAn, setLegtAn] = useState(false);
+
   const erstelleDeck = async () => {
-    if(!newDeckName) return;
+    if(!newDeckName || legtAn) return;
+    setLegtAn(true);
     try {
       const res = await fetch(`/api/decks/erstellen`, { 
         method: "POST", 
@@ -244,7 +250,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         onShowPremiumModal();
         return;
       }
-      
+
       const data = await res.json();
       if (data && data.erfolg) {
         setNewDeckName(""); setImportListe(""); setNewDeckFormat("commander");
@@ -263,10 +269,14 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       }
     } catch {
       melde.fehler("Fehler beim Erstellen des Decks.");
+    } finally {
+      setLegtAn(false);
     }
   };
 
   const kloneTemplateDeck = async (templateName, templateListe) => {
+    if (legtAn) return;
+    setLegtAn(true);
     try {
       const res = await fetch(`/api/decks/erstellen`, { 
         method: "POST", 
@@ -296,6 +306,8 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     } catch (e) {
       console.error(e);
       melde.fehler("Fehler beim Klonen des Decks.");
+    } finally {
+      setLegtAn(false);
     }
   };
 
@@ -1167,7 +1179,17 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                 </select>
               </div>
               <textarea ref={importRef} placeholder="Optional: Kopiere hier direkt eine komplette Deckliste hinein..." value={importListe} onChange={e => setImportListe(e.target.value)} style={{height: '100px', background: 'var(--input-bg)', marginBottom: '15px'}} />
-              <button className="primary-btn" onClick={erstelleDeck}>Deck anlegen</button>
+              <button
+                className="primary-btn"
+                onClick={erstelleDeck}
+                disabled={legtAn || !newDeckName.trim()}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}
+              >
+                {legtAn && <span className="spinner" style={{width: '14px', height: '14px', borderWidth: '2px', margin: 0}} />}
+                {legtAn
+                  ? (importListe.trim() ? 'Karten werden nachgeschlagen...' : 'Deck wird angelegt...')
+                  : 'Deck anlegen'}
+              </button>
             </div>
           )}
 
@@ -1203,10 +1225,11 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                 </div>
                 <button 
                   className="secondary-btn" 
-                  onClick={() => kloneTemplateDeck("Godo Commander Starter", "1 Godo, Bandit Warlord\n1 Helm of the Host\n1 Sol Ring\n1 Commander's Sphere\n1 Command Tower\n35 Mountain")} 
+                  onClick={() => kloneTemplateDeck("Godo Commander Starter", "1 Godo, Bandit Warlord\n1 Helm of the Host\n1 Sol Ring\n1 Commander's Sphere\n1 Command Tower\n35 Mountain")}
+                  disabled={legtAn}
                   style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginTop: '15px' }}
                 >
-                  <Copy size={16} /> Vorlage klonen
+                  <Copy size={16} /> {legtAn ? 'Wird geklont...' : 'Vorlage klonen'}
                 </button>
               </div>
             </div>
@@ -1336,9 +1359,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                   <button
                     className="secondary-btn"
                     onClick={() => kloneTemplateDeck("Godo Commander Starter", "1 Godo, Bandit Warlord\n1 Helm of the Host\n1 Sol Ring\n1 Commander's Sphere\n1 Command Tower\n35 Mountain")}
+                    disabled={legtAn}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginTop: '15px' }}
                   >
-                    <Copy size={16} /> Vorlage klonen
+                    <Copy size={16} /> {legtAn ? 'Wird geklont...' : 'Vorlage klonen'}
                   </button>
                 </div>
               </div>
@@ -2053,8 +2077,9 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
                 <div style={{textAlign: 'center'}}>
                   <button 
-                    className="primary-btn" 
+                    className="primary-btn"
                     onClick={holeRoast}
+                    disabled={roastLoading}
                     style={{
                       background: 'linear-gradient(135deg, #C4923E 0%, #9E7127 100%)',
                       color: 'white',
@@ -2072,8 +2097,9 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
             ) : (
               <div>
                 <button 
-                  className="primary-btn" 
+                  className="primary-btn"
                   onClick={holeRoast}
+                  disabled={roastLoading}
                   style={{
                     background: 'linear-gradient(135deg, #C4923E 0%, #9E7127 100%)',
                     color: 'white',
