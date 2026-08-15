@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
@@ -17,6 +17,19 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
 
   const [alben, setAlben] = useState({});
   const [newAlbumName, setNewAlbumName] = useState("");
+
+  // Wie bei den Decks: erst die Ordner, das Anlegen sitzt hinter einem Knopf.
+  const [ordnerFormularOffen, setOrdnerFormularOffen] = useState(false);
+  const ordnerInputRef = useRef(null);
+
+  const oeffneOrdnerFormular = () => {
+    setOrdnerFormularOffen(true);
+    requestAnimationFrame(() => {
+      ordnerInputRef.current?.focus();
+      ordnerInputRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
   const [updatingPrices, setUpdatingPrices] = useState(false);
   
   const [wishlistSearch, setWishlistSearch] = useState("");
@@ -136,6 +149,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
         body: JSON.stringify({ benutzername: currentUser, karten_name: "__PLACEHOLDER__", album_name: albumName, bild_url: "", preis: "0.00" }) 
       });
       setNewAlbumName("");
+      setOrdnerFormularOffen(false);
       setSelectedAlbum(albumName);
       ladeSammlung();
       ladeGefilterteSammlung(activeFilters, albumName);
@@ -284,8 +298,8 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
 
   return (
     <div className="apple-main-container">
-      <h2>Sammlung & Inventar.</h2>
-      <p style={{marginBottom: '40px', fontSize: '1.2rem'}}>Verwalte deine Magic: The Gathering Ordner, Finanzen und Exporte.</p>
+      {/* Siehe DecksView: eine Zeile statt eines Werbeblocks auf jedem Aufruf. */}
+      <h2 style={{fontSize: 'clamp(1.5rem, 3vw, 1.9rem)', marginBottom: '24px', textAlign: 'left'}}>Sammlung</h2>
 
       <div className="segmented-control">
         <button className={`segment-btn ${currentTab === 'alben' ? 'active' : ''}`} onClick={() => navigate('/sammlung?tab=alben')}>Ordner & Verwaltung</button>
@@ -299,19 +313,16 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
           {/* Overview Controls when selectedAlbum is null */}
           {selectedAlbum === null ? (
             <>
+              {/* Oben nur noch die Gesamtwert-Übersicht -- das Anlegefeld füllte
+                  hier den halben Bildschirm, obwohl man es selten braucht. */}
               <div style={{
                 display: 'flex',
-                justifyContent: 'space-between',
+                justifyContent: 'flex-end',
                 alignItems: 'center',
                 marginBottom: '35px',
                 gap: '20px',
                 flexWrap: 'wrap'
               }}>
-                <div style={{display: 'flex', gap: '15px', maxWidth: '500px', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexGrow: 1}}>
-                  <input id="new-album-input" placeholder="Neuer Ordnername..." value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} onKeyDown={e => e.key === 'Enter' && erstelleLeeresAlbum()} style={{background: 'var(--input-bg)', border: 'none', padding: '10px 14px', flexGrow: 1, borderRadius: '8px', color: 'var(--text-main)'}} />
-                  <button className="primary-btn" onClick={erstelleLeeresAlbum} style={{padding: '10px 20px'}}>Erstellen</button>
-                </div>
-                
                 <div style={{display: 'flex', gap: '20px', alignItems: 'center', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', flexWrap: 'wrap'}}>
                   <div style={{textAlign: 'right'}}>
                     <span style={{fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginRight: '15px', letterSpacing: '0.05em', display: 'block'}}>Zentraler Gesamtwert</span>
@@ -344,19 +355,45 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
               {/* Album Cards Grid */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '15px', flexWrap: 'wrap' }}>
                 <h3 style={{ fontSize: '1.5rem', margin: 0, fontWeight: 600 }}>Meine Ordner</h3>
-                {/* Direkter Einstieg zum Hinzufügen einzelner Karten -- führt zur
-                    Kartensuche, die den funktionierenden "Sichern"-Flow bietet.
-                    Vorher gab es in der Sammlungs-Ansicht keinen sichtbaren Weg,
-                    eine einzelne Karte hinzuzufügen. */}
-                <button
-                  className="primary-btn"
-                  onClick={() => navigate('/?view=search')}
-                  style={{ padding: '10px 18px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <Plus size={16} /> Karte hinzufügen
-                </button>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <button
+                    className="secondary-btn"
+                    onClick={() => (ordnerFormularOffen ? setOrdnerFormularOffen(false) : oeffneOrdnerFormular())}
+                    aria-expanded={ordnerFormularOffen}
+                    aria-controls="ordner-anlegen"
+                    style={{ padding: '10px 18px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    {ordnerFormularOffen ? 'Abbrechen' : <><FolderPlus size={16} /> Neuer Ordner</>}
+                  </button>
+                  {/* Direkter Einstieg zum Hinzufügen einzelner Karten -- führt zur
+                      Kartensuche, die den funktionierenden "Sichern"-Flow bietet.
+                      Vorher gab es in der Sammlungs-Ansicht keinen sichtbaren Weg,
+                      eine einzelne Karte hinzuzufügen. */}
+                  <button
+                    className="primary-btn"
+                    onClick={() => navigate('/?view=search')}
+                    style={{ padding: '10px 18px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Plus size={16} /> Karte hinzufügen
+                  </button>
+                </div>
               </div>
-              
+
+              {ordnerFormularOffen && (
+                <div id="ordner-anlegen" style={{display: 'flex', gap: '15px', maxWidth: '500px', background: 'var(--bg-card)', padding: '15px 25px', borderRadius: '16px', border: '1px solid var(--border-color)', boxShadow: '0 4px 15px var(--shadow-color)', marginBottom: '25px'}}>
+                  <input
+                    id="new-album-input"
+                    ref={ordnerInputRef}
+                    placeholder="Neuer Ordnername..."
+                    value={newAlbumName}
+                    onChange={e => setNewAlbumName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && erstelleLeeresAlbum()}
+                    style={{background: 'var(--input-bg)', border: 'none', padding: '10px 14px', flexGrow: 1, borderRadius: '8px', color: 'var(--text-main)'}}
+                  />
+                  <button className="primary-btn" onClick={erstelleLeeresAlbum} style={{padding: '10px 20px'}}>Erstellen</button>
+                </div>
+              )}
+
               {Object.keys(portfolioAlben).length === 0 ? (
                 <div className="bento-grid" style={{ marginTop: '20px', marginBottom: '40px' }}>
                   <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', textAlign: 'left' }}>
@@ -366,7 +403,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                       </h4>
                       <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle einen leeren Ordner, um deine physischen Karten zu katalogisieren.</p>
                     </div>
-                    <button className="primary-btn" onClick={() => document.getElementById('new-album-input')?.focus()} style={{ marginTop: '15px' }}>
+                    <button className="primary-btn" onClick={oeffneOrdnerFormular} style={{ marginTop: '15px' }}>
                       Ordner benennen
                     </button>
                   </div>

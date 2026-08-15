@@ -17,22 +17,31 @@ import { useMeldung } from '../layout/Meldungen';
 // Gruppierung ändert sich, damit bestehende Links (z.B. der focus=combos-
 // Sprung von der Deckliste zu Analyse & Stats) unangetastet bleiben.
 const TAB_GROUPS = [
-  { id: 'overview', label: 'Deck-Bibliothek', tabs: [
-      { tab: 'overview', label: 'Deck-Bibliothek' },
+  { id: 'overview', label: 'Meine Decks', tabs: [
+      { tab: 'overview', label: 'Meine Decks' },
     ] },
+  // "Deckliste" und "Text-Editor" sind zwei ANSICHTEN derselben Sache. Sie
+  // brauchen keine eigene Menüebene; der Umschalter sitzt im Inhalt.
   { id: 'edit', label: 'Bearbeiten', tabs: [
-      { tab: 'visual', label: 'Deckliste' },
-      { tab: 'editor', label: 'Text-Editor' },
+      { tab: 'visual', label: 'Bearbeiten' },
     ] },
-  { id: 'analyze', label: 'Analysieren', tabs: [
+  { id: 'analyze', label: 'Analyse', tabs: [
       { tab: 'stats', label: 'Analyse & Stats' },
       { tab: 'tuning', label: 'Tuning' },
       { tab: 'compare', label: 'Vergleich' },
     ] },
-  { id: 'extras', label: 'Extras', tabs: [
-      { tab: 'roast', label: 'Deck-Roast' },
-      { tab: 'proxy', label: 'Proxy-Druck' },
-    ] },
+  // "Extras" ist als Menüpunkt entfallen: Deck-Roast und Proxy-Druck sind
+  // Aktionen AM geöffneten Deck und stehen jetzt dort (siehe DECK_AKTIONEN),
+  // statt sich hinter einem Sammelbegriff zu verstecken. Die tab-Werte bleiben
+  // gültig, damit vorhandene Links weiter funktionieren.
+];
+
+// Werkzeuge, die sich auf das GEÖFFNETE Deck beziehen. Sie standen vorher
+// hinter dem Sammelbegriff "Extras" in der Hauptnavigation -- dort suchte sie
+// niemand. Jetzt liegen sie am Deck selbst.
+const DECK_AKTIONEN = [
+  { tab: 'roast', label: 'Deck-Roast' },
+  { tab: 'proxy', label: 'Proxy-Druck' },
 ];
 
 const FORMAT_LABELS = {
@@ -197,6 +206,22 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const [newDeckFormat, setNewDeckFormat] = useState("commander");
 
   const createInputRef = useRef(null);
+  const importRef = useRef(null);
+
+  // Das Anlageformular ist eingeklappt, damit die Deckliste sofort sichtbar ist.
+  // Wer noch kein Deck hat, sieht ohnehin die Startkarten und klappt es von dort auf.
+  const [formularOffen, setFormularOffen] = useState(false);
+
+  // Aufklappen und den Fokus erst setzen, wenn das Feld wirklich im DOM steht.
+  const oeffneFormular = (ziel = 'name') => {
+    setFormularOffen(true);
+    requestAnimationFrame(() => {
+      const feld = ziel === 'liste' ? importRef.current : createInputRef.current;
+      if (!feld) return;
+      feld.focus();
+      feld.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    });
+  };
 
   const ladeDecks = async () => {
     try { 
@@ -223,6 +248,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       const data = await res.json();
       if (data && data.erfolg) {
         setNewDeckName(""); setImportListe(""); setNewDeckFormat("commander");
+        setFormularOffen(false);
         const resList = await fetch(`/api/decks/${currentUser}`); 
         const dataList = await resList.json();
         if(Array.isArray(dataList)) {
@@ -629,13 +655,17 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     }
   }, [deckId, decks]);
 
+  // ?focus=create kommt von ausserhalb (z.B. Startseite) und meint "leg jetzt
+  // ein Deck an" -- dafür muss das eingeklappte Formular erst aufgehen.
   useEffect(() => {
-    if (currentTab === 'overview' && focusParam === 'create') {
-      if (createInputRef.current) {
-        createInputRef.current.focus();
-        createInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }
+    if (currentTab !== 'overview' || focusParam !== 'create') return;
+    setFormularOffen(true);
+    const t = setTimeout(() => {
+      if (!createInputRef.current) return;
+      createInputRef.current.focus();
+      createInputRef.current.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 0);
+    return () => clearTimeout(t);
   }, [currentTab, focusParam, decks]);
 
   useEffect(() => {
@@ -964,8 +994,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
   return (
     <div className="apple-main-container">
-      <h2>Deck-Management & Tools.</h2>
-      <p style={{marginBottom: '40px', fontSize: '1.2rem', color: 'var(--text-muted)'}}>Erstelle, editiere und analysiere deine Decks mit KI-Unterstützung.</p>
+      {/* Eine Zeile statt Überschrift plus Untertitel. Der alte Block kostete
+          rund 200px auf JEDEM Seitenaufruf und sagte jedes Mal dasselbe -- wer
+          angemeldet ist, weiss, wo er ist. Der Platz gehört dem Inhalt. */}
+      <h2 style={{fontSize: 'clamp(1.5rem, 3vw, 1.9rem)', marginBottom: '24px', textAlign: 'left'}}>Decks</h2>
 
       {/* TABS SEGMENTED CONTROL -- zweireihig: Gruppen oben, Untertabs der
           aktiven Gruppe direkt darunter (immer sichtbar, kein Hover/Klick
@@ -1088,34 +1120,57 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       {/* TABS OVERVIEW CONTENT */}
       {currentTab === 'overview' && (
         <>
-          <div className="content-card" style={{marginBottom: '50px', padding: '30px'}}>
-            <h4 style={{marginBottom: '15px'}}>Neues Deck erstellen</h4>
-            <div style={{display: 'flex', gap: '15px', marginBottom: '15px', flexWrap: 'wrap'}}>
-              <input 
-                ref={createInputRef}
-                placeholder="Deckname..." 
-                value={newDeckName} 
-                onChange={e => setNewDeckName(e.target.value)} 
-                style={{flexGrow: 1, background: 'var(--input-bg)'}} 
-              />
-              <select
-                value={newDeckFormat}
-                onChange={e => setNewDeckFormat(e.target.value)}
-                style={{padding: '10px 14px', borderRadius: '8px', background: 'var(--bg-main)', border: '1px solid var(--border-color)', color: 'var(--text-main)', width: 'auto'}}
-              >
-                <option value="commander">Commander / EDH</option>
-                <option value="standard">Standard</option>
-                <option value="modern">Modern</option>
-                <option value="pioneer">Pioneer</option>
-                <option value="legacy">Legacy</option>
-                <option value="vintage">Vintage</option>
-              </select>
-            </div>
-            <textarea placeholder="Optional: Kopiere hier direkt eine komplette Deckliste hinein..." value={importListe} onChange={e => setImportListe(e.target.value)} style={{height: '100px', background: 'var(--input-bg)', marginBottom: '15px'}} />
-            <button className="primary-btn" onClick={erstelleDeck}>Deck anlegen</button>
+          {/* Liste vor Formular: wer die Seite öffnet, will in aller Regel ein
+              vorhandenes Deck aufmachen -- nicht ein neues anlegen. Das
+              Anlegen sitzt deshalb hinter einem Knopf. */}
+          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '20px'}}>
+            <h3 style={{margin: 0, fontSize: '1.8rem'}}>
+              Meine Decks
+              {decks.length > 0 && (
+                <span style={{fontSize: '1rem', fontWeight: 500, color: 'var(--text-muted)', marginLeft: '10px'}}>
+                  {decks.length}
+                </span>
+              )}
+            </h3>
+            <button
+              className={formularOffen ? 'secondary-btn' : 'primary-btn'}
+              onClick={() => (formularOffen ? setFormularOffen(false) : oeffneFormular('name'))}
+              aria-expanded={formularOffen}
+              aria-controls="deck-anlegen"
+            >
+              {formularOffen ? 'Abbrechen' : '+ Neues Deck'}
+            </button>
           </div>
 
-          <h3 style={{marginBottom: '20px', fontSize: '1.8rem'}}>Meine Decks</h3>
+          {formularOffen && (
+            <div id="deck-anlegen" className="content-card" style={{marginBottom: '30px', padding: '30px'}}>
+              <h4 style={{marginBottom: '15px'}}>Neues Deck erstellen</h4>
+              <div style={{display: 'flex', gap: '15px', marginBottom: '15px', flexWrap: 'wrap'}}>
+                <input
+                  ref={createInputRef}
+                  placeholder="Deckname..."
+                  value={newDeckName}
+                  onChange={e => setNewDeckName(e.target.value)}
+                  style={{flexGrow: 1, background: 'var(--input-bg)'}}
+                />
+                <select
+                  value={newDeckFormat}
+                  onChange={e => setNewDeckFormat(e.target.value)}
+                  style={{padding: '10px 14px', borderRadius: '8px', background: 'var(--bg-main)', border: '1px solid var(--border-color)', color: 'var(--text-main)', width: 'auto'}}
+                >
+                  <option value="commander">Commander / EDH</option>
+                  <option value="standard">Standard</option>
+                  <option value="modern">Modern</option>
+                  <option value="pioneer">Pioneer</option>
+                  <option value="legacy">Legacy</option>
+                  <option value="vintage">Vintage</option>
+                </select>
+              </div>
+              <textarea ref={importRef} placeholder="Optional: Kopiere hier direkt eine komplette Deckliste hinein..." value={importListe} onChange={e => setImportListe(e.target.value)} style={{height: '100px', background: 'var(--input-bg)', marginBottom: '15px'}} />
+              <button className="primary-btn" onClick={erstelleDeck}>Deck anlegen</button>
+            </div>
+          )}
+
           {decks.length === 0 ? (
             <div className="bento-grid" style={{ marginTop: '20px' }}>
               <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -1123,7 +1178,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                   <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Neues Deck</h4>
                   <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle ein leeres Deck und füge manuell oder per KI-Tuning Karten hinzu.</p>
                 </div>
-                <button className="primary-btn" onClick={() => createInputRef.current?.focus()} style={{ marginTop: '15px' }}>
+                <button className="primary-btn" onClick={() => oeffneFormular('name')} style={{ marginTop: '15px' }}>
                   Jetzt erstellen
                 </button>
               </div>
@@ -1133,7 +1188,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                   <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>CSV / Text importieren</h4>
                   <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Kopiere eine Kartenliste direkt aus anderen Tools oben in das Textfeld.</p>
                 </div>
-                <button className="secondary-btn" onClick={() => document.querySelector('textarea')?.focus()} style={{ marginTop: '15px' }}>
+                {/* Vorher document.querySelector('textarea') -- das traf das
+                    erste beliebige Textfeld der Seite. Jetzt gezielt das
+                    Importfeld, das dafür erst aufgeklappt wird. */}
+                <button className="secondary-btn" onClick={() => oeffneFormular('liste')} style={{ marginTop: '15px' }}>
                   Liste eintragen
                 </button>
               </div>
@@ -1255,7 +1313,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                     <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>Neues Deck</h4>
                     <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Erstelle ein leeres Deck und füge manuell oder per KI-Tuning Karten hinzu.</p>
                   </div>
-                  <button className="primary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
+                  <button className="primary-btn" onClick={() => navigate('/decks?tab=overview&focus=create')} style={{ marginTop: '15px' }}>
                     Jetzt erstellen
                   </button>
                 </div>
@@ -1265,7 +1323,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                     <h4 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>CSV / Text importieren</h4>
                     <p style={{ fontSize: '0.9rem', margin: 0, color: 'var(--text-muted)' }}>Importiere eine Kartenliste direkt aus anderen Tools oder CSV.</p>
                   </div>
-                  <button className="secondary-btn" onClick={() => navigate('/decks?tab=overview')} style={{ marginTop: '15px' }}>
+                  <button className="secondary-btn" onClick={() => navigate('/decks?tab=overview&focus=create')} style={{ marginTop: '15px' }}>
                     Zur Importseite
                   </button>
                 </div>
@@ -1318,7 +1376,36 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
               ) : (
                 <>
                   {renderDeckStatsStreifen()}
+
+                  {/* Umschalter der beiden ANSICHTEN -- vorher war das eine
+                      eigene Menüebene ("Deckliste / Text-Editor"), obwohl es
+                      dieselbe Sache in zwei Darstellungen ist. */}
+                  <div style={{display: 'flex', gap: '8px', marginBottom: '16px'}}>
+                    {[['visual', 'Deckliste'], ['editor', 'Text-Editor']].map(([wert, beschriftung]) => (
+                      <button
+                        key={wert}
+                        className={`segment-btn ${currentTab === wert ? 'active' : ''}`}
+                        style={{padding: '7px 18px', fontSize: '0.85rem'}}
+                        onClick={() => navigate(`/decks?tab=${wert}${deckId ? `&deckId=${deckId}` : ''}`)}
+                      >
+                        {beschriftung}
+                      </button>
+                    ))}
+                  </div>
+
                   <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginBottom: '20px', flexWrap: 'wrap'}}>
+                    {/* Werkzeuge am Deck statt hinter "Extras" in der
+                        Hauptnavigation -- dort suchte sie niemand. */}
+                    {DECK_AKTIONEN.map(({ tab, label }) => (
+                      <button
+                        key={tab}
+                        className="secondary-btn"
+                        style={{padding: '16px 24px', fontSize: '1.05rem'}}
+                        onClick={() => navigate(`/decks?tab=${tab}${deckId ? `&deckId=${deckId}` : ''}`)}
+                      >
+                        {label}
+                      </button>
+                    ))}
                     <button className="secondary-btn" style={{padding: '16px 24px', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px'}} onClick={teileDeck}>
                        <Icons.Share /> Deck teilen
                     </button>
