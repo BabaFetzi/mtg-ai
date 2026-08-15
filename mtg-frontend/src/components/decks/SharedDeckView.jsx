@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { useMeldung } from '../layout/Meldungen';
 
 /**
  * Öffentliche, schreibgeschützte Ansicht eines geteilten Decks.
@@ -9,6 +10,7 @@ import { useParams } from 'react-router-dom';
  * /api/v1/shared/decks/{id}, der keine privaten Daten preisgibt.
  */
 function SharedDeckView() {
+  const { melde, bestaetige } = useMeldung();
   const { id } = useParams();
   const [deck, setDeck] = useState(null);
   const [status, setStatus] = useState('loading'); // loading | ok | notfound | error
@@ -45,7 +47,7 @@ function SharedDeckView() {
   const copyList = () => {
     if (!deck?.liste) return;
     navigator.clipboard?.writeText(deck.liste);
-    alert('Deckliste in die Zwischenablage kopiert!');
+    melde.erfolg('Deckliste in die Zwischenablage kopiert!');
   };
 
   const wrapStyle = { maxWidth: '760px', margin: '0 auto', padding: '48px 20px', fontFamily: 'inherit' };

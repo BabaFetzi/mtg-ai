@@ -4,6 +4,7 @@ import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
 import { Dice5 } from 'lucide-react';
 import { formatEuro } from '../../utils/format';
+import { useMeldung } from '../layout/Meldungen';
 
 const TAGS_POOL = [
   'Sol Ring', 'Mana Crypt', 'Jeweled Lotus', 'Ragavan', 'Sheoldred',
@@ -14,6 +15,7 @@ const TAGS_POOL = [
 ];
 
 function KartenSuche({ currentUser }) {
+  const { melde, bestaetige } = useMeldung();
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
   const initialQ = queryParams.get('q');
@@ -86,7 +88,7 @@ function KartenSuche({ currentUser }) {
 
   const speichereKarte = async (zielAlbum, zeigeAlert = true) => {
     const actP = karte?.prints?.[selectedPrintIndex];
-    if(!actP) return alert("Fehler beim Speichern der Karte.");
+    if(!actP) return melde.fehler("Fehler beim Speichern der Karte.");
     // Preis der gewählten Edition, falls echt; sonst bester Marktpreis der Karte.
     const speicherPreis = (actP.preis && actP.preis !== "N/A" && parseFloat(actP.preis) > 0)
       ? String(actP.preis)
@@ -98,15 +100,15 @@ function KartenSuche({ currentUser }) {
       });
       const data = await res.json();
       if (data && data.erfolg) { 
-        if(zeigeAlert) alert(`Gespeichert in "${zielAlbum}"!`); 
+        if(zeigeAlert) melde.erfolg(`Gespeichert in "${zielAlbum}"!`); 
         loadAlbums();
       } 
-    } catch { alert("Fehler."); }
+    } catch { melde.fehler("Fehler."); }
   }
 
   const handleSichernKlick = () => {
     const finalAlbumName = albumName.trim();
-    if(!finalAlbumName) return alert("Bitte Albumnamen eingeben.");
+    if(!finalAlbumName) return melde.fehler("Bitte Albumnamen eingeben.");
     speichereKarte(finalAlbumName, true);
   }
 
@@ -222,12 +224,12 @@ function KartenSuche({ currentUser }) {
                       setSuche(data.name);
                       triggerSearch(data.name);
                     } else {
-                      alert("Zufallskarte konnte nicht geladen werden.");
+                      melde.fehler("Zufallskarte konnte nicht geladen werden.");
                       setLaedt(false);
                     }
                   } catch (e) {
                     console.error("Failed to fetch random card", e);
-                    alert("Netzwerkfehler beim Laden einer Zufallskarte.");
+                    melde.fehler("Netzwerkfehler beim Laden einer Zufallskarte.");
                     setLaedt(false);
                   }
                 }}

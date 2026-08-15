@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
+import { useMeldung } from '../layout/Meldungen';
 
 function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
+  const { melde, bestaetige } = useMeldung();
   const [activeView, setActiveView] = useState("visual"); // "visual" | "text"
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -83,12 +85,12 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
       });
       const data = await res.json();
       if (data && data.erfolg) {
-        alert("Deck gespeichert.");
+        melde.erfolg("Deck gespeichert.");
         ladeDecks();
         parseDecklist(textList);
       }
     } catch {
-      alert("Fehler beim Speichern.");
+      melde.fehler("Fehler beim Speichern.");
     }
   };
 
@@ -208,7 +210,7 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
               <button className="primary-btn" onClick={handleTextSave}>Speichern</button>
               <button className="secondary-btn" onClick={() => {
                 navigator.clipboard.writeText(textList);
-                alert("Deckliste in Zwischenablage kopiert!");
+                melde.erfolg("Deckliste in Zwischenablage kopiert!");
               }}>Kopieren (Arena Export)</button>
             </div>
           </div>

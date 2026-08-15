@@ -7,8 +7,10 @@ import CollectionFilters from './CollectionFilters';
 import CollectionGrid from './CollectionGrid';
 import CSVImportExport from './CSVImportExport';
 import { formatEuro } from '../../utils/format';
+import { useMeldung } from '../layout/Meldungen';
 
 function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal }) {
+  const { melde, bestaetige } = useMeldung();
   const location = useLocation();
   const navigate = useNavigate();
   const currentTab = new URLSearchParams(location.search).get('tab') || 'alben';
@@ -101,7 +103,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   const handleRefreshPrices = async () => {
     if (userRole !== 'premium') {
       if (onShowPremiumModal) onShowPremiumModal();
-      else alert("Dieses Feature steht nur Premium-Mitgliedern zur Verfügung. Bitte upgrade deine Rolle!");
+      else melde.fehler("Dieses Feature steht nur Premium-Mitgliedern zur Verfügung. Bitte upgrade deine Rolle!");
       return;
     }
     setUpdatingPrices(true);
@@ -112,13 +114,13 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
       if (res.ok) {
         await ladeSammlung();
         await ladeGefilterteSammlung(activeFilters, selectedAlbum);
-        alert("Preise wurden erfolgreich aktualisiert!");
+        melde.erfolg("Preise wurden erfolgreich aktualisiert!");
       } else {
-        alert("Fehler beim Aktualisieren der Preise.");
+        melde.fehler("Fehler beim Aktualisieren der Preise.");
       }
     } catch (e) {
       console.error("Error refreshing prices:", e);
-      alert("Fehler beim Aktualisieren der Preise.");
+      melde.fehler("Fehler beim Aktualisieren der Preise.");
     } finally {
       setUpdatingPrices(false);
     }
@@ -224,7 +226,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
         const res = await fetch(`/api/suche/${encodeURIComponent(wishlistSearch)}?benutzername=${currentUser}`);
         const data = await res.json();
         if(data && data.error) {
-            alert("Karte nicht gefunden. Bitte Namen prüfen.");
+            melde.fehler("Karte nicht gefunden. Bitte Namen prüfen.");
         } else if (data && Array.isArray(data.prints) && data.prints.length > 0) {
             const actP = data.prints[0];
             // Bester Marktpreis als Fallback, falls der erste Print keinen echten Preis hat.
@@ -238,9 +240,9 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
             setWishlistSearch("");
             ladeSammlung();
         } else {
-            alert("Fehler: API hat keine Druck-Versionen für diese Karte geliefert.");
+            melde.fehler("Fehler: API hat keine Druck-Versionen für diese Karte geliefert.");
         }
-    } catch(e) { alert("Verbindungsfehler."); }
+    } catch(e) { melde.fehler("Verbindungsfehler."); }
     setIsWishlistAdding(false);
   }
 
@@ -258,7 +260,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
       const res = await fetch(`/api/suche/${encodeURIComponent(albumCardSearch.trim())}?benutzername=${currentUser}`);
       const data = await res.json();
       if (data && data.error) {
-        alert("Karte nicht gefunden. Bitte Namen prüfen.");
+        melde.fehler("Karte nicht gefunden. Bitte Namen prüfen.");
       } else if (data && Array.isArray(data.prints) && data.prints.length > 0) {
         const actP = data.prints[0];
         const preis = (actP?.preis && actP.preis !== "N/A" && parseFloat(actP.preis) > 0)
@@ -272,10 +274,10 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
         await ladeSammlung();
         await ladeGefilterteSammlung(activeFilters, selectedAlbum);
       } else {
-        alert("Fehler: Es wurden keine Druck-Versionen für diese Karte geliefert.");
+        melde.fehler("Fehler: Es wurden keine Druck-Versionen für diese Karte geliefert.");
       }
     } catch (e) {
-      alert("Verbindungsfehler.");
+      melde.fehler("Verbindungsfehler.");
     }
     setIsAlbumAdding(false);
   };

@@ -4,6 +4,7 @@ import { getScryfallImage, getFallbackCardImage } from '../../utils/scryfallHelp
 import { isPaywallResponse, handlePaywallResponse } from '../../utils/paywall';
 import PremiumOverlay from '../layout/PremiumOverlay';
 import { RefreshCw, Swords, Zap, HelpCircle, FileText } from 'lucide-react';
+import { useMeldung } from '../layout/Meldungen';
 
 const TOURNAMENT_COMBOS_POOL = [
   { format: "cEDH / Legacy", name: "Thassa's Oracle + Demonic Consultation", cards: ["Thassa's Oracle", "Demonic Consultation"], grund: "Exiliere deine gesamte Bibliothek für 1 schwarzes Mana und gewinne das Spiel auf der Stelle durch den ETB-Trigger von Thassa's Oracle." },
@@ -19,6 +20,7 @@ const TOURNAMENT_COMBOS_POOL = [
 ];
 
 function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
+  const { melde, bestaetige } = useMeldung();
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
   const initialCard = queryParams.get('card');
@@ -139,7 +141,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
       setCombos(normalizedCombos);
     } catch (e) {
       console.error(e);
-      alert("Analyse fehlgeschlagen.");
+      melde.fehler("Analyse fehlgeschlagen.");
     }
     setHasScanned(true);
     setLaedt(false);
@@ -157,7 +159,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
           listeFürKI = kartenImAlbum.map(k => k?.name || "").join('\n');
       }
 
-      if(!listeFürKI.trim()) { alert("Das ausgewählte Ziel ist leer."); setLaedt(false); return; }
+      if(!listeFürKI.trim()) { melde.erfolg("Das ausgewählte Ziel ist leer."); setLaedt(false); return; }
 
       try {
           const res = await fetch(`/api/scan_combos`, { 
@@ -170,7 +172,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
               if (isPaywallResponse(data)) {
                    handlePaywallResponse(data, onShowPremiumModal);
               } else {
-                   alert("KI Meldung: " + data.error);
+                   melde.info("KI Meldung: " + data.error);
               }
               setLaedt(false);
               return;
@@ -193,7 +195,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
           setCombos(normalizedCombos);
       } catch (err) {
           console.error(err);
-          alert("Fehler beim Scannen der Sammlung. Bitte API checken.");
+          melde.fehler("Fehler beim Scannen der Sammlung. Bitte API checken.");
       }
       setHasScanned(true);
       setLaedt(false);

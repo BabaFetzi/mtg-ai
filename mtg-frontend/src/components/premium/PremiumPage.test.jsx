@@ -2,11 +2,16 @@ import { MemoryRouter } from 'react-router-dom';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PremiumPage from './PremiumPage';
+import { MeldungProvider } from '../layout/Meldungen';
 
 function renderPremiumPage({ userRole, setUserRole = vi.fn() } = {}) {
   render(
     <MemoryRouter>
-      <PremiumPage currentUser="hovertest" userRole={userRole} setUserRole={setUserRole} />
+      {/* Mit Provider: Rückmeldungen laufen nicht mehr über window.alert,
+          sondern über sichtbare Einblendungen -- also wird auch das geprüft. */}
+      <MeldungProvider>
+        <PremiumPage currentUser="hovertest" userRole={userRole} setUserRole={setUserRole} />
+      </MeldungProvider>
     </MemoryRouter>
   );
   return { setUserRole };
@@ -57,12 +62,13 @@ describe('PremiumPage – Status-Anzeige je nach Rolle', () => {
     global.fetch.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
 
     await user.click(screen.getByRole('button', { name: 'Abo kündigen' }));
+    // Die Rückfrage läuft nicht mehr über window.confirm, sondern über einen
+    // eigenen Dialog -- also muss der Test sie auch bestätigen.
+    await user.click(await screen.findByRole('button', { name: 'Ja, kündigen' }));
 
-    await waitFor(() => {
-      expect(window.alert).toHaveBeenCalledWith(
-        'Deine Sitzung ist abgelaufen. Bitte logge dich erneut ein und versuche es noch einmal.'
-      );
-    });
+    expect(
+      await screen.findByText(/Sitzung ist abgelaufen/)
+    ).toBeInTheDocument();
     // Rolle darf bei einem Fehlschlag NICHT lokal auf "free" gesetzt werden.
     expect(setUserRole).not.toHaveBeenCalled();
   });
@@ -79,6 +85,9 @@ describe('PremiumPage – Status-Anzeige je nach Rolle', () => {
     });
 
     await user.click(screen.getByRole('button', { name: 'Abo kündigen' }));
+    // Die Rückfrage läuft nicht mehr über window.confirm, sondern über einen
+    // eigenen Dialog -- also muss der Test sie auch bestätigen.
+    await user.click(await screen.findByRole('button', { name: 'Ja, kündigen' }));
 
     // Persistente, eindeutige Rückmeldung im UI (statt eines flüchtigen Popups):
     await waitFor(() => {
@@ -107,6 +116,9 @@ describe('PremiumPage – Status-Anzeige je nach Rolle', () => {
     global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ erfolg: true }) });
 
     await user.click(screen.getByRole('button', { name: 'Abo kündigen' }));
+    // Die Rückfrage läuft nicht mehr über window.confirm, sondern über einen
+    // eigenen Dialog -- also muss der Test sie auch bestätigen.
+    await user.click(await screen.findByRole('button', { name: 'Ja, kündigen' }));
 
     await waitFor(() => {
       expect(setUserRole).toHaveBeenCalledWith('free');

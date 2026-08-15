@@ -1,8 +1,10 @@
 import { useState, useRef } from 'react';
 import Icons from '../../utils/Icons';
 import { UploadCloud, CheckCircle2, XCircle, FileText } from 'lucide-react';
+import { useMeldung } from '../layout/Meldungen';
 
 function CSVImportExport({ currentUser, ladeSammlung }) {
+  const { melde, bestaetige } = useMeldung();
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState(null);
   const [previewRows, setPreviewRows] = useState([]);
@@ -66,7 +68,7 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
 
   // 2. CSV Import action
   const handleImport = async () => {
-    if (!file) return alert("Bitte wähle zuerst eine Datei aus.");
+    if (!file) return melde.fehler("Bitte wähle zuerst eine Datei aus.");
     setImportStatus("importing");
     setProgress(10);
 
@@ -108,13 +110,13 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
               ladeSammlung();
             } else if (statusData.status === "failed") {
               setImportStatus("error");
-              alert(statusData.error || "Fehler beim Importieren der CSV.");
+              melde.info(statusData.error || "Fehler beim Importieren der CSV.");
             } else if (attempts >= MAX_IMPORT_POLLS) {
               // Harte Obergrenze: ohne sie lief die Statusabfrage endlos weiter,
               // wenn ein Import-Job nie abschloss (Fortschrittsbalken blieb bei
               // 95% stehen und es passierte für immer nichts).
               setImportStatus("error");
-              alert(
+              melde.fehler(
                 "Der Import dauert ungewöhnlich lange und wurde nicht bestätigt. " +
                 "Bitte lade die Sammlung neu und prüfe, ob die Karten angekommen sind."
               );
@@ -125,18 +127,18 @@ function CSVImportExport({ currentUser, ladeSammlung }) {
             }
           } catch (e) {
             setImportStatus("error");
-            alert("Fehler beim Abrufen des Import-Status.");
+            melde.fehler("Fehler beim Abrufen des Import-Status.");
           }
         };
         
         setTimeout(checkStatus, 1500);
       } else {
         setImportStatus("error");
-        alert(data.error || "Fehler beim Starten des CSV-Imports.");
+        melde.info(data.error || "Fehler beim Starten des CSV-Imports.");
       }
     } catch (e) {
       setImportStatus("error");
-      alert("Netzwerkfehler beim CSV-Import.");
+      melde.fehler("Netzwerkfehler beim CSV-Import.");
     }
   };
 

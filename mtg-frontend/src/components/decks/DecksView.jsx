@@ -8,6 +8,7 @@ import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw,
 import DeckEditor from './DeckEditor';
 import DeckAnalysis from './DeckAnalysis';
 import { formatEuro, formatZahl } from '../../utils/format';
+import { useMeldung } from '../layout/Meldungen';
 
 // Die 8 vormals gleichwertigen Tabs zu 4 Gruppen zusammengefasst (Bearbeiten /
 // Analysieren / Extras + die alleinstehende Deck-Bibliothek), damit die
@@ -53,6 +54,7 @@ const FORMATE_MIT_COMMANDER = new Set(['commander', 'brawl', 'oathbreaker', 'due
 // mindestens 60 -- dieselbe Logik wie im Statistik-Streifen über der
 // Deckliste, hier auch für die Deck-Bibliothek-Karten wiederverwendet.
 function getCardCountStatus(totalCards, format) {
+  const { melde, bestaetige } = useMeldung();
   const target = format === 'commander' ? 100 : 60;
   const legal = format === 'commander' ? totalCards === target : totalCards >= target;
   const label = format === 'commander' ? `${totalCards} / ${target}` : `${totalCards} / ${target}+`;
@@ -231,10 +233,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
           }
         }
       } else {
-        alert(data.error || "Fehler beim Erstellen des Decks.");
+        melde.info(data.error || "Fehler beim Erstellen des Decks.");
       }
     } catch {
-      alert("Fehler beim Erstellen des Decks.");
+      melde.fehler("Fehler beim Erstellen des Decks.");
     }
   };
 
@@ -263,11 +265,11 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
           }
         }
       } else {
-        alert(data.error || "Fehler beim Klonen des Decks.");
+        melde.info(data.error || "Fehler beim Klonen des Decks.");
       }
     } catch (e) {
       console.error(e);
-      alert("Fehler beim Klonen des Decks.");
+      melde.fehler("Fehler beim Klonen des Decks.");
     }
   };
 
@@ -277,11 +279,11 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       const res = await fetch(`/api/decks/update`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ deck_id: selectedDeck.id, deck_liste: selectedDeck.liste }) });
       const data = await res.json();
       if(data && data.erfolg) {
-        alert("Deck gespeichert.");
+        melde.erfolg("Deck gespeichert.");
         ladeDecks();
       }
     } catch {
-      alert("Fehler beim Speichern.");
+      melde.fehler("Fehler beim Speichern.");
     }
   };
 
@@ -296,12 +298,12 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       });
       const data = await res.json();
       if (data && data.erfolg) {
-        alert(`Deck "${finalName}" wurde gelöscht.`);
+        melde.erfolg(`Deck "${finalName}" wurde gelöscht.`);
         navigate('/decks?tab=overview');
         ladeDecks();
       }
     } catch {
-      alert("Fehler beim Löschen des Decks.");
+      melde.fehler("Fehler beim Löschen des Decks.");
     }
   };
 
@@ -317,12 +319,12 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       if (data && data.erfolg) {
         setSelectedDeck({ ...selectedDeck, liste: data.deck_liste });
         ladeDecks();
-        alert(`"${cardName}" zum Deck hinzugefügt!`);
+        melde.erfolg(`"${cardName}" zum Deck hinzugefügt!`);
       } else {
-        alert(data.error || "Fehler beim Hinzufügen.");
+        melde.info(data.error || "Fehler beim Hinzufügen.");
       }
     } catch {
-      alert("Fehlgeschlagen.");
+      melde.fehler("Fehlgeschlagen.");
     }
   };
 
@@ -338,12 +340,12 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       if (data && data.erfolg) {
         setSelectedDeck({ ...selectedDeck, liste: data.deck_liste });
         ladeDecks();
-        alert(`"${cardName}" aus dem Deck entfernt.`);
+        melde.erfolg(`"${cardName}" aus dem Deck entfernt.`);
       } else {
-        alert(data.error || "Fehler beim Entfernen.");
+        melde.info(data.error || "Fehler beim Entfernen.");
       }
     } catch {
-      alert("Fehlgeschlagen.");
+      melde.fehler("Fehlgeschlagen.");
     }
   };
 
@@ -374,7 +376,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       })
       .catch((err) => {
         console.error("Clipboard copy failed:", err);
-        alert("Kopieren fehlgeschlagen. Hier ist die Liste:\n\n" + text);
+        melde.info("Kopieren fehlgeschlagen. Hier ist die Liste:\n\n" + text);
       });
   };
 
@@ -400,7 +402,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       setRoastData(data);
     } catch (e) {
       console.error(e);
-      alert("Roast-Generierung fehlgeschlagen.");
+      melde.fehler("Roast-Generierung fehlgeschlagen.");
     } finally {
       setRoastLoading(false);
     }
@@ -411,9 +413,9 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     try {
       const res = await fetch(`/api/suche/${encodeURIComponent(quickSearch)}?benutzername=${currentUser}`);
       const data = await res.json();
-      if(!data.error) setQuickResult(data); else alert("Nicht gefunden.");
+      if(!data.error) setQuickResult(data); else melde.fehler("Nicht gefunden.");
     } catch {
-      alert("Fehlgeschlagen.");
+      melde.fehler("Fehlgeschlagen.");
     }
   };
 
@@ -506,14 +508,14 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       }
     } catch (err) {
       console.error("Fehler beim Visualisieren des Decks:", err);
-      alert("Fehler beim Laden der Bilder: " + err.message);
+      melde.info("Fehler beim Laden der Bilder: " + err.message);
     }
     setLaedt(false);
   };
 
   const startPlaytest = () => {
     if(!visualDeck || !Array.isArray(visualDeck) || visualDeck.length === 0) {
-        alert("Dein Deck konnte nicht visualisiert werden.");
+        melde.fehler("Dein Deck konnte nicht visualisiert werden.");
         return;
     }
     let deckArray = [];
@@ -584,7 +586,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     const link = `${window.location.origin}/shared/decks/${selectedDeck.id}`;
     try {
       await navigator.clipboard.writeText(link);
-      alert(`Teilen-Link kopiert:\n${link}\n\nJeder mit diesem Link kann dein Deck ansehen (schreibgeschützt).`);
+      melde.erfolg(`Teilen-Link kopiert:\n${link}\n\nJeder mit diesem Link kann dein Deck ansehen (schreibgeschützt).`);
     } catch {
       // Clipboard nicht verfügbar (z.B. ohne HTTPS): Link trotzdem anzeigen.
       window.prompt('Teilen-Link (kopieren mit Strg+C):', link);

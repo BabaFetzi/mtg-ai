@@ -17,6 +17,7 @@ import LandingPage from './components/layout/LandingPage'
 import MobileCamera from './components/playfield/MobileCamera'
 import PlayfieldView from './components/playfield/PlayfieldView'
 import Footer from './components/layout/Footer'
+import { useMeldung } from './components/layout/Meldungen'
 import Impressum from './components/legal/Impressum'
 import Datenschutz from './components/legal/Datenschutz'
 import AGB from './components/legal/AGB'
@@ -437,9 +438,138 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #0071E3
 .fade-in-img.loaded {
   opacity: 1;
 }
+
+/* ==================================================================
+   ACHTUNG: Diese Datei ist die EINZIGE Quelle globaler Stile.
+   src/App.css wird nirgends importiert -- Regeln dort bleiben wirkungslos.
+   ================================================================== */
+/* Kartentreffer im Deck-Editor: das Vorschaubild vergrössert sich beim
+   Darüberfahren, damit ähnliche Karten sicher unterscheidbar sind. Zwei
+   Fassungen derselben Karte waren bei Briefmarkengrösse nicht zu trennen. */
+.kartentreffer-bild {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transform-origin: left center;
+}
+.kartentreffer-bild:hover {
+  transform: scale(3.2);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  position: relative;
+  z-index: 20;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kartentreffer-bild { transition: none; }
+}
+
+/* Textlinks, die technisch Schaltflächen sind ("Passwort vergessen?",
+   "Konto erstellen"). Vorher waren das <span>-Elemente mit onClick: nicht per
+   Tastatur erreichbar und für Screenreader unsichtbar. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 4px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.link-button:hover { color: var(--text-main); }
+.link-button:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ==================================================================
+   Rückmeldungen und Rückfragen (siehe components/layout/Meldungen.jsx)
+   Ersetzen die nativen alert()/confirm()-Dialoge, die die Seite
+   blockierten und auf dem Handy die technische Adresse anzeigten.
+   ================================================================== */
+.meldungs-liste {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(30rem, calc(100vw - 32px));
+  pointer-events: none;
+}
+.meldung {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 14px 13px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-main);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  font-size: 0.93rem;
+  line-height: 1.45;
+  animation: meldung-auf 0.18s ease-out;
+}
+@keyframes meldung-auf {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meldung { animation: none; }
+}
+/* Der farbige Streifen trägt die Bedeutung zusätzlich zur Farbe --
+   allein über Farbe wäre sie für Farbenblinde nicht erkennbar, deshalb
+   steht die Aussage immer auch im Text. */
+.meldung::before {
+  content: '';
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.meldung-erfolg::before { background: var(--price-color, #3C6B45); }
+.meldung-fehler::before { background: var(--danger-color, #A32B22); }
+.meldung-info::before   { background: var(--accent-color); }
+.meldung-text { flex: 1; word-break: break-word; }
+.meldung-schliessen {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 1.2rem; line-height: 1;
+  padding: 0 2px; flex-shrink: 0;
+}
+.meldung-schliessen:hover { color: var(--text-main); }
+.meldung-schliessen:focus-visible {
+  outline: 2px solid var(--accent-color); outline-offset: 2px; border-radius: 4px;
+}
+
+.rueckfrage-hintergrund {
+  position: fixed; inset: 0; z-index: 100001;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.rueckfrage {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: clamp(20px, 5vw, 28px);
+  width: min(26rem, 100%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.rueckfrage-titel { font-size: 1.15rem; font-weight: 700; margin: 0 0 10px; color: var(--text-main); }
+.rueckfrage-text { color: var(--text-muted); margin: 0 0 22px; line-height: 1.55; font-size: 0.95rem; }
+.rueckfrage-knoepfe { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.gefahr-btn {
+  background: var(--danger-color, #A32B22); color: #fff; border: none;
+  padding: 10px 20px; border-radius: 10px; font-weight: 600; cursor: pointer;
+}
+.gefahr-btn:hover { filter: brightness(1.1); }
 `;
 
 function App() {
+  const { melde } = useMeldung();
   const [currentUser, setCurrentUser] = useState(localStorage.getItem("username") || null);
   const [userRole, setUserRole] = useState("free");
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -454,6 +584,16 @@ function App() {
     setTokens(token, refreshToken);
     setCurrentUser(username);
     setUserRole(role || "free");
+
+    // Nach abgelaufener Sitzung dorthin zurück, wo der Nutzer war -- nicht
+    // stumpf auf die Startseite. Der Merker wird dabei verbraucht.
+    try {
+      const zurueck = sessionStorage.getItem("nach-anmeldung");
+      if (zurueck) {
+        sessionStorage.removeItem("nach-anmeldung");
+        navigate(zurueck, { replace: true });
+      }
+    } catch { /* ohne sessionStorage bleibt es bei der Startseite */ }
   };
 
   const handleLogout = () => {
@@ -468,13 +608,22 @@ function App() {
   // "auth:logout" -- die App muss dann ihren Login-Zustand nachziehen.
   useEffect(() => {
     const onAuthLogout = () => {
+      // Vorher passierte das lautlos: Der Nutzer landete mitten in der Arbeit
+      // auf der Marketing-Startseite, ohne zu erfahren, warum. Jetzt gibt es
+      // eine Meldung, und die zuletzt geöffnete Seite wird gemerkt, damit die
+      // Anmeldung dorthin zurückführt statt auf die Startseite.
+      try {
+        const zurueck = window.location.pathname + window.location.search;
+        if (zurueck && zurueck !== "/") sessionStorage.setItem("nach-anmeldung", zurueck);
+      } catch { /* privater Modus: dann eben ohne Rücksprung */ }
       localStorage.removeItem("username");
       setCurrentUser(null);
       setUserRole("free");
+      melde.fehler("Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.");
     };
     window.addEventListener("auth:logout", onAuthLogout);
     return () => window.removeEventListener("auth:logout", onAuthLogout);
-  }, []);
+  }, [melde]);
 
   useEffect(() => {
     if (isDarkMode) document.body.classList.add('dark-mode');
@@ -528,7 +677,7 @@ function App() {
         .then(data => {
           if (cancelled) return;
           if (data && data.erfolg) {
-            alert("Upgrade erfolgreich durchgeführt! (Simulation)");
+            melde.erfolg("Upgrade erfolgreich durchgeführt! (Simulation)");
             setUserRole("premium");
           }
           // Query-Parameter immer entfernen, auch bei Fehlschlag -- sonst
@@ -554,7 +703,7 @@ function App() {
       let attempt = 0;
 
       const finishSuccess = () => {
-        alert("Upgrade erfolgreich durchgeführt! Vielen Dank.");
+        melde.erfolg("Upgrade erfolgreich durchgeführt! Vielen Dank.");
         setUserRole("premium");
         navigate('/premium', { replace: true });
       };
@@ -591,11 +740,9 @@ function App() {
             }
             attempt += 1;
             if (attempt >= MAX_ATTEMPTS) {
-              alert(
-                "Deine Zahlung wurde von Stripe bestätigt, aber dein Premium-Status ist " +
+              melde.fehler("Deine Zahlung wurde von Stripe bestätigt, aber dein Premium-Status ist " +
                 "noch nicht angekommen. Das kann kurz dauern -- lade die Seite in ein bis " +
-                "zwei Minuten neu. Falls es weiterhin nicht klappt, kontaktiere den Support."
-              );
+                "zwei Minuten neu. Falls es weiterhin nicht klappt, kontaktiere den Support.");
               navigate('/premium', { replace: true });
               return;
             }

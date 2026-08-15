@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import usePremiumPrice from './usePremiumPrice';
+import { useMeldung } from '../layout/Meldungen';
 
 const CheckIcon = ({ color = "var(--price-color)", size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: '2px' }}>
@@ -16,10 +17,11 @@ const LockIcon = ({ color = "var(--text-muted)", size = 18 }) => (
 );
 
 function PremiumPage({ currentUser, userRole, setUserRole }) {
+  const { melde, bestaetige } = useMeldung();
   const navigate = useNavigate();
   const { preisText, loading: preisLoading } = usePremiumPrice();
   // Persistente Rückmeldung nach einer Kündigung, damit das Ergebnis eindeutig
-  // sichtbar ist (statt nur eines kurzen alert()-Popups, das übersehen wird).
+  // sichtbar ist (statt nur eines kurzen melde.info()-Popups, das übersehen wird).
   const [cancelInfo, setCancelInfo] = useState(null); // { bis: "TT.MM.JJJJ" | null } oder "downgraded"
 
   return (
@@ -238,12 +240,14 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                   <button
                     className="secondary-btn"
                     onClick={async () => {
-                      if (!window.confirm(
-                        "Möchtest du dein Premium-Abo wirklich kündigen?\n\n" +
-                        "Premium bleibt bis zum Ende der bereits bezahlten Periode aktiv, danach wird nichts mehr abgebucht."
-                      )) {
-                        return;
-                      }
+                      const sicher = await bestaetige({
+                        titel: "Premium-Abo kündigen?",
+                        text: "Premium bleibt bis zum Ende der bereits bezahlten Periode aktiv, danach wird nichts mehr abgebucht.",
+                        bestaetigenText: "Ja, kündigen",
+                        abbrechenText: "Behalten",
+                        gefaehrlich: true,
+                      });
+                      if (!sicher) return;
                       try {
                         // Echte Self-Service-Kündigung: setzt das Stripe-Abo auf
                         // cancel_at_period_end. Das Downgrade auf 'free' erledigt
@@ -261,7 +265,7 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                         }
 
                         if (res.status === 401) {
-                          alert("Deine Sitzung ist abgelaufen. Bitte logge dich erneut ein und versuche es noch einmal.");
+                          melde.fehler("Deine Sitzung ist abgelaufen. Bitte logge dich erneut ein und versuche es noch einmal.");
                           return;
                         }
 
@@ -274,18 +278,18 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                             body: JSON.stringify({ benutzername: currentUser, rolle: 'free' })
                           });
                           if (resRole.ok) {
-                            alert("Für dieses Konto war kein Stripe-Abo hinterlegt (Test-Premium). Die Rolle wurde auf 'free' zurückgesetzt.");
+                            melde.fehler("Für dieses Konto war kein Stripe-Abo hinterlegt (Test-Premium). Die Rolle wurde auf 'free' zurückgesetzt.");
                             setUserRole("free");
                           } else {
-                            alert(data.error || "Kündigung fehlgeschlagen. Bitte kontaktiere den Support.");
+                            melde.info(data.error || "Kündigung fehlgeschlagen. Bitte kontaktiere den Support.");
                           }
                           return;
                         }
 
-                        alert(data.error || "Kündigung fehlgeschlagen. Bitte versuche es später erneut oder kontaktiere den Support.");
+                        melde.info(data.error || "Kündigung fehlgeschlagen. Bitte versuche es später erneut oder kontaktiere den Support.");
                       } catch (err) {
                         console.error("Kündigung fehlgeschlagen:", err);
-                        alert("Kündigung fehlgeschlagen (Netzwerkfehler). Bitte versuche es später erneut.");
+                        melde.fehler("Kündigung fehlgeschlagen (Netzwerkfehler). Bitte versuche es später erneut.");
                       }
                     }}
                     style={{
@@ -315,14 +319,14 @@ function PremiumPage({ currentUser, userRole, setUserRole }) {
                         const data = await res.json();
                         if (data && data.url) {
                           if (data.simulated) {
-                            alert("Stripe ist nicht konfiguriert. Wir leiten dich zur simulierten Upgrade-Seite weiter.");
+                            melde.fehler("Stripe ist nicht konfiguriert. Wir leiten dich zur simulierten Upgrade-Seite weiter.");
                           }
                           window.location.href = data.url;
                         } else {
-                          alert("Fehler beim Erstellen der Stripe-Session.");
+                          melde.fehler("Fehler beim Erstellen der Stripe-Session.");
                         }
                       } catch {
-                        alert("Verbindungsfehler zum Backend.");
+                        melde.fehler("Verbindungsfehler zum Backend.");
                       }
                     }}
                     style={{
