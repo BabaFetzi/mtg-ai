@@ -399,13 +399,23 @@ class FormatValidator:
             elif status == "not_legal":
                 errors.append(f"Die Karte '{scryfall_name}' ist in {format_name.capitalize()} nicht legal.")
             
-            # Pauper only allows commons
-            if format_name == "pauper":
-                rarity = info.get("rarity", "").lower()
-                # Sometimes a card is common in some set but Scryfall returns its default print rarity. 
-                # Scryfall has a "pauper" legality which we already checked via `legalities.get("pauper")`, so that's the primary check.
-                if status == "unknown" and "common" not in rarity:
-                    warnings.append(f"Karte '{scryfall_name}' Seltenheit ist '{rarity}'. Pauper erlaubt nur Commons.")
+            # Pauper: erlaubt ist jede Karte, die IRGENDWANN einmal als Common
+            # gedruckt wurde -- egal, wie selten der neueste Druck ist. Die
+            # Seltenheit aus den Kartendaten ist immer die des Standarddrucks
+            # und damit als Massstab untauglich: Lightning Bolt ist in
+            # neueren Ausgaben uncommon und trotzdem seit jeher Pauper-legal.
+            #
+            # Vorher wurde genau diese Seltenheit gemeldet ("Seltenheit ist
+            # 'rare', Pauper erlaubt nur Commons") -- eine falsche Aussage über
+            # eine legale Karte. Massgeblich ist die Pauper-Legalität, die
+            # Scryfall pro Karte über alle Drucke hinweg pflegt; die ist oben
+            # bereits geprüft. Hier bleibt nur der Fall, dass sie fehlt.
+            if format_name == "pauper" and status == "unknown":
+                warnings.append(
+                    f"Für '{scryfall_name}' liegen keine Legalitätsdaten vor. "
+                    "Pauper erlaubt nur Karten, die mindestens einmal als Common "
+                    "gedruckt wurden -- bitte selbst nachsehen."
+                )
 
         legal = len(errors) == 0
         return ValidationResult(
