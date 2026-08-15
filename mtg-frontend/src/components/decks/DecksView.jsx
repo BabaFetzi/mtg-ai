@@ -7,6 +7,7 @@ import PremiumOverlay from '../layout/PremiumOverlay';
 import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw, Infinity } from 'lucide-react';
 import DeckEditor from './DeckEditor';
 import Farbquellen from './Farbquellen';
+import SammlungsAbgleich from './SammlungsAbgleich';
 import DeckAnalysis from './DeckAnalysis';
 import { formatEuro, formatZahl } from '../../utils/format';
 import { useMeldung } from '../layout/Meldungen';
@@ -205,6 +206,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const [selectedFormat, setSelectedFormat] = useState("commander");
   const [validation, setValidation] = useState(null);
   const [manabasis, setManabasis] = useState(null);
+  const [abgleich, setAbgleich] = useState(null);
   const [newDeckFormat, setNewDeckFormat] = useState("commander");
 
   const createInputRef = useRef(null);
@@ -539,7 +541,10 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
     const p5 = fetch(`/api/deck/manabasis`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ deck_liste: selectedDeck.liste }) })
         .then(res => res.json()).then(data => setManabasis(data)).catch(() => setManabasis(null));
 
-    await Promise.all([p1, p2, p3, p4, p5]);
+    const p6 = fetch(`/api/deck/abgleich`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ deck_liste: selectedDeck.liste }) })
+        .then(res => res.json()).then(data => setAbgleich(data)).catch(() => setAbgleich(null));
+
+    await Promise.all([p1, p2, p3, p4, p5, p6]);
     setLaedt(false);
   };
 
@@ -1519,6 +1524,9 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
               {/* === FARBQUELLEN === */}
               <Farbquellen daten={manabasis} />
+
+              {/* === ABGLEICH MIT DER SAMMLUNG === */}
+              <SammlungsAbgleich daten={abgleich} />
 
               {/* === MANAKURVE === */}
               {stats && stats.cmc && Object.keys(stats.cmc).length > 0 ? (

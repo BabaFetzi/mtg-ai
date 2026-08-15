@@ -42,7 +42,7 @@ from services.ai_service import model, model_lite
 from services.manabasis import analysiere as analysiere_manabasis
 from services.limiter import limiter
 from services.usage_limiter import check_and_increment_ai_usage
-from format_engine import FormatValidator
+from format_engine import BASIC_LANDS, FormatValidator
 from schemas.models import (
     DeckErstellenReq,
     DeckUpdateReq,
@@ -380,6 +380,102 @@ async def deck_manabasis(req: DeckAnalyseReq, request: Request, current_user: st
     # in der Deckgrösse und verschieben damit jede Wahrscheinlichkeit.
     ergebnis["nicht_gefunden"] = sorted(set(unbekannt))[:20]
     return ergebnis
+
+
+# ======================================================================
+# POST /api/deck/abgleich – Was aus dem Deck liegt schon in der Sammlung?
+# ======================================================================
+@router.post(
+    "/deck/abgleich",
+    summary="Deck mit der eigenen Sammlung abgleichen",
+)
+@limiter.limit("30/minute")
+async def deck_abgleich(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
+    """Vergleicht die Deckliste mit der Sammlung des angemeldeten Nutzers.
+
+    Beantwortet die Frage, die sich bei jedem neuen Deck stellt: was davon habe
+    ich schon, was muss ich noch besorgen und was kostet das?
+
+    Jede Zeile in `sammlung_alben` ist genau ein physisches Exemplar -- die
+    Stückzahl ist also COUNT, nicht SUM(anzahl); diese Spalte wird von den
+    Inserts nie gefüllt.
+    """
+    parsed = parse_decklist(req.deck_liste)
+    if not parsed:
+        return {"karten": [], "benoetigt": 0, "vorhanden": 0, "fehlend": 0,
+                "fehlender_wert": "0.00", "standardlaender_fehlend": 0}
+
+    async with get_db_session() as session:
+        res = await session.execute(
+            text(
+                "SELECT karten_name, COUNT(*) AS anzahl FROM sammlung_alben "
+                "WHERE benutzername = :user AND karten_name != '__PLACEHOLDER__' "
+                "GROUP BY karten_name"
+            ),
+            {"user": current_user},
+        )
+        besitz_rows = res.mappings().all()
+
+    # Namen beidseitig gleich normalisieren. Doppelseitige Karten stehen in der
+    # Sammlung mal als "Vorderseite" und mal als "Vorderseite // Rückseite" --
+    # ohne diese Angleichung gilt dieselbe Karte als nicht vorhanden.
+    def schluessel(name: str) -> str:
+        name = (name or "").strip().lower()
+        return name.split("//")[0].strip()
+
+    besitz: Dict[str, int] = {}
+    for row in besitz_rows:
+        besitz[schluessel(row["karten_name"])] = besitz.get(schluessel(row["karten_name"]), 0) + int(row["anzahl"] or 0)
+
+    unique_names = list({p["name"] for p in parsed})
+    scryfall_data = await fetch_card_details_cached(unique_names)
+
+    # Gleiche Karte kann mehrfach in der Liste stehen (Hauptdeck + Sideboard).
+    bedarf: Dict[str, Dict[str, Any]] = {}
+    for p in parsed:
+        info = scryfall_data.get(p["name"].lower().strip())
+        anzeige = (info or {}).get("name") or p["name"]
+        k = schluessel(anzeige)
+        eintrag = bedarf.setdefault(k, {
+            "name": anzeige,
+            "benoetigt": 0,
+            "bild": (info or {}).get("image", ""),
+            "preis": (info or {}).get("price") or "0.00",
+            "standardland": k in BASIC_LANDS,
+            "gefunden": bool(info),
+        })
+        eintrag["benoetigt"] += int(p["count"])
+
+    karten = []
+    fehlender_wert = 0.0
+    fehlend_gesamt = 0
+    standardlaender_fehlend = 0
+    for k, eintrag in bedarf.items():
+        vorhanden = min(besitz.get(k, 0), eintrag["benoetigt"])
+        fehlt = eintrag["benoetigt"] - vorhanden
+        # Standardländer bekommt man in jedem Laden nachgeworfen -- sie als
+        # "fehlende Karten im Wert von X" zu führen, wäre irreführend.
+        if eintrag["standardland"]:
+            standardlaender_fehlend += fehlt
+        else:
+            fehlend_gesamt += fehlt
+            try:
+                fehlender_wert += float(eintrag["preis"] or 0) * fehlt
+            except (TypeError, ValueError):
+                pass
+        karten.append({**eintrag, "vorhanden": vorhanden, "fehlt": fehlt})
+
+    karten.sort(key=lambda k: (k["fehlt"] == 0, k["standardland"], -k["fehlt"], k["name"]))
+
+    benoetigt = sum(k["benoetigt"] for k in karten)
+    return {
+        "karten": karten,
+        "benoetigt": benoetigt,
+        "vorhanden": sum(k["vorhanden"] for k in karten),
+        "fehlend": fehlend_gesamt,
+        "standardlaender_fehlend": standardlaender_fehlend,
+        "fehlender_wert": f"{fehlender_wert:.2f}",
+    }
 
 
 # ======================================================================
