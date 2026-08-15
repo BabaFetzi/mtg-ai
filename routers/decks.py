@@ -39,6 +39,7 @@ from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist, build_deck_card_facts
 from services.ai_service import model, model_lite
+from services.manabasis import analysiere as analysiere_manabasis
 from services.limiter import limiter
 from services.usage_limiter import check_and_increment_ai_usage
 from format_engine import FormatValidator
@@ -346,6 +347,40 @@ async def deck_stats(req: DeckAnalyseReq, request: Request, current_user: str = 
         "cmc_noncreatures": cmc_noncreatures,
         "colors": color_counts
     }
+
+# ======================================================================
+# POST /api/deck/manabasis – Farbquellen gegen Farbbedarf
+# ======================================================================
+@router.post(
+    "/deck/manabasis",
+    summary="Farbquellen prüfen",
+)
+@limiter.limit("30/minute")
+async def deck_manabasis(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
+    """Prüft, ob die Länder zu den Farbanforderungen des Decks passen.
+
+    Sideboard-Karten bleiben aussen vor: gerechnet wird die Starthand des
+    Hauptdecks.
+    """
+    parsed = [p for p in parse_decklist(req.deck_liste) if not p.get("sideboard")]
+    unique_names = list({p["name"] for p in parsed})
+    scryfall_data = await fetch_card_details_cached(unique_names)
+
+    karten = []
+    unbekannt = []
+    for p in parsed:
+        info = scryfall_data.get(p["name"].lower().strip())
+        if info:
+            karten.append((p["count"], info))
+        else:
+            unbekannt.append(p["name"])
+
+    ergebnis = analysiere_manabasis(karten)
+    # Ehrlich benennen, worauf die Rechnung beruht: unbekannte Karten fehlen
+    # in der Deckgrösse und verschieben damit jede Wahrscheinlichkeit.
+    ergebnis["nicht_gefunden"] = sorted(set(unbekannt))[:20]
+    return ergebnis
+
 
 # ======================================================================
 # POST /api/deck/wert – Gesamtwert des Decks

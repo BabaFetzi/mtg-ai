@@ -6,6 +6,7 @@ import { isPaywallResponse, handlePaywallResponse, DEFAULT_PAYWALL_MESSAGE } fro
 import PremiumOverlay from '../layout/PremiumOverlay';
 import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw, Infinity } from 'lucide-react';
 import DeckEditor from './DeckEditor';
+import Farbquellen from './Farbquellen';
 import DeckAnalysis from './DeckAnalysis';
 import { formatEuro, formatZahl } from '../../utils/format';
 import { useMeldung } from '../layout/Meldungen';
@@ -203,6 +204,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const [quickResult, setQuickResult] = useState(null);
   const [selectedFormat, setSelectedFormat] = useState("commander");
   const [validation, setValidation] = useState(null);
+  const [manabasis, setManabasis] = useState(null);
   const [newDeckFormat, setNewDeckFormat] = useState("commander");
 
   const createInputRef = useRef(null);
@@ -532,7 +534,12 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       .then(data => setValidation(data))
       .catch(() => {});
 
-    await Promise.all([p1, p2, p3, p4]);
+    // Farbquellen: reine Rechnung auf den Kartendaten, kein Modellaufruf --
+    // deshalb auch für kostenlose Konten.
+    const p5 = fetch(`/api/deck/manabasis`, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ deck_liste: selectedDeck.liste }) })
+        .then(res => res.json()).then(data => setManabasis(data)).catch(() => setManabasis(null));
+
+    await Promise.all([p1, p2, p3, p4, p5]);
     setLaedt(false);
   };
 
@@ -1509,6 +1516,9 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                   </div>
                 );
               })()}
+
+              {/* === FARBQUELLEN === */}
+              <Farbquellen daten={manabasis} />
 
               {/* === MANAKURVE === */}
               {stats && stats.cmc && Object.keys(stats.cmc).length > 0 ? (

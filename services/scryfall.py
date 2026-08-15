@@ -394,6 +394,11 @@ def _extract_card_info(card_data: dict) -> Dict[str, Any]:
         "color_identity": card_data.get("color_identity", []),
         # rarity + set werden vom Sammlungs-Filter (Seltenheit / Edition) benötigt.
         # Fehlten sie hier, filterten diese beiden Kriterien immer auf 0 Treffer.
+        # produced_mana sagt, welche Farben eine Karte tatsächlich erzeugt --
+        # Grundlage der Farbquellen-Analyse. Scryfall lässt das Feld bei
+        # Karten ohne Manaproduktion weg; wir setzen es immer, damit ältere
+        # Cache-Einträge am fehlenden Schlüssel erkennbar bleiben.
+        "produced_mana": card_data.get("produced_mana", []),
         "rarity": card_data.get("rarity", ""),
         "set": card_data.get("set", ""),
         "set_name": card_data.get("set_name", ""),
@@ -505,9 +510,11 @@ MAX_FALLBACK_LOOKUPS = int(os.getenv("SCRYFALL_MAX_FALLBACK_LOOKUPS", "10"))
 
 
 def _is_stale(entry: Optional[dict]) -> bool:
-    """Eintrag stammt aus einer älteren Version (ohne Regeltext) -- verwendbar,
-    aber sollte irgendwann aufgefrischt werden."""
-    return bool(entry) and "oracle_text" not in entry
+    """Eintrag stammt aus einer älteren Version (ohne Regeltext oder ohne
+    produced_mana) -- verwendbar, aber sollte irgendwann aufgefrischt werden."""
+    if not entry:
+        return False
+    return "oracle_text" not in entry or "produced_mana" not in entry
 
 
 def _schedule_background_refresh(names: List[str]) -> None:
