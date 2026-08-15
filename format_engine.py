@@ -34,7 +34,10 @@ def parse_deck_bereiche(deck_liste: str) -> List[Tuple[int, str, bool, bool]]:
         # Check if this line is a section header
         if line.lower() in metadata_headers:
             current_section_is_commander = line.lower() == "commander"
-            current_section_is_sideboard = line.lower() == "sideboard"
+            # Ein Companion steht ausserhalb des Decks -- er zählt nicht zu den
+            # 100 bzw. 60 Karten. Bisher landete er im Hauptdeck und liess ein
+            # korrektes Deck als "101 Karten" durchfallen.
+            current_section_is_sideboard = line.lower() in {"sideboard", "companion"}
             continue
 
         if line.startswith('#') or line.startswith('//'):
@@ -111,6 +114,67 @@ UNLIMITED_COPY_CARDS = {
     "persistent petitioners",
     "templar knight"
 }
+
+def darf_commander_sein(info: dict) -> bool:
+    """Kann diese Karte ein Commander sein?
+
+    Bisher galt jede legendäre Kreatur ODER jeder Planeswalker als Commander.
+    Planeswalker dürfen es aber nur, wenn ihr Regeltext das ausdrücklich sagt
+    ("can be your commander") -- sonst wurden illegale Decks als legal
+    ausgewiesen. Umgekehrt gibt es Karten ohne legendären Kreaturentyp, die es
+    ausdrücklich erlauben; die werden jetzt erkannt.
+    """
+    typ = (info.get("type") or "").lower()
+    text = (info.get("oracle_text") or "").lower()
+
+    if "can be your commander" in text:
+        return True
+    return "legendary" in typ and "creature" in typ
+
+
+def partner_art(info: dict) -> Optional[str]:
+    """Erkennt, ob eine Karte einen zweiten Commander erlaubt.
+
+    Drei Mechaniken erlauben zwei Commander -- sie sind in Commander-Runden
+    sehr verbreitet und verändern die Farbidentität des Decks:
+      "Partner"            -> beliebiger anderer Partner
+      "Partner with NAME"  -> nur zusammen mit der genannten Karte
+      "Friends forever"    -> beliebiger anderer mit Friends forever
+      "Choose a Background" -> zusammen mit einer Hintergrund-Verzauberung
+    """
+    typ = (info.get("type") or "").lower()
+    text = (info.get("oracle_text") or "").lower()
+
+    if "background" in typ:
+        return "background"
+    if "choose a background" in text:
+        return "waehlt_background"
+    if "friends forever" in text:
+        return "friends_forever"
+    if re.search(r"\bpartner with\b", text):
+        return "partner_with"
+    if re.search(r"\bpartner\b", text):
+        return "partner"
+    return None
+
+
+def paar_erlaubt(a: dict, b: dict) -> bool:
+    """Dürfen diese beiden Karten gemeinsam Commander sein?"""
+    art_a, art_b = partner_art(a), partner_art(b)
+    if art_a is None or art_b is None:
+        return False
+    if {art_a, art_b} == {"waehlt_background", "background"}:
+        return True
+    if art_a == art_b in {"partner", "friends_forever"}:
+        return True
+    if "partner_with" in (art_a, art_b):
+        # Nur zusammen mit der namentlich genannten Karte.
+        def nennt(x, y):
+            text = (x.get("oracle_text") or "").lower()
+            return (y.get("name") or "").lower().split(",")[0] in text
+        return nennt(a, b) or nennt(b, a)
+    return False
+
 
 class FormatValidator:
     @staticmethod
@@ -213,14 +277,51 @@ class FormatValidator:
                 for c in tagged_commanders:
                     commander_identity.update(cards_info[c].get("color_identity", []))
                 warnings.append(f"Validiere Farben basierend auf dem explizit markierten Commander: {', '.join(commander_names)}")
+
+                # Wer als Commander markiert ist, muss auch einer sein dürfen.
+                for c in tagged_commanders:
+                    if not darf_commander_sein(cards_info[c]):
+                        errors.append(
+                            f"'{original_names[c]}' ist als Commander markiert, kann aber keiner sein. "
+                            "Commander muss eine legendäre Kreatur sein -- oder ausdrücklich erlauben, "
+                            "dein Commander zu sein."
+                        )
+
+                # Zwei Commander sind nur mit Partner, Friends forever oder
+                # einem Hintergrund erlaubt.
+                if len(tagged_commanders) == 2:
+                    a_info, b_info = cards_info[tagged_commanders[0]], cards_info[tagged_commanders[1]]
+                    if not paar_erlaubt(a_info, b_info):
+                        errors.append(
+                            f"'{commander_names[0]}' und '{commander_names[1]}' dürfen nicht gemeinsam "
+                            "Commander sein. Zwei Commander gehen nur mit \"Partner\", "
+                            "\"Friends forever\" oder einem Hintergrund."
+                        )
+                elif len(tagged_commanders) > 2:
+                    errors.append(
+                        f"{len(tagged_commanders)} Karten sind als Commander markiert. Erlaubt sind höchstens zwei."
+                    )
             else:
-                # Fallback to legendaries
-                legendaries = []
-                for norm_name, info in cards_info.items():
-                    type_line = info.get("type", "").lower()
-                    if "legendary" in type_line and ("creature" in type_line or "planeswalker" in type_line):
-                        legendaries.append(norm_name)
-                
+                # Fallback: Karten, die überhaupt Commander sein dürfen.
+                legendaries = [
+                    norm_name for norm_name, info in cards_info.items()
+                    if darf_commander_sein(info)
+                ]
+
+                # Ein erlaubtes Paar (Partner/Background) gilt zusammen als
+                # Commander -- sonst hiesse es hier fälschlich "mehrdeutig".
+                if len(legendaries) == 2 and paar_erlaubt(cards_info[legendaries[0]], cards_info[legendaries[1]]):
+                    commander_candidates = legendaries
+                    commander_names = [original_names[c] for c in legendaries]
+                    commander_identity = set()
+                    for c in legendaries:
+                        commander_identity.update(cards_info[c].get("color_identity", []))
+                    warnings.append(
+                        "Validiere Farben basierend auf beiden Commandern: "
+                        + " + ".join(commander_names)
+                    )
+                    legendaries = []  # unten nicht noch einmal behandeln
+
                 if len(legendaries) == 1:
                     primary = legendaries[0]
                     commander_identity = set(cards_info[primary].get("color_identity", []))
