@@ -294,3 +294,97 @@ def test_manaquelle_in_der_dritten_person_wird_erkannt():
     ausschliessen."""
     land = {"name": "Testland", "type": "Land", "oracle_text": "This land adds {G} instead."}
     assert erzeugte_farben(land) == {"G"}
+
+
+# ----------------------------------------------------------------------
+# Mulligan
+# ----------------------------------------------------------------------
+def test_mulligan_bringt_die_zahlen_auf_die_bekannten_werte():
+    """Ohne Mulligan rechnet die Prüfung strenger als die Wirklichkeit: sie
+    empfahl 16 Quellen für ein einzelnes Symbol auf Zug 1, die verbreiteten
+    Manabasis-Tabellen nennen 14.
+
+    Mit der hier angenommenen Regel (Hände mit weniger als 2 oder mehr als 5
+    Ländern werden geworfen, höchstens ein Mulligan) kommen genau die
+    bekannten Grössenordnungen heraus -- 60 Karten, 24 Länder, Ziel 90 %.
+    """
+    from services.manabasis import noetige_quellen_mit_mulligan as noetig
+
+    assert noetig(60, 24, 0, 1) == 14   # 1 Symbol auf Zug 1
+    assert noetig(60, 24, 1, 1) == 13   # 1 Symbol auf Zug 2
+    assert noetig(60, 24, 2, 1) == 12   # 1 Symbol auf Zug 3
+    assert noetig(60, 24, 1, 2) == 20   # 2 Symbole auf Zug 2
+    assert noetig(60, 24, 2, 2) == 19   # 2 Symbole auf Zug 3
+
+
+def test_mulligan_hilft_nur_schlechten_haenden():
+    """Die Regel darf die Zahl nicht einfach nach oben schieben: mit reichlich
+    Quellen ändert der Mulligan wenig, mit wenigen deutlich mehr."""
+    from services.manabasis import wahrscheinlichkeit_mit_mulligan as pm
+
+    viel_ohne = wahrscheinlichkeit(60, 24, 7, 1)
+    viel_mit = pm(60, 24, 24, 0, 1)
+    wenig_ohne = wahrscheinlichkeit(60, 12, 7, 1)
+    wenig_mit = pm(60, 12, 24, 0, 1)
+
+    assert viel_mit > viel_ohne
+    assert wenig_mit > wenig_ohne
+    assert (wenig_mit - wenig_ohne) > (viel_mit - viel_ohne)
+
+
+def test_unerreichbares_ziel_wird_als_solches_gemeldet():
+    """Drei Symbole auf Zug 3 sind mit 24 Ländern auch dann nicht sicher zu
+    haben, wenn ALLE davon die Farbe liefern. Dann hilft keine Umverteilung --
+    das muss die Antwort sagen statt eine unerfüllbare Zahl zu nennen."""
+    from services.manabasis import noetige_quellen_mit_mulligan as noetig
+
+    assert noetig(60, 24, 2, 3) == 0
+    assert noetig(60, 30, 2, 3) > 0
+
+
+def test_der_gemeldete_fall_reicht_jetzt():
+    """Das gemeldete Deck: 21 Länder (10 Gebirge, 9 Inseln, 2 für beide Farben)
+    und Eclipsed Flamekin ({1}{U/R}{U/R}). Vorher standen dort zwei Warnungen;
+    tatsächlich sind es 21 Quellen für zwei Symbole auf Zug 3."""
+    dual = karte("Dual", typ="Land", cmc=0, produced=["U", "R"])
+    deck = [
+        (10, BERG), (9, INSEL), (2, dual),
+        (4, karte("Eclipsed Flamekin", "{1}{U/R}{U/R}", cmc=3)),
+        (35, karte("Fueller", "{2}", cmc=2)),
+    ]
+    zeile = analysiere(deck)["farben"][0]
+
+    assert zeile["reicht"] is True
+    assert zeile["wahrscheinlichkeit"] > 0.95
+    assert zeile["fehlende_laender"] == 0
+
+
+# ----------------------------------------------------------------------
+# Manasteine und Manakreaturen
+# ----------------------------------------------------------------------
+def test_manastein_zaehlt_erst_ab_dem_zug_nach_seinen_kosten():
+    """Ein Stein für drei Mana hilft einer Karte auf Zug 3 nicht -- er wird
+    frühestens in diesem Zug selbst gespielt. Ab Zug 4 zählt er mit."""
+    stein = karte("Firdoch Core", "{3}", typ="Artifact", cmc=3,
+                  produced=["W", "U", "B", "R", "G"])
+    frueh = [(8, stein), (12, BERG), (4, karte("Dreidropp", "{2}{R}", cmc=3)), (36, INSEL)]
+    spaet = [(8, stein), (12, BERG), (4, karte("Vierdropp", "{3}{R}", cmc=4)), (36, INSEL)]
+
+    z_frueh = next(f for f in analysiere(frueh)["farben"] if f["farbe"] == "R")
+    z_spaet = next(f for f in analysiere(spaet)["farben"] if f["farbe"] == "R")
+
+    assert z_frueh["weitere_quellen"] == 8
+    assert z_frueh["weitere_quellen_rechtzeitig"] == 0
+    assert z_spaet["weitere_quellen_rechtzeitig"] == 8
+    assert z_spaet["quellen"] == 20
+    assert z_spaet["wahrscheinlichkeit"] > z_frueh["wahrscheinlichkeit"]
+
+
+def test_manakreatur_fuer_ein_mana_hilft_ab_zug_zwei():
+    vogel = karte("Birds of Paradise", "{G}", typ="Creature — Bird", cmc=1,
+                  produced=["W", "U", "B", "R", "G"])
+    deck = [(4, vogel), (10, BERG), (4, karte("Zweidropp", "{1}{R}", cmc=2)), (42, INSEL)]
+
+    zeile = next(f for f in analysiere(deck)["farben"] if f["farbe"] == "R")
+    assert zeile["weitere_quellen_rechtzeitig"] == 4
+    assert zeile["quellen"] == 14

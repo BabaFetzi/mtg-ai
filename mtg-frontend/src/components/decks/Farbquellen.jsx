@@ -91,7 +91,19 @@ function Zeile({ farbe }) {
       </div>
 
       <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {knapp ? (
+        {!knapp && <div style={{ fontWeight: 700, color: 'var(--price-color)' }}>reicht</div>}
+
+        {/* "empfohlen: 0" wäre sinnlos: erreichbar === false heisst, dass auch
+            jedes Land der Farbe nicht reichen würde. Dann hilft keine
+            Umverteilung, sondern nur mehr Länder oder eine weniger
+            farbintensive Karte. */}
+        {knapp && farbe.erreichbar === false && (
+          <div style={{ fontWeight: 700, color: 'var(--danger-color)' }}>
+            so nicht erreichbar
+          </div>
+        )}
+
+        {knapp && farbe.erreichbar !== false && (
           <>
             <div style={{ fontWeight: 700, color: 'var(--danger-color)' }}>
               {farbe.fehlende_laender} zu wenig
@@ -100,8 +112,6 @@ function Zeile({ farbe }) {
               empfohlen: {farbe.empfohlene_laender}
             </div>
           </>
-        ) : (
-          <div style={{ fontWeight: 700, color: 'var(--price-color)' }}>reicht</div>
         )}
       </div>
     </div>
@@ -112,6 +122,18 @@ function Farbquellen({ daten }) {
   if (!daten || !Array.isArray(daten.farben) || daten.farben.length === 0) return null;
 
   const knappe = daten.farben.filter((f) => !f.reicht);
+
+  // Zwei einfarbige Anforderungen, deren Empfehlungen zusammen mehr Quellen
+  // verlangen, als das Deck Länder hat: dann ist "10 Inseln mehr" kein Rat,
+  // den man befolgen kann. Was hilft, sind Länder, die beide Farben liefern.
+  const einfarbigKnapp = knappe.filter((f) => !f.hybrid && f.erreichbar !== false);
+  const summeEmpfohlen = einfarbigKnapp.reduce((s, f) => s + (f.empfohlene_laender || 0), 0);
+  const hinweisMehrfarbig = einfarbigKnapp.length > 1 && summeEmpfohlen > daten.laender_gesamt
+    ? `${einfarbigKnapp.map((f) => f.farbname).join(' und ')} bräuchten zusammen `
+      + `${summeEmpfohlen} Quellen, das Deck hat aber nur ${daten.laender_gesamt} Länder. `
+      + `Mehr Inseln oder Gebirge helfen hier nicht weiter — nötig sind Länder, `
+      + `die beide Farben liefern (Duale, Ländersucher), oder weniger farbintensive Karten.`
+    : null;
 
   return (
     <div className="analyse-block" style={{ marginBottom: '40px' }}>
@@ -132,13 +154,19 @@ function Farbquellen({ daten }) {
 
       {daten.farben.map((f) => <Zeile key={f.schluessel || f.farbe} farbe={f} />)}
 
+      {hinweisMehrfarbig && (
+        <p style={{ margin: '10px 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+          {hinweisMehrfarbig}
+        </p>
+      )}
+
       <p style={{ margin: '18px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
         Gerechnet wird die Wahrscheinlichkeit, bis zu dem Zug, in dem die Karte
         fällig ist, genug Quellen gezogen zu haben — auf dem Spiel (also eine
-        Karte weniger) und ohne Mulligan. Als ausreichend gilt ab
-        {' '}{prozent(daten.ziel)}. Manasteine und Manakreaturen sind getrennt
-        ausgewiesen: sie müssen erst gespielt werden und zählen deshalb nicht in
-        die Rechnung.
+        Karte weniger). Starthände mit weniger als zwei oder mehr als fünf
+        Ländern gelten als gemulligant, höchstens einmal. Als ausreichend gilt
+        ab {prozent(daten.ziel)}. Manasteine und Manakreaturen zählen ab dem Zug
+        nach ihren Kosten mit — vorher können sie noch nicht im Spiel sein.
       </p>
 
       {Array.isArray(daten.nicht_gefunden) && daten.nicht_gefunden.length > 0 && (

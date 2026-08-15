@@ -14,6 +14,7 @@ nachvollziehbare Rechnung und keine Faustregel.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from math import comb
 from typing import Any, Dict, Iterable, List, Tuple
 
@@ -151,6 +152,113 @@ def noetige_quellen(deckgroesse: int, gesehen: int, benoetigt: int,
     return 0
 
 
+# ----------------------------------------------------------------------
+# Mit Mulligan
+# ----------------------------------------------------------------------
+# Niemand behält eine Hand mit einem Land. Ohne diesen Schritt fällt die
+# Rechnung strenger aus als die Wirklichkeit -- sie empfiehlt Quellen, die
+# ein Deck gar nicht unterbringen kann.
+#
+# Angenommene Regel, bewusst einfach und benennbar:
+#   * Eine Starthand mit weniger als 2 oder mehr als 5 Ländern wird geworfen.
+#   * Es wird höchstens einmal gemulligant (London: sieben ziehen, eine
+#     zurücklegen -- zurückgelegt wird eine Karte, die keine Quelle ist).
+#   * Danach wird die Hand behalten, egal wie sie aussieht.
+# Alles darüber hinaus (zweiter Mulligan, Kartenauswahl beim Zurücklegen)
+# bliebe Geschmackssache und würde die Zahl nur scheingenau machen.
+MIN_LAENDER_KEEP = 2
+MAX_LAENDER_KEEP = 5
+STARTHAND = 7
+
+
+def _mehrfach_hyper(gesamt: int, gruppen: Tuple[int, ...], gezogen: Tuple[int, ...]) -> float:
+    """Wahrscheinlichkeit einer bestimmten Zusammensetzung beim Ziehen."""
+    rest_gruppe = gesamt - sum(gruppen)
+    rest_gezogen = sum(gezogen)
+    if rest_gruppe < 0:
+        return 0.0
+    zaehler = 1
+    for groesse, wieviel in zip(gruppen, gezogen):
+        if wieviel > groesse:
+            return 0.0
+        zaehler *= comb(groesse, wieviel)
+    uebrig = STARTHAND - rest_gezogen
+    if uebrig < 0 or uebrig > rest_gruppe:
+        return 0.0
+    zaehler *= comb(rest_gruppe, uebrig)
+    nenner = comb(gesamt, STARTHAND)
+    return zaehler / nenner if nenner else 0.0
+
+
+@lru_cache(maxsize=4096)
+def wahrscheinlichkeit_mit_mulligan(deckgroesse: int, quellen: int, laender: int,
+                                    zusatzkarten: int, benoetigt: int) -> float:
+    """P(genug Quellen), wenn schlechte Starthände geworfen werden.
+
+    `zusatzkarten` sind die nach der Starthand gezogenen Karten (auf dem Spiel
+    also Zug minus eins). `laender` ist die Gesamtzahl der Länder im Deck; sie
+    entscheidet, ob eine Hand behalten wird. `quellen` sind die Länder, die die
+    gesuchte Farbe liefern -- sie sind eine Teilmenge davon.
+    """
+    if benoetigt <= 0:
+        return 1.0
+    if deckgroesse <= 0 or quellen < benoetigt:
+        return 0.0
+    quellen = min(quellen, laender, deckgroesse)
+    laender = min(laender, deckgroesse)
+    andere_laender = laender - quellen
+
+    # Hand nach einem Mulligan: sieben ziehen, eine Nicht-Quelle zurücklegen.
+    # Wer sieben Quellen zieht, muss eine davon zurücklegen.
+    nach_mulligan = 0.0
+    for s in range(0, min(quellen, STARTHAND) + 1):
+        p = wahrscheinlichkeit_genau(deckgroesse, quellen, STARTHAND, s)
+        if p <= 0:
+            continue
+        behalten = min(s, STARTHAND - 1)
+        nach_mulligan += p * wahrscheinlichkeit(
+            deckgroesse - STARTHAND, quellen - s, zusatzkarten, benoetigt - behalten)
+
+    gesamt = 0.0
+    for s in range(0, min(quellen, STARTHAND) + 1):
+        for l in range(0, min(andere_laender, STARTHAND - s) + 1):
+            p = _mehrfach_hyper(deckgroesse, (quellen, andere_laender), (s, l))
+            if p <= 0:
+                continue
+            if MIN_LAENDER_KEEP <= s + l <= MAX_LAENDER_KEEP:
+                gesamt += p * wahrscheinlichkeit(
+                    deckgroesse - STARTHAND, quellen - s, zusatzkarten, benoetigt - s)
+            else:
+                gesamt += p * nach_mulligan
+    return gesamt
+
+
+def wahrscheinlichkeit_genau(deckgroesse: int, quellen: int, gezogen: int, treffer: int) -> float:
+    """P(GENAU `treffer` Quellen unter `gezogen` Karten)."""
+    if treffer > quellen or treffer > gezogen or deckgroesse <= 0:
+        return 0.0
+    nenner = comb(deckgroesse, gezogen)
+    if nenner == 0:
+        return 0.0
+    rest = deckgroesse - quellen
+    if gezogen - treffer > rest:
+        return 0.0
+    return comb(quellen, treffer) * comb(rest, gezogen - treffer) / nenner
+
+
+def noetige_quellen_mit_mulligan(deckgroesse: int, laender: int, zusatzkarten: int,
+                                 benoetigt: int, ziel: float = ZIEL_WAHRSCHEINLICHKEIT) -> int:
+    """Kleinste Quellenzahl, die das Ziel erreicht (0, wenn unerreichbar).
+
+    Mehr Quellen können nie schaden, die Wahrscheinlichkeit steigt monoton --
+    deshalb reicht das erste Erreichen.
+    """
+    for s in range(benoetigt, min(laender, deckgroesse) + 1):
+        if wahrscheinlichkeit_mit_mulligan(deckgroesse, s, laender, zusatzkarten, benoetigt) >= ziel:
+            return s
+    return 0
+
+
 def gesehene_karten(zug: int, auf_dem_spiel: bool = True) -> int:
     """Karten, die man bis einschliesslich `zug` gesehen hat.
 
@@ -173,16 +281,27 @@ def analysiere(karten: Iterable[Tuple[int, Dict[str, Any]]],
     # Vereinigung: ein Land, das Blau oder Rot liefert, bezahlt ein {U/R}
     # genau einmal -- doppelt zählen würde die Basis schönrechnen.
     land_farben: List[Tuple[int, set]] = []
-    andere_farben: List[Tuple[int, set]] = []
+    # Manasteine und Manakreaturen: mit ihren Kosten, denn sie stehen erst ab
+    # dem Zug danach zur Verfügung.
+    andere_farben: List[Tuple[int, set, int]] = []
 
     # Härtester Bedarf je Gruppe: (Symbolzahl, frühester Zug, Kartenname)
     haerteste: Dict[Tuple[str, ...], Tuple[int, int, str]] = {}
     gesamt_symbole: Dict[Tuple[str, ...], int] = {}
 
+    def kosten_von(info: Dict[str, Any]) -> int:
+        try:
+            return int(float(info.get("cmc") or 0))
+        except (TypeError, ValueError):
+            return 0
+
     for anzahl, info in karten:
         farben = erzeugte_farben(info)
         if farben:
-            (land_farben if _ist_land(info) else andere_farben).append((anzahl, farben))
+            if _ist_land(info):
+                land_farben.append((anzahl, farben))
+            else:
+                andere_farben.append((anzahl, farben, kosten_von(info)))
 
         if _ist_land(info):
             continue
@@ -190,11 +309,7 @@ def analysiere(karten: Iterable[Tuple[int, Dict[str, Any]]],
         bedarf = farbbedarf(info.get("mana_cost") or "")
         if not bedarf:
             continue
-        try:
-            zug = int(float(info.get("cmc") or 0))
-        except (TypeError, ValueError):
-            zug = 0
-        zug = max(1, min(zug or 1, MAX_ZUG))
+        zug = max(1, min(kosten_von(info) or 1, MAX_ZUG))
 
         for gruppe, anzahl_symbole in bedarf.items():
             gesamt_symbole[gruppe] = gesamt_symbole.get(gruppe, 0) + anzahl_symbole * anzahl
@@ -205,19 +320,40 @@ def analysiere(karten: Iterable[Tuple[int, Dict[str, Any]]],
                     or (anzahl_symbole == bisher[0] and zug < bisher[1])):
                 haerteste[gruppe] = (anzahl_symbole, zug, info.get("name", ""))
 
-    def quellen_fuer(gruppe: Tuple[str, ...], liste: List[Tuple[int, set]]) -> int:
+    def laender_fuer(gruppe: Tuple[str, ...]) -> int:
         ziel = set(gruppe)
-        return sum(anzahl for anzahl, farben in liste if farben & ziel)
+        return sum(anzahl for anzahl, farben in land_farben if farben & ziel)
+
+    def andere_fuer(gruppe: Tuple[str, ...], bis_zug: int = MAX_ZUG + 1) -> int:
+        """Manasteine und Manakreaturen der Gruppe.
+
+        `bis_zug` grenzt auf die ein, die bis dahin überhaupt im Spiel sein
+        können: ein Stein für drei Mana hilft einer Karte auf Zug 3 nicht, er
+        wird frühestens in diesem Zug selbst gespielt.
+        """
+        ziel = set(gruppe)
+        return sum(anzahl for anzahl, farben, kosten in andere_farben
+                   if farben & ziel and kosten < bis_zug)
+
+    landkarten = sum(a for a, i in karten if _ist_land(i))
 
     # Nur Gruppen, die das Deck tatsächlich verlangt. Eine Zeile "Weiss --
     # keine Karte verlangt diese Farbe" ist reines Rauschen.
     ergebnis: List[Dict[str, Any]] = []
     for gruppe in sorted(haerteste, key=lambda g: (len(g), [FARBEN.index(f) for f in g])):
         symbole, zug, kartenname = haerteste[gruppe]
-        gesehen = gesehene_karten(zug, auf_dem_spiel)
-        quellen = quellen_fuer(gruppe, land_farben)
-        p = wahrscheinlichkeit(deckgroesse, quellen, gesehen, symbole)
-        noetig = noetige_quellen(deckgroesse, gesehen, symbole)
+        # Auf dem Spiel: Starthand plus (Zug - 1) gezogene Karten.
+        zusatzkarten = max(0, zug - 1) + (0 if auf_dem_spiel else 1)
+        laender_der_gruppe = laender_fuer(gruppe)
+        # Rechtzeitige Manasteine zählen mit -- sie ganz auszunehmen stellt ein
+        # Deck mit acht solcher Quellen zu schlecht dar.
+        rechtzeitige_andere = andere_fuer(gruppe, bis_zug=zug)
+        quellen = laender_der_gruppe + rechtzeitige_andere
+
+        p = wahrscheinlichkeit_mit_mulligan(
+            deckgroesse, quellen, landkarten + rechtzeitige_andere, zusatzkarten, symbole)
+        noetig = noetige_quellen_mit_mulligan(
+            deckgroesse, landkarten + rechtzeitige_andere, zusatzkarten, symbole)
 
         ergebnis.append({
             # Schlüssel und Anzeigename für eine Gruppe: ("R", "U") wird zu
@@ -227,19 +363,25 @@ def analysiere(karten: Iterable[Tuple[int, Dict[str, Any]]],
             "farbe": gruppe[0],
             "farbname": "/".join(FARBNAMEN[f] for f in gruppe),
             "hybrid": len(gruppe) > 1,
-            "laender": quellen,
-            "weitere_quellen": quellen_fuer(gruppe, andere_farben),
+            "laender": laender_der_gruppe,
+            "quellen": quellen,
+            "weitere_quellen": andere_fuer(gruppe),
+            "weitere_quellen_rechtzeitig": rechtzeitige_andere,
             "symbole_gesamt": gesamt_symbole.get(gruppe, 0),
             "haertester_bedarf": symbole,
             "haerteste_karte": kartenname,
             "zug": zug,
             "wahrscheinlichkeit": round(p, 3),
+            # noetig == 0 heisst: auch wenn JEDES Land der Gruppe zählen
+            # würde, wird das Ziel nicht erreicht. Dann hilft keine
+            # Umverteilung, sondern nur mehr Länder oder eine weniger
+            # farbintensive Karte.
             "empfohlene_laender": noetig,
-            "fehlende_laender": max(0, noetig - quellen),
+            "erreichbar": noetig > 0,
+            "fehlende_laender": max(0, noetig - quellen) if noetig else 0,
             "reicht": bool(symbole == 0 or p >= ZIEL_WAHRSCHEINLICHKEIT),
         })
 
-    landkarten = sum(a for a, i in karten if _ist_land(i))
     return {
         "deckgroesse": deckgroesse,
         "laender_gesamt": landkarten,

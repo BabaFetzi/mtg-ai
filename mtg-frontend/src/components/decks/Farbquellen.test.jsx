@@ -57,7 +57,9 @@ test('passende Manabasis wird als solche gemeldet', () => {
 test('die Annahme hinter der Zahl steht dabei', () => {
   render(<Farbquellen daten={daten([BLAU_OK])} />);
 
-  expect(screen.getByText(/ohne Mulligan/)).toBeInTheDocument();
+  // Seit die Rechnung den Mulligan einschliesst, steht die Regel dort statt
+  // des früheren "ohne Mulligan".
+  expect(screen.getByText(/weniger als zwei oder mehr als fünf Ländern/)).toBeInTheDocument();
   expect(screen.getByText(/90 %/)).toBeInTheDocument();
 });
 
@@ -96,4 +98,35 @@ test('eine Hybridanforderung steht als eine Zeile mit beiden Symbolen', () => {
   expect(screen.getByText(/2× Blau\/Rot \(eines von beiden\) auf Zug 3/)).toBeInTheDocument();
   expect(screen.getByText('21 Länder')).toBeInTheDocument();
   expect(screen.getByText('reicht')).toBeInTheDocument();
+});
+
+test('unerreichbares Ziel wird benannt statt mit "empfohlen: 0"', () => {
+  // erreichbar === false heisst: auch wenn jedes Land die Farbe liefern würde,
+  // reicht es nicht. Eine Zahl zu nennen wäre hier irreführend.
+  render(<Farbquellen daten={daten([{
+    ...ROT_KNAPP, empfohlene_laender: 0, fehlende_laender: 0, erreichbar: false,
+  }])} />);
+
+  expect(screen.getByText('so nicht erreichbar')).toBeInTheDocument();
+  expect(screen.queryByText(/empfohlen: 0/)).not.toBeInTheDocument();
+});
+
+test('bei zwei knappen Farben wird auf Länder für beide Farben verwiesen', () => {
+  // "11 Inseln mehr" und "10 Gebirge mehr" sind bei 21 Ländern kein Rat, den
+  // man befolgen kann.
+  const blauKnapp = { ...ROT_KNAPP, schluessel: 'U', farben: ['U'], farbe: 'U',
+                      farbname: 'Blau', empfohlene_laender: 19, erreichbar: true };
+  const rotKnapp = { ...ROT_KNAPP, erreichbar: true, empfohlene_laender: 19 };
+
+  render(<Farbquellen daten={daten([blauKnapp, rotKnapp], { laender_gesamt: 21 })} />);
+
+  expect(screen.getByText(/bräuchten zusammen 38 Quellen, das Deck hat aber nur 21 Länder/)).toBeInTheDocument();
+  expect(screen.getByText(/die beide Farben liefern/)).toBeInTheDocument();
+});
+
+test('die Annahmen der Rechnung stehen unter der Tabelle', () => {
+  render(<Farbquellen daten={daten([BLAU_OK])} />);
+
+  expect(screen.getByText(/gemulligant/)).toBeInTheDocument();
+  expect(screen.getByText(/ab dem Zug nach ihren Kosten/)).toBeInTheDocument();
 });
