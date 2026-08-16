@@ -9,6 +9,12 @@ import CSVImportExport from './CSVImportExport';
 import { formatEuro } from '../../utils/format';
 import { useMeldung } from '../layout/Meldungen';
 
+// Wie viele Karten ein Ordner auf einmal laedt. Muss zum Serverstandard
+// passen (STANDARD_PRO_SEITE in routers/collection.py). Eine Sammlung mit
+// 15000 Karten kam vorher in einem Stueck -- der Browser hatte danach
+// minutenlang zu tun.
+const PRO_SEITE = 100;
+
 // Die elf Druck-Sprachen. Fehlt die Angabe, steht nichts da -- eine Karte
 // ohne erfasste Sprache als "Englisch" auszuweisen wäre erfunden.
 const SPRACHNAMEN = {
@@ -54,7 +60,17 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   const currentTab = new URLSearchParams(location.search).get('tab') || 'alben';
   const focusParam = new URLSearchParams(location.search).get('focus');
 
-  const [alben, setAlben] = useState({});
+  // Die Ordneruebersicht kommt fertig gerechnet vom Server: je Ordner Anzahl,
+  // Wert und vier Vorschaukarten. Vorher wurde dafuer die GESAMTE Sammlung
+  // geladen (bei 15000 Karten 4,5 MB) und im Browser summiert -- fuer eine
+  // Ansicht, die keine einzelne Karte zeigt.
+  const [uebersicht, setUebersicht] = useState({
+    alben: [], gesamtwert: 0, wunschliste: { anzahl: 0, wert: 0 },
+  });
+  const [uebersichtLaedt, setUebersichtLaedt] = useState(true);
+  const [topKarten, setTopKarten] = useState([]);
+  const [wunschKarten, setWunschKarten] = useState([]);
+  const [wunschSeite, setWunschSeite] = useState(1);
   const [newAlbumName, setNewAlbumName] = useState("");
 
   // Wie bei den Decks: erst die Ordner, das Anlegen sitzt hinter einem Knopf.
@@ -95,6 +111,18 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   const [filteredKarten, setFilteredKarten] = useState([]);
   const [loadingFilters, setLoadingFilters] = useState(false);
   const [activeFilters, setActiveFilters] = useState({});
+
+  // Ein Ordner wird seitenweise geladen. "gesamt" kommt vom Server und sagt,
+  // wie viele Treffer es insgesamt gibt -- daran haengt sowohl die Anzeige
+  // "100 von 15000" als auch die Frage, ob es ueberhaupt noch etwas nachzuladen
+  // gibt. Ohne diese Zahl muesste die Ansicht raten.
+  const [seite, setSeite] = useState(1);
+  const [gesamtTreffer, setGesamtTreffer] = useState(0);
+  const [laedtMehr, setLaedtMehr] = useState(false);
+  // Sortiert wird im Server. Täte es der Browser, sortierte er nur die
+  // geladenen Karten -- "Preis: Hoch → Tief" zeigte dann die teuerste der
+  // ersten 100 statt der teuersten des Ordners.
+  const [sortierung, setSortierung] = useState("name");
   
   // Selected album: null means "Alle Alben" overview grid
   const [selectedAlbum, setSelectedAlbum] = useState(null);
@@ -118,30 +146,71 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   }, []);
 
   const ladeSammlung = async () => {
+    setUebersichtLaedt(true);
     try {
-      const res = await fetch(`/api/sammlung/${currentUser}`);
+      const res = await fetch(`/api/sammlung/${currentUser}/uebersicht`);
       if (res.ok) {
         const data = await res.json();
-        if(data && data.erfolg && data.alben) {
-          const cleanedAlben = {};
-          for (const [albumName, karten] of Object.entries(data.alben)) {
-              if(Array.isArray(karten)) {
-                  cleanedAlben[albumName] = karten.filter(k => k && k.name !== "__PLACEHOLDER__").map(k => ({
-                      ...k,
-                      livePreis: k.livePreis || k.preis || "0.00"
-                  }));
-              }
-          }
-          setAlben(cleanedAlben);
+        if (data && data.erfolg) {
+          setUebersicht({
+            alben: Array.isArray(data.alben) ? data.alben : [],
+            gesamtwert: data.gesamtwert || 0,
+            wunschliste: data.wunschliste || { anzahl: 0, wert: 0 },
+          });
         }
       }
     } catch (e) {
       console.error(e);
     }
+    setUebersichtLaedt(false);
   }
 
-  const ladeGefilterteSammlung = async (filters, albumFilter = selectedAlbum) => {
-    setLoadingFilters(true);
+  // Die zehn wertvollsten Karten kommen vom Server. Vorher wurde dafuer die
+  // gesamte Sammlung geladen und im Browser sortiert -- 15000 Karten, um zehn
+  // anzuzeigen.
+  const ladeTopKarten = async () => {
+    try {
+      const res = await fetch(`/api/sammlung/${currentUser}/top?limit=10`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.erfolg) setTopKarten(data.karten || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Auch die Wunschliste laedt seitenweise. Sie ist meistens kurz -- aber
+  // "meistens" ist keine Zusage: bei 300 Wunschkarten wuerden sonst 200
+  // fehlen, ohne dass irgendetwas darauf hinweist.
+  const ladeWunschliste = async (gewuenschteSeite = 1) => {
+    try {
+      const res = await fetch(
+        `/api/sammlung/${currentUser}/filter?album=Wunschliste`
+        + `&seite=${gewuenschteSeite}&pro_seite=${PRO_SEITE}&sortierung=priceDesc`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.erfolg) {
+          const neue = data.karten || [];
+          setWunschKarten(alt => (gewuenschteSeite === 1 ? neue : [...alt, ...neue]));
+          setWunschSeite(gewuenschteSeite);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const ladeGefilterteSammlung = async (filters, albumFilter = selectedAlbum,
+                                        gewuenschteSeite = 1,
+                                        gewuenschteSortierung = sortierung) => {
+    // Die erste Seite ersetzt, jede weitere haengt an. Waehrenddessen bleibt
+    // das bereits Geladene stehen -- ein Spinner, der die schon sichtbaren
+    // Karten wegnimmt, waere beim Nachladen ein Rueckschritt.
+    const istErsteSeite = gewuenschteSeite === 1;
+    if (istErsteSeite) setLoadingFilters(true);
+    else setLaedtMehr(true);
+
     try {
       const queryParams = new URLSearchParams();
       if (filters.farbe) queryParams.append("farbe", filters.farbe);
@@ -152,18 +221,59 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
       if (filters.typ) queryParams.append("typ", filters.typ);
       if (filters.suche) queryParams.append("suche", filters.suche);
       if (albumFilter) queryParams.append("album", albumFilter);
+      queryParams.append("seite", gewuenschteSeite);
+      queryParams.append("pro_seite", PRO_SEITE);
+      queryParams.append("sortierung", gewuenschteSortierung);
 
       const res = await fetch(`/api/sammlung/${currentUser}/filter?${queryParams.toString()}`);
       if (res.ok) {
         const data = await res.json();
         if (data && data.erfolg) {
-          setFilteredKarten(data.karten || []);
+          const neue = data.karten || [];
+          setFilteredKarten(alt => (istErsteSeite ? neue : [...alt, ...neue]));
+          // Faellt "gesamt" weg, waere 0 die Aussage "keine Treffer" -- dann
+          // verschwaende die Anzeige. Lieber die Zahl behalten, die wir haben.
+          setGesamtTreffer(typeof data.gesamt === 'number'
+            ? data.gesamt
+            : neue.length);
+          setSeite(gewuenschteSeite);
         }
       }
     } catch (e) {
       console.error("Error loading filtered collection:", e);
     }
     setLoadingFilters(false);
+    setLaedtMehr(false);
+  };
+
+  // Laedt genau das neu, was gerade zu sehen ist.
+  //
+  // Vorher rief jede Aenderung "die ganze Sammlung neu laden" auf, und das
+  // deckte alle Ansichten mit ab. Seit jede Ansicht ihre eigene, schlanke
+  // Abfrage hat, muss die richtige davon angestossen werden -- sonst loescht
+  // man eine Karte aus der Wunschliste und sie steht noch da.
+  const aktualisiereAnsicht = async () => {
+    await ladeSammlung();
+    if (currentTab === 'wishlist') return ladeWunschliste(1);
+    if (currentTab === 'dashboard') return ladeTopKarten();
+    if (selectedAlbum) {
+      setSeite(1);
+      return ladeGefilterteSammlung(activeFilters, selectedAlbum, 1);
+    }
+    return undefined;
+  };
+
+  const ladeMehrKarten = () => {
+    if (laedtMehr || filteredKarten.length >= gesamtTreffer) return;
+    ladeGefilterteSammlung(activeFilters, selectedAlbum, seite + 1, sortierung);
+  };
+
+  // Andere Sortierung heisst andere Reihenfolge über den GANZEN Ordner --
+  // also von vorne laden, nicht die vorhandenen Karten umsortieren.
+  const aendereSortierung = (neue) => {
+    setSortierung(neue);
+    setSeite(1);
+    ladeGefilterteSammlung(activeFilters, selectedAlbum, 1, neue);
   };
 
   const handleRefreshPrices = async () => {
@@ -178,8 +288,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
         method: "POST"
       });
       if (res.ok) {
-        await ladeSammlung();
-        await ladeGefilterteSammlung(activeFilters, selectedAlbum);
+        await aktualisiereAnsicht();
         melde.erfolg("Preise wurden erfolgreich aktualisiert!");
       } else {
         melde.fehler("Fehler beim Aktualisieren der Preise.");
@@ -227,8 +336,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
       headers: { "Content-Type": "application/json" }, 
       body: JSON.stringify({ karten_id }) 
     });
-    ladeSammlung();
-    ladeGefilterteSammlung(activeFilters, selectedAlbum);
+    aktualisiereAnsicht();
   }
 
   const deleteAlbum = async (albumName) => {
@@ -242,7 +350,11 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
         setSelectedAlbum(null);
       }
       ladeSammlung();
-      ladeGefilterteSammlung(activeFilters, selectedAlbum === albumName ? null : selectedAlbum);
+      // Wurde der offene Ordner geloescht, geht es zurueck zur Uebersicht --
+      // dort gibt es keine Kartenliste nachzuladen.
+      if (selectedAlbum && selectedAlbum !== albumName) {
+        ladeGefilterteSammlung(activeFilters, selectedAlbum, 1);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -253,48 +365,35 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
   }, []);
 
   useEffect(() => {
-    ladeGefilterteSammlung(activeFilters, selectedAlbum);
+    // Jeder Ordnerwechsel faengt wieder bei Seite 1 an. Ohne das Zuruecksetzen
+    // haenge die naechste Seite des neuen Ordners an den Karten des alten.
+    setSeite(1);
+    if (!selectedAlbum) {
+      // In der Ordneruebersicht wird keine Kartenliste angezeigt. Sie wurde
+      // trotzdem geladen -- 40 KB bei jedem Oeffnen der Sammlung, die nie
+      // jemand zu sehen bekam.
+      setFilteredKarten([]);
+      setGesamtTreffer(0);
+      return;
+    }
+    ladeGefilterteSammlung(activeFilters, selectedAlbum, 1);
   }, [selectedAlbum]);
 
-  const wishlistKarten = Array.isArray(alben["Wunschliste"]) ? alben["Wunschliste"] : [];
-  const portfolioAlben = { ...alben };
-  delete portfolioAlben["Wunschliste"];
+  // Die schweren Ansichten laden nur, wenn man sie auch ansieht. Vorher hing
+  // alles an einer einzigen grossen Abfrage, die immer lief.
+  useEffect(() => {
+    if (currentTab === 'dashboard') ladeTopKarten();
+    if (currentTab === 'wishlist') ladeWunschliste();
+  }, [currentTab, currentUser]);
 
-  const getPriceVal = (k) => {
-      if(!k) return 0;
-      return parseFloat(String(k.livePreis || k.preis || "0").replace(',', '.')) || 0;
-  }
-  
-  const berechneAlbumWert = (karten) => {
-      if(!karten || !Array.isArray(karten)) return "0.00";
-      return karten.reduce((summe, karte) => summe + getPriceVal(karte), 0).toFixed(2);
-  }
-  
-  const totalPortfolioWert = Object.values(portfolioAlben).reduce((acc, karten) => {
-      if(!Array.isArray(karten)) return acc;
-      return acc + parseFloat(berechneAlbumWert(karten))
-  }, 0).toFixed(2);
-  
-  const totalWishlistWert = berechneAlbumWert(wishlistKarten);
+  const portfolioAlben = uebersicht.alben;
+  const totalPortfolioWert = uebersicht.gesamtwert;
+  const totalWishlistWert = uebersicht.wunschliste.wert;
+  const wishlistKarten = wunschKarten;
 
-  const getAllCardsFlat = () => {
-    const all = [];
-    Object.entries(portfolioAlben).forEach(([albumName, karten]) => {
-      if(Array.isArray(karten)) {
-          karten.forEach(k => { if(k) all.push({...k, albumName}) });
-      }
-    });
-    return all;
-  };
-
-  const sortiereKarten = (karten, methode) => {
-    if(!karten || !Array.isArray(karten)) return [];
-    const arr = [...karten].filter(k => k != null);
-    if(methode === "priceDesc") return arr.sort((a,b) => getPriceVal(b) - getPriceVal(a));
-    if(methode === "priceAsc") return arr.sort((a,b) => getPriceVal(a) - getPriceVal(b));
-    if(methode === "az") return arr.sort((a,b) => (a?.name || "").localeCompare(b?.name || ""));
-    return arr; 
-  };
+  // Sortiert und summiert wird im Server -- die Ansicht hat nie die
+  // vollstaendige Liste vorliegen und koennte beides nur fuer den geladenen
+  // Ausschnitt tun. Deshalb stehen hier keine eigenen Rechenfunktionen mehr.
 
   const addToWishlist = async () => {
     if(!wishlistSearch) return;
@@ -348,8 +447,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
           body: JSON.stringify({ benutzername: currentUser, karten_name: data.name, album_name: selectedAlbum, bild_url: actP?.bild_url || "", preis })
         });
         setAlbumCardSearch("");
-        await ladeSammlung();
-        await ladeGefilterteSammlung(activeFilters, selectedAlbum);
+        await aktualisiereAnsicht();
       } else {
         melde.fehler("Fehler: Es wurden keine Druck-Versionen für diese Karte geliefert.");
       }
@@ -464,7 +562,15 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                 </div>
               )}
 
-              {Object.keys(portfolioAlben).length === 0 ? (
+              {uebersichtLaedt ? (
+                /* Ohne diesen Zwischenschritt blitzt beim Laden kurz die
+                   "Du hast noch keine Ordner"-Ansicht auf, obwohl der Nutzer
+                   welche hat. */
+                <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+                  <div className="spinner"></div>
+                  <p style={{ marginTop: '15px', color: 'var(--text-muted)' }}>Ordner werden geladen ...</p>
+                </div>
+              ) : portfolioAlben.length === 0 ? (
                 <div className="bento-grid" style={{ marginTop: '20px', marginBottom: '40px' }}>
                   <div className="bento-item" style={{ minHeight: '220px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', textAlign: 'left' }}>
                     <div>
@@ -504,16 +610,16 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                 </div>
               ) : (
                 <div className="karten-raster" style={{ marginBottom: '40px' }}>
-                  {Object.entries(portfolioAlben).map(([name, karten]) => {
-                    const cardCount = karten.length;
-                    const albumWert = berechneAlbumWert(karten);
-                    // Top-Karten nach Wert sortiert, statt nur der ersten Karte im
+                  {portfolioAlben.map((ordner) => {
+                    const name = ordner.name;
+                    const cardCount = ordner.anzahl;
+                    const albumWert = ordner.wert;
+                    // Vorschau nach Wert sortiert, statt nur der ersten Karte im
                     // Album -- gibt einen tatsächlich aussagekräftigen Eindruck vom
                     // Inhalt ("was ist hier wertvoll?") statt eines beliebigen Covers.
-                    const topKarten = [...karten]
-                      .filter(Boolean)
-                      .sort((a, b) => getPriceVal(b) - getPriceVal(a))
-                      .slice(0, 4);
+                    // Sortiert und ausgewählt wird das jetzt im Server; dafür
+                    // müssen nicht mehr alle Karten in den Browser.
+                    const vorschauKarten = Array.isArray(ordner.vorschau) ? ordner.vorschau : [];
                     const isMenuOpen = openMenuAlbum === name;
                     
                     return (
@@ -632,7 +738,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                           background: 'var(--btn-secondary)',
                           overflow: 'visible'
                         }}>
-                          {topKarten.length === 0 ? (
+                          {vorschauKarten.length === 0 ? (
                             <div style={{
                               position: 'absolute', inset: 0, borderRadius: '14px', overflow: 'hidden',
                               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -642,7 +748,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                             </div>
                           ) : (
                             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              {topKarten.map((k, i) => {
+                              {vorschauKarten.map((k, i) => {
                                 // Wertvollste Karte (i=0) mittig und obenauf; die restlichen
                                 // fächern sich abwechselnd nach rechts/links auf, mit
                                 // sinkendem z-index -- wie eine aufgefaecherte Kartenhand.
@@ -669,7 +775,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                                       boxShadow: '0 8px 18px rgba(0,0,0,0.35)',
                                       border: '2px solid var(--bg-card)',
                                       transform: `translateX(${offset * 32}px) translateY(${magnitude * 5}px) rotate(${offset * 7}deg)`,
-                                      zIndex: topKarten.length - i
+                                      zIndex: vorschauKarten.length - i
                                     }}
                                     onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(k.name, "Karte"); }}
                                   />
@@ -687,7 +793,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                             fontSize: '0.8rem',
                             color: 'white',
                             fontWeight: 600,
-                            zIndex: topKarten.length + 1
+                            zIndex: vorschauKarten.length + 1
                           }}>
                             {cardCount} {cardCount === 1 ? 'Karte' : 'Karten'}
                           </div>
@@ -831,11 +937,46 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                     <p style={{ marginTop: '15px', color: 'var(--text-muted)' }}>Sammlung wird gefiltert...</p>
                   </div>
                 ) : (
-                  <CollectionGrid
-                    karten={filteredKarten}
-                    updatingPrices={updatingPrices}
-                    loescheKarte={loescheKarte}
-                  />
+                  <>
+                    <CollectionGrid
+                      karten={filteredKarten}
+                      updatingPrices={updatingPrices}
+                      loescheKarte={loescheKarte}
+                      sortBy={sortierung}
+                      onSortChange={aendereSortierung}
+                      gesamt={gesamtTreffer}
+                    />
+
+                    {/* Ein Ordner mit tausenden Karten kam bisher in einem
+                        Stueck. Jetzt kommen 100, und der Nutzer entscheidet,
+                        ob er mehr will. Der Zaehler steht auch dann da, wenn
+                        alles geladen ist -- "1500 Karten" ist eine nuetzliche
+                        Angabe, kein blosser Ladehinweis. */}
+                    {gesamtTreffer > 0 && (
+                      <div style={{
+                        display: 'flex', flexDirection: 'column', alignItems: 'center',
+                        gap: '12px', marginTop: '30px',
+                      }}>
+                        <p aria-live="polite" style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                          {filteredKarten.length >= gesamtTreffer
+                            ? `${gesamtTreffer} ${gesamtTreffer === 1 ? 'Karte' : 'Karten'}`
+                            : `${filteredKarten.length} von ${gesamtTreffer} Karten`}
+                        </p>
+                        {filteredKarten.length < gesamtTreffer && (
+                          <button
+                            className="secondary-btn"
+                            onClick={ladeMehrKarten}
+                            disabled={laedtMehr}
+                            style={{ padding: '12px 28px', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}
+                          >
+                            {laedtMehr
+                              ? <><div className="spinner" style={{ width: '14px', height: '14px', borderWidth: '2px', margin: 0 }}></div> Wird geladen ...</>
+                              : `Weitere ${Math.min(PRO_SEITE, gesamtTreffer - filteredKarten.length)} laden`}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </>
@@ -874,10 +1015,11 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                  </div>
 
                  <h4 style={{marginBottom: '15px', color: 'var(--text-muted)', fontSize: '0.95rem'}}>Wertverteilung nach Ordnern</h4>
-                 {Object.entries(portfolioAlben).map(([name, karten]) => {
-                    const val = parseFloat(berechneAlbumWert(karten));
+                 {portfolioAlben.map((ordner) => {
+                    const name = ordner.name;
+                    const val = ordner.wert || 0;
                     if(val === 0) return null;
-                    const total = parseFloat(totalPortfolioWert) || 1;
+                    const total = totalPortfolioWert || 1;
                     const pct = Math.round((val / total) * 100) || 0;
                     return (
                       <div key={name} style={{marginBottom: '12px'}}>
@@ -898,10 +1040,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
               <div className="content-card" style={{padding: '22px'}}>
                  <h3 style={{marginBottom: '16px', fontSize: '1.3rem'}}>Top 10 Wertvollste Karten</h3>
                  <div style={{display: 'flex', flexDirection: 'column'}}>
-                   {getAllCardsFlat()
-                     .sort((a,b) => getPriceVal(b) - getPriceVal(a))
-                     .slice(0, 10)
-                     .map((k, i) => (
+                   {topKarten.map((k, i) => (
                      <div key={i} className="top-card-item">
                        <span style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-muted)', width: '28px' }}># {i+1}</span>
                        <img 
@@ -935,7 +1074,7 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                        <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--price-color)' }}>{formatEuro(k?.livePreis || k?.preis)}</div>
                      </div>
                    ))}
-                   {getAllCardsFlat().length === 0 && <p>Keine Karten im Portfolio.</p>}
+                   {topKarten.length === 0 && <p>Keine Karten im Portfolio.</p>}
                  </div>
               </div>
            </div>
@@ -970,7 +1109,11 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
              <p style={{color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '40px 0'}}>Deine Wunschliste ist leer.</p>
            ) : (
              <div className="gallery-grid" style={{marginTop: 0}}>
-               {sortiereKarten(wishlistKarten, "priceDesc").map((karte, idx) => {
+               {/* Der Server liefert bereits nach Preis sortiert -- und zwar
+                   ueber die GANZE Wunschliste. Hier nachzusortieren wuerde nur
+                   die geladenen Karten ordnen und damit eine andere
+                   Reihenfolge behaupten als die, die tatsaechlich gilt. */}
+               {wishlistKarten.map((karte, idx) => {
                  if(!karte) return null;
                  return (
                  <div key={karte?.id || idx} className="gallery-item">
@@ -996,6 +1139,23 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                    </span>
                  </div>
                )})}
+             </div>
+           )}
+
+           {/* Auch hier wird seitenweise geladen -- ohne diesen Knopf blieben
+               bei einer langen Wunschliste Karten unsichtbar. */}
+           {wishlistKarten.length < uebersicht.wunschliste.anzahl && (
+             <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', marginTop: '30px'}}>
+               <p aria-live="polite" style={{margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem'}}>
+                 {wishlistKarten.length} von {uebersicht.wunschliste.anzahl} Karten
+               </p>
+               <button
+                 className="secondary-btn"
+                 onClick={() => ladeWunschliste(wunschSeite + 1)}
+                 style={{padding: '12px 28px', fontSize: '0.95rem'}}
+               >
+                 Weitere {Math.min(PRO_SEITE, uebersicht.wunschliste.anzahl - wishlistKarten.length)} laden
+               </button>
              </div>
            )}
         </div>

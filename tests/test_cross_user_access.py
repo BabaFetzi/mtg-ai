@@ -190,6 +190,26 @@ async def test_get_sammlung_rejects_mismatched_username():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pfad", [
+    "/api/sammlung/alice/uebersicht",
+    "/api/sammlung/alice/top",
+    "/api/sammlung/alice/alben",
+    "/api/sammlung/alice/kartennamen?album=Ordner%201",
+])
+async def test_neue_sammlungsrouten_lehnen_fremden_namen_ab(pfad):
+    """Die schlanken Ansichten (Uebersicht, Top-Liste, Ordnernamen) sind neue
+    Wege zu denselben Daten. Sie muessen dieselbe Huerde haben wie der alte
+    Endpunkt -- sonst waere die Sammlung ueber die Hintertuer lesbar."""
+    with patch('routers.collection.get_db_session') as mock_get_db:
+        response = client.get(pfad, headers=_auth_headers("bob"))
+
+        assert response.status_code == 403, pfad
+        # Nicht erst abfragen und dann verwerfen: bei 403 darf die Datenbank
+        # gar nicht erst angefasst werden.
+        mock_get_db.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_delete_karte_does_not_delete_other_users_card(real_db_session_factory):
     """Vorher hatte /api/sammlung/loeschen ueberhaupt keine Besitzpruefung --
     jede beliebige karten_id konnte von jedem geloescht werden."""

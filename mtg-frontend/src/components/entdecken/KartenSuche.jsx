@@ -41,10 +41,13 @@ function KartenSuche({ currentUser }) {
   const [popularTags, setPopularTags] = useState([]);
   const [nichtGefunden, setNichtGefunden] = useState(null);
 
+  // Nur die Ordnernamen. Vorher wurde dafuer die vollstaendige Sammlung
+  // geladen und davon Object.keys() genommen -- bei 15000 Karten 4,5 MB,
+  // um ein Auswahlfeld zu fuellen.
   const loadAlbums = () => {
-    fetch(`/api/sammlung/${currentUser}`).then(res => res.json()).then(data => {
-        if(data && data.erfolg && data.alben) {
-          const keys = Object.keys(data.alben);
+    fetch(`/api/sammlung/${currentUser}/alben`).then(res => res.json()).then(data => {
+        if(data && data.erfolg && Array.isArray(data.alben)) {
+          const keys = data.alben;
           setExistingAlben(keys);
           if(keys.length > 0) { setAlbumMode("select"); setAlbumName(keys[0]); } else { setAlbumMode("new"); }
         }

@@ -110,7 +110,8 @@ def test_sammlungsrouten_verpacken_selbst():
     assert isinstance(antwort, Response)
     assert json.loads(antwort.body)["alben"]["Ordner 1"][0]["name"] == "Sol Ring"
 
-    gefiltert = _filter_antwort(zeilen, daten, None, None, None, None, None, None, None)
+    gefiltert = _filter_antwort(zeilen, daten, None, None, None, None, None, None, None,
+                                1, 100, "name")
     assert isinstance(gefiltert, Response)
     assert json.loads(gefiltert.body)["karten"][0]["name"] == "Sol Ring"
 

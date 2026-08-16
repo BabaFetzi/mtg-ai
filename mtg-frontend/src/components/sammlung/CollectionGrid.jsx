@@ -2,15 +2,26 @@ import { useState } from 'react';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
 import { formatEuro, formatZahl } from '../../utils/format';
 
-function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
+// Sortiert und geblättert wird im Server, nicht hier.
+//
+// Vorher tat dieses Bauteil beides selbst: es sortierte die übergebenen Karten
+// und zeigte davon 24 je Seite. Das ging nur, solange die Ansicht IMMER die
+// vollständige Sammlung bekam. Seit sie seitenweise lädt, wäre es falsch --
+// "Preis: Hoch → Tief" würde die teuerste der geladenen 100 nach oben stellen
+// und nicht die teuerste des Ordners. Das sieht nicht falsch aus, ist es aber.
+//
+// Der Zähler kommt aus demselben Grund von aussen: "Karten gefunden" zählte
+// die geladenen, nicht die vorhandenen.
+function CollectionGrid({ karten, updatingPrices, loescheKarte,
+                          sortBy = "name", onSortChange, gesamt }) {
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
-  const [sortBy, setSortBy] = useState("name"); // "name" | "priceDesc" | "priceAsc" | "cmc" | "rarity"
-  const [currentPage, setCurrentPage] = useState(1);
-  const cardsPerPage = 24;
 
   const renderPriceTrend = (k) => {
-    const pOriginal = parseFloat(String(k.originalPrice || k.preis || "0").replace(',', '.')) || 0;
-    const pLive = parseFloat(String(k.price || k.livePreis || k.preis || "0").replace(',', '.')) || 0;
+    // Einheitliche Feldnamen: "preis" ist der gespeicherte Wert,
+    // "livePreis" der aktuelle. Frueher hiessen sie hier
+    // "originalPrice"/"price" -- und nur hier.
+    const pOriginal = parseFloat(String(k.preis || "0").replace(',', '.')) || 0;
+    const pLive = parseFloat(String(k.livePreis || k.preis || "0").replace(',', '.')) || 0;
     
     if (pOriginal <= 0) return null;
     
@@ -57,51 +68,11 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
     return null;
   };
 
-  const getPriceVal = (k) => {
-    if (!k) return 0;
-    return parseFloat(String(k.livePreis || k.preis || "0").replace(',', '.')) || 0;
-  };
-
-  const getRarityWeight = (rarity) => {
-    switch (String(rarity).toLowerCase()) {
-      case 'mythic': return 4;
-      case 'rare': return 3;
-      case 'uncommon': return 2;
-      case 'common': return 1;
-      default: return 0;
-    }
-  };
-
-  // 1. Sort Cards
-  const sortedCards = [...karten].sort((a, b) => {
-    if (sortBy === "name") {
-      return (a.name || "").localeCompare(b.name || "");
-    }
-    if (sortBy === "priceDesc") {
-      return getPriceVal(b) - getPriceVal(a);
-    }
-    if (sortBy === "priceAsc") {
-      return getPriceVal(a) - getPriceVal(b);
-    }
-    if (sortBy === "cmc") {
-      return (a.cmc || 0) - (b.cmc || 0);
-    }
-    if (sortBy === "rarity") {
-      return getRarityWeight(b.rarity) - getRarityWeight(a.rarity);
-    }
-    return 0;
-  });
-
-  // 2. Paginate Cards
-  const totalCards = sortedCards.length;
-  const indexOfLastCard = currentPage * cardsPerPage;
-  const indexOfFirstCard = indexOfLastCard - cardsPerPage;
-  const currentCards = sortedCards.slice(indexOfFirstCard, indexOfLastCard);
-  const totalPages = Math.ceil(totalCards / cardsPerPage);
-
-  const handlePageChange = (pageNumber) => {
-    setCurrentPage(pageNumber);
-  };
+  // Die Karten kommen bereits sortiert und auf die geladenen Seiten begrenzt.
+  const currentCards = karten;
+  // Fehlt die Angabe von aussen, ist die Anzahl der übergebenen Karten die
+  // ehrlichste verfügbare Aussage.
+  const totalCards = typeof gesamt === 'number' ? gesamt : karten.length;
 
   return (
     <div>
@@ -121,8 +92,9 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
         <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
           {/* Sorting */}
           <select
+            aria-label="Sortierung"
             value={sortBy}
-            onChange={e => { setSortBy(e.target.value); setCurrentPage(1); }}
+            onChange={e => onSortChange?.(e.target.value)}
             style={{
               padding: '8px 12px',
               fontSize: '0.9rem',
@@ -212,7 +184,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
                 <button className="gallery-remove-btn" onClick={() => loescheKarte(karte.id)}>✕</button>
                 <div style={{ overflow: 'hidden', borderRadius: '4.75% / 3.5%', position: 'relative' }}>
                   <img
-                    src={karte.image_url || getFallbackCardImage(karte.name, karte.type)}
+                    src={karte.bild_url || getFallbackCardImage(karte.name, karte.type)}
                     alt={karte.name}
                     className="gallery-img"
                     style={{
@@ -247,7 +219,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
               </div>
               <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
                 <span className="gallery-price-tag" style={{ margin: 0 }}>
-                  {formatEuro(karte.price)}
+                  {formatEuro(karte.livePreis)}
                 </span>
                 {renderPriceTrend(karte)}
               </div>
@@ -280,7 +252,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
                   <td style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--text-main)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <img
-                        src={karte.image_url || getFallbackCardImage(karte.name, karte.type)}
+                        src={karte.bild_url || getFallbackCardImage(karte.name, karte.type)}
                         alt={karte.name}
                         style={{ width: '35px', borderRadius: '2px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
                         onError={(e) => { e.target.onerror = null; e.target.src = getFallbackCardImage(karte.name, karte.type); }}
@@ -298,7 +270,7 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
                     {karte.rarity}
                   </td>
                   <td style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--price-color)' }}>
-                    {formatEuro(karte.price)}
+                    {formatEuro(karte.livePreis)}
                     {renderPriceTrend(karte)}
                   </td>
                   <td style={{ padding: '12px 20px', textAlign: 'center' }}>
@@ -324,38 +296,10 @@ function CollectionGrid({ karten, updatingPrices, loescheKarte }) {
         </div>
       )}
 
-      {/* Pagination Controls */}
-      {totalPages > 1 && (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          gap: '10px',
-          marginTop: '30px'
-        }}>
-          <button
-            onClick={() => handlePageChange(currentPage - 1)}
-            disabled={currentPage === 1}
-            className="secondary-btn"
-            style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
-          >
-            Zurück
-          </button>
-          
-          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-            Seite <strong style={{ color: 'var(--text-main)' }}>{currentPage}</strong> von {totalPages}
-          </span>
-
-          <button
-            onClick={() => handlePageChange(currentPage + 1)}
-            disabled={currentPage === totalPages}
-            className="secondary-btn"
-            style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '0.85rem' }}
-          >
-            Weiter
-          </button>
-        </div>
-      )}
+      {/* Das Nachladen sitzt in der übergeordneten Ansicht ("Mehr laden").
+          Hier stand früher eine zweite, eigene Blätterung über die geladenen
+          Karten -- zwei Blätterungen übereinander hätten sich gegenseitig
+          erklären müssen. */}
     </div>
   );
 }

@@ -40,12 +40,24 @@ Zwei echte Fehler, die ohne Last nicht sichtbar waren:
    ``jsonable_encoder`` 295 ms. Behoben in services/antwort.py; gleicher
    Messaufbau danach: 117 ms.
 
+3. **Die Seite lud, was sie gar nicht anzeigte.** Die Ordneruebersicht holte
+   die vollstaendige Sammlung, um im Browser Summen zu bilden; die
+   Kartensuche holte sie, um daraus eine Liste von Ordnernamen zu gewinnen;
+   das Finanz-Dashboard holte sie, um zehn Karten anzuzeigen. Jede dieser
+   Ansichten laedt jetzt nur noch ihr Ergebnis (/uebersicht, /alben, /top),
+   und ein Ordner kommt seitenweise. Bei 15000 Karten: 25 KB statt 4,5 MB.
+
 Wo die Grenzen liegen
 ---------------------
 Auf 4 Kernen mit 2 Workern: rund 290 Anfragen/s, keine Fehler. Die Zahl je
-Worker steht in .env.example. Der Ausreisser bleibt die sehr grosse Sammlung
--- sie wird immer als Ganzes geladen. Wird das zum Problem, ist Blättern
-(Pagination) die Lösung, nicht noch mehr Arbeitsspeicher.
+Worker steht in .env.example.
+
+Der Ausreisser bleibt die sehr grosse Sammlung: /uebersicht muss jede Zeile
+anfassen, weil der Live-Preis nicht in der Datenbank steht. Das kostet bei
+15000 Karten rund 130 ms -- im Arbeitsfaden, also ohne andere aufzuhalten.
+Die Antwort waechst dabei nicht mehr mit der Sammlung, sondern nur noch mit
+der Zahl der Ordner. Gemessen: 1000 Karten 13 ms/12 KB, 5000 Karten
+44 ms/25 KB, 15000 Karten 128 ms/25 KB.
 """
 
 from __future__ import annotations
@@ -190,11 +202,21 @@ class Lasttest:
     # Die eigentliche Last
     # ------------------------------------------------------------------
     async def nutzer_runde(self, client: httpx.AsyncClient, benutzer: str) -> None:
-        """Was ein Nutzer in einer Sitzung typischerweise tut."""
+        """Was ein Nutzer in einer Sitzung typischerweise tut.
+
+        Die Reihenfolge bildet die Oberflaeche nach: Sammlung oeffnen heisst
+        Ordneruebersicht, dann einen Ordner aufschlagen -- und der laedt eine
+        Seite, nicht alles. Wer hier den alten Rundum-Endpunkt misst, misst
+        etwas, das die Seite gar nicht mehr aufruft.
+        """
         token = self.token[benutzer]
         await self._ruf(client, "Kartensuche", "GET",
                         f"/api/suche/{TESTKARTEN[hash(benutzer) % len(TESTKARTEN)]}", token)
-        await self._ruf(client, "Sammlung anzeigen", "GET", f"/api/sammlung/{benutzer}", token)
+        await self._ruf(client, "Ordneruebersicht", "GET",
+                        f"/api/sammlung/{benutzer}/uebersicht", token)
+        await self._ruf(client, "Ordner aufschlagen", "GET",
+                        f"/api/sammlung/{benutzer}/filter?album=Ordner+0&seite=1&pro_seite=100",
+                        token)
         await self._ruf(client, "Decks anzeigen", "GET", f"/api/decks/{benutzer}", token)
         await self._ruf(client, "Deck-Statistik", "POST", "/api/deck/stats", token,
                         json={"deck_liste": TESTDECK})

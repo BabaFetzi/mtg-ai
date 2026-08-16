@@ -23,6 +23,7 @@ import io
 import json
 import logging
 import re
+import unicodedata
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -455,6 +456,17 @@ router = APIRouter(
     summary="Sammlung abrufen",
 )
 async def get_sammlung(benutzername: str, current_user: str = Depends(get_current_user)):
+    """Die vollstaendige Sammlung in einer Antwort.
+
+    Die Oberflaeche ruft das nicht mehr auf: sie laedt die Ordneruebersicht
+    (/uebersicht) und dann seitenweise (/filter). Bei 15000 Karten sind das
+    25 KB statt 4,5 MB.
+
+    Der Endpunkt bleibt trotzdem bestehen -- er ist Teil der Schnittstelle,
+    und wer die Sammlung am Stueck braucht (eigenes Skript, Datenauszug),
+    soll das weiterhin koennen. Er blockiert dabei niemanden mehr, siehe
+    services/antwort.py.
+    """
     if benutzername != current_user:
         raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     # Die DB-Session wird bewusst VOR dem Scryfall-Abruf wieder freigegeben.
@@ -485,6 +497,183 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
 
 def _sammlung_antwort(rows, daten_je_zeile) -> Response:
     return json_antwort({"erfolg": True, "alben": _alben_aufbauen(rows, daten_je_zeile)})
+
+
+# ======================================================================
+# GET /api/sammlung/{benutzername}/uebersicht – Ordner ohne die Karten
+# ======================================================================
+# Anzahl Vorschaukarten je Ordner. Die Ordnerkachel zeigt vier Bilder --
+# mehr zu senden waere Ballast, weniger wuerde die Kachel aendern.
+VORSCHAU_KARTEN = 4
+
+
+def _uebersicht_bauen(rows, daten_je_zeile) -> Dict[str, Any]:
+    """Je Ordner: Anzahl, Wert und die vier wertvollsten Karten als Vorschau.
+
+    Die Ordneruebersicht brauchte bisher die vollstaendige Sammlung, nur um im
+    Browser Summen zu bilden und vier Vorschaubilder auszuwaehlen. Bei 15000
+    Karten waren das 4,5 MB, die der Browser laden, entpacken und behalten
+    musste -- fuer eine Ansicht, die keine einzige davon zeigt.
+
+    Gerechnet wird hier dasselbe wie vorher im Browser (siehe preis_zahl),
+    uebertragen werden aber nur die Ergebnisse.
+    """
+    je_album: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        # Platzhalterzeilen halten leere Ordner am Leben, sind aber keine
+        # Karten. Das Frontend hat sie bisher herausgefiltert -- jetzt hier,
+        # sonst zaehlt ein leerer Ordner ploetzlich eine Karte.
+        if row["karten_name"] == "__PLACEHOLDER__":
+            je_album.setdefault(row["album_name"], [])
+            continue
+        je_album.setdefault(row["album_name"], []).append(
+            karte_aus_zeile(row, daten_je_zeile.get(row["id"])))
+
+    alben = []
+    gesamtwert = 0.0
+    wunschliste = {"anzahl": 0, "wert": 0.0}
+    for name, karten in je_album.items():
+        wert = sum(karten_preis(k) for k in karten)
+        if name == "Wunschliste":
+            # Die Wunschliste ist kein Besitz und zaehlt nicht zum
+            # Sammlungswert -- das Frontend hat sie ebenfalls herausgerechnet.
+            wunschliste = {"anzahl": len(karten), "wert": round(wert, 2)}
+            continue
+        gesamtwert += wert
+        alben.append({
+            "name": name,
+            "anzahl": len(karten),
+            "wert": round(wert, 2),
+            "vorschau": sorted(karten, key=karten_preis,
+                               reverse=True)[:VORSCHAU_KARTEN],
+        })
+
+    return {"erfolg": True, "alben": alben, "gesamtwert": round(gesamtwert, 2),
+            "wunschliste": wunschliste}
+
+
+@router.get(
+    "/sammlung/{benutzername}/uebersicht",
+    summary="Ordneruebersicht ohne die einzelnen Karten",
+)
+async def sammlung_uebersicht(benutzername: str,
+                              current_user: str = Depends(get_current_user)):
+    if benutzername != current_user:
+        raise HTTPException(status_code=403,
+                            detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT * FROM sammlung_alben WHERE benutzername = :name"),
+            {"name": current_user})
+        rows = res.mappings().all()
+
+    echte = [r for r in rows if r["karten_name"] != "__PLACEHOLDER__"]
+    daten_je_zeile = await kartendaten_fuer_zeilen(echte)
+    return await asyncio.to_thread(_uebersicht_antwort, rows, daten_je_zeile)
+
+
+def _uebersicht_antwort(rows, daten_je_zeile) -> Response:
+    return json_antwort(_uebersicht_bauen(rows, daten_je_zeile))
+
+
+# ======================================================================
+# GET /api/sammlung/{benutzername}/top – die wertvollsten Karten
+# ======================================================================
+MAX_TOP = 50
+
+
+@router.get(
+    "/sammlung/{benutzername}/top",
+    summary="Die wertvollsten Karten der Sammlung",
+)
+async def sammlung_top(benutzername: str,
+                       limit: int = Query(default=10, ge=1, le=MAX_TOP),
+                       current_user: str = Depends(get_current_user)):
+    """Fuer "Top 10 Wertvollste Karten".
+
+    Vorher lud das Frontend dafuer die gesamte Sammlung und sortierte sie im
+    Browser -- 15000 Karten, um zehn anzuzeigen. Sortiert wird weiterhin ueber
+    alle Zeilen, denn der Live-Preis steht nicht in der Datenbank; uebertragen
+    werden aber nur die zehn.
+    """
+    if benutzername != current_user:
+        raise HTTPException(status_code=403,
+                            detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT * FROM sammlung_alben WHERE benutzername = :name "
+                 "AND album_name != 'Wunschliste' AND karten_name != '__PLACEHOLDER__'"),
+            {"name": current_user})
+        rows = res.mappings().all()
+
+    daten_je_zeile = await kartendaten_fuer_zeilen(rows)
+    return await asyncio.to_thread(_top_antwort, rows, daten_je_zeile, limit)
+
+
+def _top_antwort(rows, daten_je_zeile, limit: int) -> Response:
+    karten = []
+    for row in rows:
+        karte = karte_aus_zeile(row, daten_je_zeile.get(row["id"]))
+        karte["albumName"] = row["album_name"]
+        karten.append(karte)
+    karten.sort(key=karten_preis, reverse=True)
+    return json_antwort({"erfolg": True, "karten": karten[:limit]})
+
+
+# ======================================================================
+# GET /api/sammlung/{benutzername}/alben – nur die Ordnernamen
+# ======================================================================
+@router.get(
+    "/sammlung/{benutzername}/alben",
+    summary="Nur die Ordnernamen",
+)
+async def sammlung_albennamen(benutzername: str,
+                              current_user: str = Depends(get_current_user)):
+    """Fuer Auswahlfelder ("In welchen Ordner legen?").
+
+    Die Kartensuche hat dafuer die komplette Sammlung geladen und davon
+    Object.keys() genommen -- 4,5 MB fuer eine Liste von Namen. Das hier ist
+    reines SQL ohne Scryfall und ohne Zeilenschleife.
+    """
+    if benutzername != current_user:
+        raise HTTPException(status_code=403,
+                            detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT DISTINCT album_name FROM sammlung_alben "
+                 "WHERE benutzername = :name ORDER BY album_name"),
+            {"name": current_user})
+        rows = res.mappings().all()
+    return {"erfolg": True, "alben": [r["album_name"] for r in rows]}
+
+
+# ======================================================================
+# GET /api/sammlung/{benutzername}/kartennamen – Namen eines Ordners
+# ======================================================================
+@router.get(
+    "/sammlung/{benutzername}/kartennamen",
+    summary="Kartennamen eines Ordners",
+)
+async def sammlung_kartennamen(benutzername: str,
+                               album: str = Query(...),
+                               current_user: str = Depends(get_current_user)):
+    """Fuer den Synergie-Scanner, der nur die Namen braucht.
+
+    Auch er lud bisher die vollstaendige Sammlung samt Bildern und Preisen,
+    um daraus eine Namensliste zu bauen. Ohne Scryfall-Abfrage und ohne
+    Preise bleibt davon ein Bruchteil uebrig.
+    """
+    if benutzername != current_user:
+        raise HTTPException(status_code=403,
+                            detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT karten_name FROM sammlung_alben "
+                 "WHERE benutzername = :name AND album_name = :album "
+                 "AND karten_name != '__PLACEHOLDER__'"),
+            {"name": current_user, "album": album})
+        rows = res.mappings().all()
+    return {"erfolg": True, "namen": [r["karten_name"] for r in rows]}
 
 
 def _gefilterte_karten(rows, daten_je_zeile, suche, farbe, seltenheit, edition,
@@ -539,32 +728,193 @@ def _gefilterte_karten(rows, daten_je_zeile, suche, farbe, seltenheit, edition,
             if typ.lower() not in card_type:
                 continue
 
-        result.append({
-            "id": row["id"],
+        # Dieselben Feldnamen wie ueberall sonst (karte_aus_zeile), erweitert
+        # um das, was nur der Filter braucht.
+        #
+        # Vorher hatte diese Ansicht eigene Namen: "image_url" statt
+        # "bild_url", "price" statt "livePreis", "originalPrice" statt
+        # "preis". Zwei Formen fuer dieselbe Sache, und genau daran ist die
+        # Preissortierung gescheitert -- sie las "livePreis", das es hier
+        # nicht gab, bekam fuer jede Karte 0 und tat schlicht nichts.
+        karte = karte_aus_zeile(row, card_info)
+        karte.update({
+            # Der Anzeigename kommt von Scryfall: er ist korrekt geschrieben,
+            # auch wenn die Zeile mit Tippfehler gespeichert wurde.
             "name": card_info.get("name", row["karten_name"]),
             "type": card_info.get("type", ""),
             "colors": card_info.get("colors", []),
             "cmc": card_info.get("cmc", 0),
             "rarity": card_info.get("rarity", ""),
+            # "set" faellt auf die Angabe von Scryfall zurueck, "edition" ist
+            # ausschliesslich der gespeicherte Druck -- beides wird gebraucht.
             "set": (druck["edition"] or card_info.get("set", "")),
-            "image_url": card_info.get("image", row["bild_url"]),
-            "price": live_preis_fuer(card_info, row, row["preis"]),
-            "originalPrice": row["preis"],
-            "foil": ist_foil(row),
-            "sprache": sprache_von(row),
-            "zustand": zustand_von(row),
-            "sammlernummer": druck["sammlernummer"],
-            "album_name": row["album_name"]
+            "album_name": row["album_name"],
         })
+        result.append(karte)
 
     return result
 
 
+# ----------------------------------------------------------------------
+# Sortierung
+# ----------------------------------------------------------------------
+# Muss auf dem Server passieren, seit seitenweise geladen wird. Sortierte der
+# Browser nur das Geladene, hiesse "teuerste zuerst" in Wahrheit "die teuerste
+# der ersten 100" -- eine Angabe, die falsch ist, ohne falsch auszusehen.
+SORTIERUNGEN = ("name", "priceDesc", "priceAsc", "cmc", "rarity")
+
+# Seltenheit hat keine natuerliche Ordnung -- dieselben Gewichte wie bisher
+# im Browser, damit sich die Reihenfolge nicht aendert.
+_SELTENHEIT_GEWICHT = {"mythic": 4, "rare": 3, "uncommon": 2, "common": 1}
+
+# Was localeCompare zusammenzieht, Pythons Standardvergleich aber trennt.
+# Ohne das landet "Ætherling" hinter "Zur" statt bei "Ae", und "Jötun" hinter
+# allen ASCII-Namen. Beides kommt bei Magic-Karten wirklich vor.
+_LIGATUREN = str.maketrans({
+    "Æ": "AE", "æ": "ae", "Œ": "OE", "œ": "oe", "ß": "ss",
+    "Ø": "O", "ø": "o", "Þ": "TH", "þ": "th", "Đ": "D", "đ": "d",
+})
+
+
+def sortierschluessel_name(name: Optional[str]) -> tuple:
+    """Namensschluessel, der sich wie localeCompare im Browser verhaelt.
+
+    Akzente werden zum Grundbuchstaben zusammengezogen ("Jötun" bei "Jo"),
+    Gross-/Kleinschreibung spielt keine Rolle. Der Originalname steht als
+    zweiter Teil im Schluessel, damit die Reihenfolge bei gleichem Grundwort
+    trotzdem eindeutig ist -- sonst haengt sie vom Zufall der Zeilenfolge ab
+    und eine Seite koennte dieselbe Karte zweimal zeigen.
+    """
+    roh = name or ""
+    zerlegt = unicodedata.normalize("NFKD", roh.translate(_LIGATUREN))
+    ohne_akzente = "".join(z for z in zerlegt if not unicodedata.combining(z))
+    return (ohne_akzente.casefold(), roh)
+
+
+def sortiere_karten(karten: List[Dict[str, Any]], sortierung: str) -> List[Dict[str, Any]]:
+    """Sortiert die gefilterte Liste. Gleiche Regeln wie vorher im Browser.
+
+    Der Preis kommt aus "livePreis" -- dem Feld, das jede aufbereitete Karte
+    traegt. Der Browser las frueher genau dieses Feld, bekam es vom Filter
+    aber nicht geliefert (dort hiess es "price") und rechnete deshalb mit 0:
+    "nach Preis sortieren" hat in der Ordneransicht nie etwas getan. Beide
+    Namen zu akzeptieren waere ein Pflaster; stattdessen liefert der Filter
+    jetzt dieselben Felder wie alle anderen Ansichten.
+    """
+    def preis(k):
+        return karten_preis(k)
+
+    if sortierung == "priceDesc":
+        return sorted(karten, key=lambda k: (-preis(k), sortierschluessel_name(k.get("name"))))
+    if sortierung == "priceAsc":
+        return sorted(karten, key=lambda k: (preis(k), sortierschluessel_name(k.get("name"))))
+    if sortierung == "cmc":
+        return sorted(karten, key=lambda k: (preis_zahl(k.get("cmc") or 0),
+                                             sortierschluessel_name(k.get("name"))))
+    if sortierung == "rarity":
+        return sorted(karten, key=lambda k: (
+            -_SELTENHEIT_GEWICHT.get(str(k.get("rarity") or "").lower(), 0),
+            sortierschluessel_name(k.get("name"))))
+    return sorted(karten, key=lambda k: sortierschluessel_name(k.get("name")))
+
+
 def _filter_antwort(rows, daten_je_zeile, suche, farbe, seltenheit, edition,
-                    manakosten_min, manakosten_max, typ) -> Response:
+                    manakosten_min, manakosten_max, typ,
+                    seite: int, pro_seite: int, sortierung: str) -> Response:
+    """Filtert, sortiert, schneidet die gewuenschte Seite heraus und verpackt.
+
+    Gefiltert und sortiert wird ueber ALLE Zeilen, erst danach wird
+    geschnitten. Andersherum (in SQL blaettern, dann filtern) waere schneller,
+    aber falsch: die Filter laufen teils in Python -- eine Seite haette dann
+    mal 40, mal 90 Treffer, und die Gesamtzahl waere geraten. Lieber ehrlich
+    zaehlen.
+    """
     karten = _gefilterte_karten(rows, daten_je_zeile, suche, farbe, seltenheit,
                                 edition, manakosten_min, manakosten_max, typ)
-    return json_antwort({"erfolg": True, "karten": karten})
+    karten = sortiere_karten(karten, sortierung)
+    anfang = (seite - 1) * pro_seite
+    return json_antwort({
+        "erfolg": True,
+        "karten": karten[anfang:anfang + pro_seite],
+        "gesamt": len(karten),
+        "seite": seite,
+        "pro_seite": pro_seite,
+        "sortierung": sortierung,
+    })
+
+
+# Karten je Seite in der Ordneransicht. 100 fuellt einen Bildschirm mehrfach,
+# bleibt aber weit unter der Groesse, ab der das Rendern im Browser ruckelt.
+# Die Obergrenze schuetzt davor, dass jemand mit ?pro_seite=999999 doch wieder
+# die ganze Sammlung in einem Stueck anfordert.
+STANDARD_PRO_SEITE = 100
+MAX_PRO_SEITE = 500
+
+# Führende Zahl wie parseFloat sie liest: "1.50 €" -> 1.50, "abc" -> nichts.
+_ZAHL_AM_ANFANG = re.compile(r"^\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def preis_zahl(wert) -> float:
+    """Preis als Zahl -- genau so, wie der Browser ihn bisher gelesen hat.
+
+    Die Summen (Ordnerwert, Gesamtwert) wurden bislang im Frontend gebildet:
+
+        parseFloat(String(livePreis || preis || "0").replace(',', '.')) || 0
+
+    Jetzt rechnet der Server. Damit dem Nutzer nicht plötzlich ein anderer
+    Sammlungswert angezeigt wird, muss hier dasselbe herauskommen -- auch in
+    den Randfällen. Deshalb nicht einfach float():
+
+    * float("1.50 €") wirft, parseFloat liest 1.50.
+    * float("") wirft, parseFloat liefert NaN -- und "|| 0" macht daraus 0.
+    * String.replace(",", ".") ersetzt nur das ERSTE Komma. "1,234,56" wird
+      damit zu "1.234,56" und parseFloat liest 1.234. Nachgebaut, nicht
+      korrigiert: eine "Verbesserung" hier würde stillschweigend andere
+      Summen ergeben als die, die der Nutzer bisher gesehen hat.
+    """
+    if isinstance(wert, bool):
+        return 0.0
+    if isinstance(wert, (int, float)):
+        return 0.0 if wert != wert else float(wert)  # NaN -> 0
+    if wert is None:
+        return 0.0
+    treffer = _ZAHL_AM_ANFANG.match(str(wert).replace(",", ".", 1))
+    if not treffer:
+        return 0.0
+    try:
+        zahl = float(treffer.group(0))
+    except ValueError:
+        return 0.0
+    return 0.0 if zahl != zahl else zahl
+
+
+def karten_preis(karte: Dict[str, Any]) -> float:
+    """Wert einer aufbereiteten Karte -- livePreis, sonst preis, sonst 0."""
+    return preis_zahl(karte.get("livePreis") or karte.get("preis") or 0)
+
+
+def karte_aus_zeile(row, card_info) -> Dict[str, Any]:
+    """Eine Sammlungszeile in die Form, die das Frontend anzeigt.
+
+    Bewusst EINE Stelle: Übersicht, Top-Liste und Albenansicht zeigen dieselbe
+    Karte. Lägen die Felder mehrfach herum, wiche früher oder später eine
+    Ansicht ab -- etwa beim Foil-Preis, der genau so schon einmal falsch war.
+    """
+    druck = druck_von(row)
+    return {
+        "id": row["id"],
+        "name": row["karten_name"],
+        "bild_url": (card_info.get("image", row["bild_url"]) if card_info
+                     else row["bild_url"]),
+        "preis": row["preis"],
+        "livePreis": live_preis_fuer(card_info, row, row["preis"]),
+        "foil": ist_foil(row),
+        "sprache": sprache_von(row),
+        "zustand": zustand_von(row),
+        "edition": druck["edition"],
+        "sammlernummer": druck["sammlernummer"],
+        "edition_name": (card_info or {}).get("set_name"),
+    }
 
 
 def _alben_aufbauen(rows, daten_je_zeile) -> Dict[str, List[Dict[str, Any]]]:
@@ -575,24 +925,7 @@ def _alben_aufbauen(rows, daten_je_zeile) -> Dict[str, List[Dict[str, Any]]]:
         album = row["album_name"]
         if album not in alben:
             alben[album] = []
-
-        card_info = daten_je_zeile.get(row["id"])
-        druck = druck_von(row)
-
-        alben[album].append({
-            "id": row["id"],
-            "name": row["karten_name"],
-            "bild_url": (card_info.get("image", row["bild_url"]) if card_info
-                         else row["bild_url"]),
-            "preis": row["preis"],
-            "livePreis": live_preis_fuer(card_info, row, row["preis"]),
-            "foil": ist_foil(row),
-            "sprache": sprache_von(row),
-            "zustand": zustand_von(row),
-            "edition": druck["edition"],
-            "sammlernummer": druck["sammlernummer"],
-            "edition_name": (card_info or {}).get("set_name"),
-        })
+        alben[album].append(karte_aus_zeile(row, daten_je_zeile.get(row["id"])))
     return alben
 
 
@@ -807,6 +1140,11 @@ async def sammlung_filter(
     typ: str = Query(default=None, description="Kartentyp (Creature, Instant, Sorcery, ...)"),
     suche: str = Query(default=None, description="Freitextsuche im Kartennamen"),
     album: str = Query(default=None, description="Filter nach Albumname"),
+    seite: int = Query(default=1, ge=1, description="Seitenzahl, beginnend bei 1"),
+    pro_seite: int = Query(default=STANDARD_PRO_SEITE, ge=1, le=MAX_PRO_SEITE,
+                           description="Karten je Seite"),
+    sortierung: str = Query(default="name",
+                            description="name, priceDesc, priceAsc, cmc oder rarity"),
     current_user: str = Depends(get_current_user),
 ):
     if benutzername != current_user:
@@ -862,7 +1200,12 @@ async def sammlung_filter(
         # alle anderen Anfragen anhält (siehe _sammlung_antwort).
         return await asyncio.to_thread(
             _filter_antwort, rows, daten_je_zeile,
-            suche, farbe, seltenheit, edition, manakosten_min, manakosten_max, typ)
+            suche, farbe, seltenheit, edition, manakosten_min, manakosten_max, typ,
+            seite, pro_seite,
+            # Ein unbekannter Wert faellt auf die Namenssortierung zurueck
+            # statt die Anfrage abzulehnen: eine veraltete Lesezeichen-URL
+            # soll die Ansicht nicht kaputtmachen.
+            sortierung if sortierung in SORTIERUNGEN else "name")
     except Exception as e:
         logger.exception("Fehler bei Sammlung-Filter")
         return {"erfolg": False, "error": str(e)}

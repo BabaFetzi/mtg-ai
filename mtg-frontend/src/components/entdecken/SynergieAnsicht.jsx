@@ -34,7 +34,9 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
   const [selectedFormat, setSelectedFormat] = useState('commander');
   
   const [userDecks, setUserDecks] = useState([]);
-  const [userAlbums, setUserAlbums] = useState({});
+  // Nur die Ordnernamen. Die Kartennamen holt der Scanner erst dann, wenn
+  // wirklich gescannt wird -- und auch dann nur die Namen.
+  const [userAlbums, setUserAlbums] = useState([]);
   const [selectedTarget, setSelectedTarget] = useState("");
   const [tournamentCombos, setTournamentCombos] = useState([]);
 
@@ -62,8 +64,8 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
             if(Array.isArray(data)) { setUserDecks(data); if(data.length > 0) setSelectedTarget(data[0].id.toString()); }
         }).catch(e => console.log(e));
     } else if (activeMode === 'albums') {
-        fetch(`/api/sammlung/${currentUser}`).then(r => r.json()).then(data => {
-            if(data && data.erfolg && data.alben) { setUserAlbums(data.alben); const keys = Object.keys(data.alben); if(keys.length > 0) setSelectedTarget(keys[0]); }
+        fetch(`/api/sammlung/${currentUser}/alben`).then(r => r.json()).then(data => {
+            if(data && data.erfolg && Array.isArray(data.alben)) { setUserAlbums(data.alben); if(data.alben.length > 0) setSelectedTarget(data.alben[0]); }
         }).catch(e => console.log(e));
     }
   }, [activeMode, currentUser]);
@@ -155,8 +157,22 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
           const deck = userDecks.find(d => d.id.toString() === selectedTarget);
           if (deck) listeFürKI = deck.liste || "";
       } else if (activeMode === 'albums') {
-          const kartenImAlbum = Array.isArray(userAlbums[selectedTarget]) ? userAlbums[selectedTarget] : [];
-          listeFürKI = kartenImAlbum.map(k => k?.name || "").join('\n');
+          // Die Namen erst jetzt holen, und nur die Namen. Vorher lag dafuer
+          // die komplette Sammlung samt Bildern und Preisen im Browser --
+          // geladen schon beim blossen Oeffnen des Reiters.
+          try {
+              const r = await fetch(
+                  `/api/sammlung/${currentUser}/kartennamen?album=${encodeURIComponent(selectedTarget)}`);
+              const daten = await r.json();
+              if (daten && daten.erfolg && Array.isArray(daten.namen)) {
+                  listeFürKI = daten.namen.join('\n');
+              }
+          } catch (e) {
+              console.log(e);
+              melde.fehler("Der Ordner konnte nicht geladen werden.");
+              setLaedt(false);
+              return;
+          }
       }
 
       if(!listeFürKI.trim()) { melde.erfolg("Das ausgewählte Ziel ist leer."); setLaedt(false); return; }
@@ -281,7 +297,7 @@ function SynergieAnsicht({ currentUser, userRole, onShowPremiumModal }) {
                 {userRole !== 'premium' && <PremiumOverlay onShowPremiumModal={onShowPremiumModal} />}
                 <select value={selectedTarget} onChange={e => { setSelectedTarget(e.target.value); setHasScanned(false); setCombos([]); }} style={{boxShadow: '0 8px 20px var(--shadow-color)', background: 'var(--input-bg)', border: '1px solid var(--border-color)'}} disabled={userRole !== 'premium'}>
                     <option value="" disabled>Bitte Album auswählen...</option>
-                    {Object.keys(userAlbums || {}).map(a => <option key={a} value={a}>{a}</option>)}
+                    {(userAlbums || []).map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
                 <button className="primary-btn" onClick={runScanner} disabled={laedt || userRole !== 'premium'}>{laedt ? "Scanne..." : "Scannen"}</button>
             </div>
