@@ -123,6 +123,26 @@ async def _run_maintenance() -> None:
     except Exception:
         logger.warning("Nachfüllen der Kartenmetadaten fehlgeschlagen", exc_info=True)
 
+    try:
+        # Der Zähler braucht nur den laufenden Monat. Ohne Aufräumen wüchse die
+        # Tabelle mit jedem Monat und jedem Nutzer weiter.
+        from services.usage_limiter import alte_monate_aufraeumen
+        alt = await alte_monate_aufraeumen()
+        if alt:
+            logger.info("KI-Nutzung: %d alte Monatsstände entfernt.", alt)
+    except Exception:
+        logger.warning("Aufräumen der KI-Zählerstände fehlgeschlagen", exc_info=True)
+
+    try:
+        # Wer massenhaft Kombinationen durchprobiert, erzeugt massenhaft
+        # Zeilen. Abgelaufene fliegen raus, laufende Sperren bleiben stehen.
+        from services.anmeldeversuche import aufraeumen as anmeldungen_aufraeumen
+        versuche = await anmeldungen_aufraeumen()
+        if versuche:
+            logger.info("Anmeldeversuche: %d abgelaufene Einträge entfernt.", versuche)
+    except Exception:
+        logger.warning("Aufräumen der Anmeldeversuche fehlgeschlagen", exc_info=True)
+
 
 async def _maintenance_loop() -> None:
     while True:

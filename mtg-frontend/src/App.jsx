@@ -1,28 +1,50 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { setTokens, clearTokens } from './utils/authFetch'
 import { FEATURES } from './config'
 
-// Components
+// ============================================================================
+// Was sofort gebraucht wird, und was erst beim Hinsehen
+// ============================================================================
+// Vorher kam die gesamte Anwendung in einem Stück: 616 KB, die jeder
+// Erstbesucher laden musste -- auch das Spielfeld mit der Kameraerkennung, die
+// Rechtsseiten und die Kontoverwaltung, die er vielleicht nie öffnet.
+//
+// Eilig ist nur, was beim ersten Bild zu sehen ist: Anmeldung, Kopfzeile,
+// Fusszeile und die Startansicht. Alles andere wird geladen, wenn es
+// tatsächlich aufgerufen wird.
 import AuthScreen from './components/auth/AuthScreen'
 import AppleHeader from './components/layout/AppleHeader'
 import EntdeckenHub from './components/entdecken/EntdeckenHub'
-import MeineSammlung from './components/sammlung/MeineSammlung'
-import DecksView from './components/decks/DecksView'
-import SharedDeckView from './components/decks/SharedDeckView'
-import PremiumPage from './components/premium/PremiumPage'
-import JudgeWidget from './components/layout/JudgeWidget'
-import PremiumUpgradeModal from './components/premium/PremiumUpgradeModal'
 import LandingPage from './components/layout/LandingPage'
-import MobileCamera from './components/playfield/MobileCamera'
-import PlayfieldView from './components/playfield/PlayfieldView'
 import Footer from './components/layout/Footer'
 import { useMeldung } from './components/layout/Meldungen'
-import Impressum from './components/legal/Impressum'
-import Datenschutz from './components/legal/Datenschutz'
-import AGB from './components/legal/AGB'
-import PasswortNeu from './components/auth/PasswortNeu'
-import KontoSeite from './components/konto/KontoSeite'
+
+// Eigene Ansichten -- jede wird ein eigenes Paket und erst bei Bedarf geholt.
+const MeineSammlung = lazy(() => import('./components/sammlung/MeineSammlung'))
+const DecksView = lazy(() => import('./components/decks/DecksView'))
+const SharedDeckView = lazy(() => import('./components/decks/SharedDeckView'))
+const PremiumPage = lazy(() => import('./components/premium/PremiumPage'))
+const KontoSeite = lazy(() => import('./components/konto/KontoSeite'))
+const PlayfieldView = lazy(() => import('./components/playfield/PlayfieldView'))
+const MobileCamera = lazy(() => import('./components/playfield/MobileCamera'))
+const Impressum = lazy(() => import('./components/legal/Impressum'))
+const Datenschutz = lazy(() => import('./components/legal/Datenschutz'))
+const AGB = lazy(() => import('./components/legal/AGB'))
+const PasswortNeu = lazy(() => import('./components/auth/PasswortNeu'))
+// Beide hängen dauerhaft in der App, sind aber erst sichtbar, wenn man sie
+// öffnet -- der Code darf also warten.
+const JudgeWidget = lazy(() => import('./components/layout/JudgeWidget'))
+const PremiumUpgradeModal = lazy(() => import('./components/premium/PremiumUpgradeModal'))
+
+/** Platzhalter, während ein nachgeladenes Paket unterwegs ist. */
+function Laedt() {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 20px' }}>
+      <div className="spinner" role="status" aria-label="Wird geladen"></div>
+    </div>
+  )
+}
 
 const globalStyles = `
 /* --- THEME VARIABLES (Harmonisiert & Pro) --- */
@@ -1149,12 +1171,14 @@ function App() {
     return (
       <>
         <style>{globalStyles}</style>
-        <Routes>
-          <Route path="/impressum" element={<Impressum />} />
-          <Route path="/datenschutz" element={<Datenschutz />} />
-          <Route path="/agb" element={<AGB />} />
-          <Route path="/passwort-neu" element={<PasswortNeu />} />
-        </Routes>
+        <Suspense fallback={<Laedt />}>
+          <Routes>
+            <Route path="/impressum" element={<Impressum />} />
+            <Route path="/datenschutz" element={<Datenschutz />} />
+            <Route path="/agb" element={<AGB />} />
+            <Route path="/passwort-neu" element={<PasswortNeu />} />
+          </Routes>
+        </Suspense>
         <Footer />
       </>
     );
@@ -1164,9 +1188,11 @@ function App() {
     return (
       <>
         <style>{globalStyles}</style>
-        <Routes>
-          <Route path="/shared/decks/:id" element={<SharedDeckView />} />
-        </Routes>
+        <Suspense fallback={<Laedt />}>
+          <Routes>
+            <Route path="/shared/decks/:id" element={<SharedDeckView />} />
+          </Routes>
+        </Suspense>
       </>
     );
   }
@@ -1200,6 +1226,7 @@ function App() {
         />
       )}
       <main>
+        <Suspense fallback={<Laedt />}>
         <Routes>
           <Route path="/" element={<EntdeckenHub currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
@@ -1218,13 +1245,16 @@ function App() {
             <Route path="/playfield/*" element={<Navigate to="/" replace />} />
           )}
         </Routes>
+        </Suspense>
       </main>
       {!isCameraView && <Footer />}
       {!isCameraView && (
-        <>
+        /* Ohne Platzhalter: beide sind unsichtbar, bis man sie oeffnet --
+           waehrend des Nachladens soll deshalb nichts aufblitzen. */
+        <Suspense fallback={null}>
           <JudgeWidget open={isJudgeOpen} setOpen={setIsJudgeOpen} currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />
           <PremiumUpgradeModal isOpen={showPremiumModal} onClose={() => setShowPremiumModal(false)} />
-        </>
+        </Suspense>
       )}
     </>
   );

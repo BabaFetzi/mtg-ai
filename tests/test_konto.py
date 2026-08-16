@@ -77,6 +77,15 @@ async def db():
             await s.execute(
                 text("INSERT INTO ai_calls (benutzername, funktion, modell, frage) "
                      "VALUES (:u, 'judge', 'test', 'Wie funktioniert Trample?')"), {"u": benutzer})
+            await s.execute(
+                text("INSERT INTO ki_nutzung (benutzername, monat, art, wert) "
+                     "VALUES (:u, '2026-08', 'text', 7)"), {"u": benutzer})
+            # Steht in TABELLEN_NUR_LOESCHEN: wird gelöscht, aber nicht
+            # ausgehändigt (die IP kann die eines Angreifers sein).
+            await s.execute(
+                text("INSERT INTO anmeldeversuche (ip, benutzername, versuche, "
+                     "gesperrt_bis, zuletzt) VALUES ('1.2.3.4', :u, 2, 0, 0)"),
+                {"u": benutzer})
         await s.commit()
 
     yield maker
@@ -197,6 +206,43 @@ async def test_fremde_daten_bleiben_unberuehrt(db):
 
 
 @pytest.mark.asyncio
+async def test_loeschung_entfernt_auch_die_anmeldeversuche(db):
+    """Sie stehen in TABELLEN_NUR_LOESCHEN und wuerden sonst uebersehen:
+    zurueck bliebe ein Benutzername samt IP-Adressen."""
+    _loeschen(db)
+
+    async with db() as s:
+        rest = (await s.execute(text(
+            "SELECT COUNT(*) FROM anmeldeversuche WHERE benutzername = 'anna'"))).scalar()
+        assert rest == 0
+        # Und die des anderen Nutzers bleiben stehen.
+        assert (await s.execute(text(
+            "SELECT COUNT(*) FROM anmeldeversuche WHERE benutzername = 'bert'"))).scalar() == 1
+
+
+@pytest.mark.asyncio
+async def test_auskunft_gibt_keine_fremden_ip_adressen_heraus(db):
+    """Anmeldeversuche verknuepfen einen Benutzernamen mit IP-Adressen -- nicht
+    zwingend denen des Kontoinhabers. Wer fremde Zugaenge durchprobiert,
+    hinterlaesst SEINE Adresse unter dem angegriffenen Namen. Diese Zeilen
+    auszuhaendigen hiesse, Daten Dritter offenzulegen."""
+    daten = _export(db).json()
+
+    assert "anmeldeversuche" not in daten
+    assert "1.2.3.4" not in str(daten)
+
+
+@pytest.mark.asyncio
+async def test_auskunft_enthaelt_den_ki_verbrauch(db):
+    """Der Monatsverbrauch gehoert zum Konto und sagt etwas ueber die Nutzung
+    aus -- er muss in der Auskunft stehen."""
+    daten = _export(db).json()
+
+    assert daten.get("ki_nutzung"), "KI-Verbrauch fehlt in der Auskunft"
+    assert daten["ki_nutzung"][0]["wert"] == 7
+
+
+@pytest.mark.asyncio
 async def test_falsches_passwort_loescht_nichts(db):
     """Ein gestohlenes Zugriffstoken allein darf keine Sammlung vernichten."""
     antwort = _loeschen(db, passwort="falsch")
@@ -262,8 +308,10 @@ async def test_tabellenliste_deckt_alle_nutzertabellen_ab():
             if spalte.name == "benutzername":
                 aus_modell.add(tabelle.name)
 
-    from services.konto import TABELLEN_OHNE_LOESCHUNG
-    gepflegt = {t for t, _ in NUTZER_TABELLEN} | {"nutzer"} | TABELLEN_OHNE_LOESCHUNG
+    from services.konto import TABELLEN_NUR_LOESCHEN, TABELLEN_OHNE_LOESCHUNG
+    gepflegt = ({t for t, _ in NUTZER_TABELLEN}
+                | {t for t, _ in TABELLEN_NUR_LOESCHEN}
+                | {"nutzer"} | TABELLEN_OHNE_LOESCHUNG)
     fehlend = aus_modell - gepflegt
     assert not fehlend, f"Diese Tabellen fehlen in NUTZER_TABELLEN: {fehlend}"
 

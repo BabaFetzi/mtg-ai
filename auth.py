@@ -74,94 +74,24 @@ from services.sperrliste import (  # noqa: E402
     sofort_sperren as konto_sofort_sperren,
 )
 
-# Simple in-memory rate limiter for login
-# Key: (ip, username), Value: (attempts_count, block_until_timestamp)
-login_attempts: Dict[Tuple[str, str], Tuple[int, float]] = {}
-
-# Zeitpunkt des letzten Fehlversuchs je Schlüssel -- nötig, um alte Einträge
-# wieder freizugeben. Ohne diese Bereinigung wuchs `login_attempts` unbegrenzt:
-# wer Logins für viele verschiedene Benutzernamen/IPs durchprobiert, konnte den
-# Serverspeicher volllaufen lassen (jede Kombination legte dauerhaft einen
-# Eintrag an, der nie entfernt wurde).
-_attempt_seen: Dict[Tuple[str, str], float] = {}
-LOGIN_ATTEMPT_TTL_SECONDS = 3600
-_MAX_TRACKED_ATTEMPTS = 10000
-
-# Brute-Force-Schutz: nach MAX_LOGIN_ATTEMPTS Fehlversuchen wird die Kombination
-# aus IP und Benutzername für LOGIN_BLOCK_SECONDS gesperrt.
-MAX_LOGIN_ATTEMPTS = 5
-LOGIN_BLOCK_SECONDS = 900  # 15 Minuten
-
-
-def _prune_login_attempts(now: float) -> None:
-    """Entfernt abgelaufene Fehlversuchs-Einträge (nicht mehr gesperrt und älter
-    als LOGIN_ATTEMPT_TTL_SECONDS)."""
-    veraltet = [
-        key
-        for key, seen in _attempt_seen.items()
-        if now - seen > LOGIN_ATTEMPT_TTL_SECONDS
-        and now >= login_attempts.get(key, (0, 0.0))[1]
-    ]
-    for key in veraltet:
-        login_attempts.pop(key, None)
-        _attempt_seen.pop(key, None)
-
-def check_login_rate_limit(ip: str, username: str) -> None:
-    key = (ip, username)
-    now = time.time()
-    if key in login_attempts:
-        attempts, block_until = login_attempts[key]
-        if now < block_until:
-            wait_seconds = int(block_until - now)
-            # In Minuten runden: "Bitte warte 843 Sekunden" ist für Nutzer
-            # schwer einzuordnen.
-            wait_minutes = max(1, round(wait_seconds / 60))
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=(
-                    f"Zu viele Fehlversuche. Dieser Zugang ist noch etwa "
-                    f"{wait_minutes} Minute{'n' if wait_minutes != 1 else ''} gesperrt."
-                )
-            )
-        # Reset limit if block time has expired
-        if now > block_until and attempts >= MAX_LOGIN_ATTEMPTS:
-            login_attempts[key] = (0, 0.0)
-            
-def record_login_attempt(ip: str, username: str, success: bool) -> int:
-    """Protokolliert einen Login-Versuch.
-
-    Returns:
-        Anzahl der noch verbleibenden Versuche vor der Sperre (bei Erfolg: MAX).
-        Wird die Sperre ausgelöst, wird stattdessen eine HTTPException geworfen.
-    """
-    key = (ip, username)
-    now = time.time()
-
-    # Gelegentlich aufräumen: bei jedem Fehlversuch, sobald die Registry gross
-    # wird -- so bleibt der Speicherverbrauch auch unter Angriff begrenzt.
-    if len(login_attempts) > _MAX_TRACKED_ATTEMPTS:
-        _prune_login_attempts(now)
-
-    if success:
-        login_attempts.pop(key, None)
-        _attempt_seen.pop(key, None)
-        return MAX_LOGIN_ATTEMPTS
-
-    attempts, block_until = login_attempts.get(key, (0, 0.0))
-    attempts += 1
-    _attempt_seen[key] = now
-    if attempts >= MAX_LOGIN_ATTEMPTS:
-        block_until = now + LOGIN_BLOCK_SECONDS
-        login_attempts[key] = (attempts, block_until)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=(
-                f"Zu viele Fehlversuche. Der Login ist für "
-                f"{LOGIN_BLOCK_SECONDS // 60} Minuten gesperrt."
-            )
-        )
-    login_attempts[key] = (attempts, block_until)
-    return MAX_LOGIN_ATTEMPTS - attempts
+# ======================================================================
+# Brute-Force-Schutz für den Login
+# ======================================================================
+# Lag früher als Dictionary in diesem Modul. Mit mehreren uvicorn-Workern hatte
+# damit jeder Worker seinen eigenen Zähler (aus 5 erlaubten Fehlversuchen
+# wurden bei 2 Workern faktisch 10), und ein Neustart löschte alle Sperren.
+# Der Zustand liegt jetzt in der Datenbank -- siehe services/anmeldeversuche.py.
+#
+# Die Namen bleiben hier verfügbar, damit Aufrufer und Tests nicht wissen
+# müssen, wo gezählt wird.
+from services.anmeldeversuche import (  # noqa: E402
+    MAX_VERSUCHE as MAX_LOGIN_ATTEMPTS,
+    SPERRE_SEKUNDEN as LOGIN_BLOCK_SECONDS,
+    VERFALL_SEKUNDEN as LOGIN_ATTEMPT_TTL_SECONDS,
+    aufraeumen as aufraeumen_anmeldeversuche,
+    merken as record_login_attempt,
+    pruefen as check_login_rate_limit,
+)
 
 # Hashing utilities
 def hash_passwort(password: str) -> str:

@@ -341,7 +341,7 @@ async def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzernam
     if not oracle_text:
         return "Keine Textbeschreibung vorhanden."
 
-    if is_premium and model_lite and check_and_increment_ai_usage(benutzername):
+    if is_premium and model_lite and await check_and_increment_ai_usage(benutzername):
         try:
             prompt = (
                 "Übersetze diesen Magic: The Gathering Kartentext möglichst akkurat "

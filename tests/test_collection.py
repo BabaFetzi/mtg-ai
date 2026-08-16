@@ -61,20 +61,27 @@ async def test_sammlung_filter(mock_fetch):
 @pytest.mark.asyncio
 @patch('routers.collection.fetch_card_details_cached')
 async def test_sammlung_editions(mock_fetch):
+    """Zeilen ohne gespeicherte Edition (Altbestand) werden weiterhin ueber
+    den Namen aufgeloest -- sonst verschwaenden sie aus der Auswahl, bis die
+    Wartungsaufgabe die Spalte nachgefuellt hat."""
     mock_fetch.return_value = {
-        "sol ring": {
-            "set": "c21",
-            "set_name": "Commander 2021"
-        }
+        "sol ring": {"set": "c21", "set_name": "Commander 2021"}
     }
 
     with patch('routers.collection.get_db_session') as mock_get_db:
         mock_session = AsyncMock()
-        mock_result = MagicMock()
-        
-        rows = [{"karten_name": "Sol Ring"}]
-        mock_result.mappings.return_value.all.return_value = rows
-        mock_session.execute.return_value = mock_result
+
+        def _antwort(sql, params=None):
+            ergebnis = MagicMock()
+            # Erste Abfrage: Editionen aus der Spalte. Zweite: Zeilen ohne.
+            if "GROUP BY edition" in sql.text:
+                ergebnis.mappings.return_value.all.return_value = []
+            else:
+                ergebnis.mappings.return_value.all.return_value = [
+                    {"karten_name": "Sol Ring"}]
+            return ergebnis
+
+        mock_session.execute.side_effect = _antwort
         mock_get_db.return_value.__aenter__.return_value = mock_session
 
         response = client.get("/api/sammlung/testuser/editions", headers=_auth_headers("testuser"))

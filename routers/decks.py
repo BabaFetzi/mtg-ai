@@ -519,7 +519,7 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
     if cached:
         return cached
 
-    if model and check_and_increment_ai_usage(current_user):
+    if model and await check_and_increment_ai_usage(current_user):
         try:
             # Echte Kartendaten beschaffen. Ohne sie musste das Modell jeden
             # Kartentext aus dem Gedächtnis rekonstruieren und hat ihn bei
@@ -601,7 +601,7 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
     if cached:
         return cached
 
-    if model_lite and check_and_increment_ai_usage(current_user):
+    if model_lite and await check_and_increment_ai_usage(current_user):
         try:
             fakten, nicht_gefunden = await _deck_fakten(req.deck_liste)
             prompt = (

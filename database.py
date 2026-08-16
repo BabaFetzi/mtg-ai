@@ -2,7 +2,7 @@ import logging
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy import Column, String, Integer, Text, Numeric, DateTime, ForeignKey, Boolean, Index, text
+from sqlalchemy import Column, String, Integer, Text, Numeric, DateTime, ForeignKey, Boolean, Float, Index, text
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -179,6 +179,79 @@ class AiCall(Base):
     frage = Column(Text, nullable=True)            # nur mit AI_LOG_CONTENT=true
     antwort = Column(Text, nullable=True)          # nur mit AI_LOG_CONTENT=true
     erstellt_am = Column(DateTime, default=datetime.utcnow, index=True)
+
+class Anmeldeversuch(Base):
+    """Fehlgeschlagene Anmeldungen je (IP, Benutzername) -- der Brute-Force-Schutz.
+
+    Lag vorher in einem Dictionary im Prozessspeicher. Mit mehreren uvicorn-
+    Workern hatte damit JEDER Worker seinen eigenen Zähler: aus 5 erlaubten
+    Fehlversuchen wurden bei 2 Workern faktisch 10, bei 4 Workern 20. Und ein
+    Neustart löschte sämtliche Sperren -- ein Angreifer musste nur auf das
+    nächste Deployment warten.
+
+    In der Datenbank gilt der Zähler für alle Worker gemeinsam und übersteht
+    einen Neustart. Der Zusatzaufwand fällt nicht ins Gewicht: die
+    Passwortprüfung mit bcrypt dauert ohnehin ein Vielfaches davon.
+    """
+    __tablename__ = 'anmeldeversuche'
+    ip = Column(String(64), primary_key=True)
+    benutzername = Column(String(50), primary_key=True)
+    versuche = Column(Integer, nullable=False, default=0)
+    # Unix-Zeit; 0 heisst "nicht gesperrt".
+    gesperrt_bis = Column(Float, nullable=False, default=0.0)
+    # Wann zuletzt etwas passiert ist -- daran haengt das Aufraeumen.
+    zuletzt = Column(Float, nullable=False, default=0.0, index=True)
+
+
+class StripeEreignis(Base):
+    """Bereits verarbeitete Stripe-Webhook-Ereignisse.
+
+    Stripe stellt dasselbe Ereignis mehrfach zu (bei ausbleibender Antwort) und
+    garantiert KEINE Reihenfolge. Beides ist hier gefährlich:
+
+    * Mehrfach: die heutigen Handler setzen nur einen Zustand und vertragen das
+      zufällig. Das gilt aber nur, solange niemand etwas Zählendes ergänzt.
+    * Reihenfolge: käme ein altes "canceled" nach einem neuen "active" an,
+      verlöre ein zahlender Kunde seinen Zugang -- ohne dass irgendwo ein
+      Fehler auftaucht.
+
+    Deshalb wird die Ereignis-ID festgehalten (gegen Wiederholung) und der
+    Zeitstempel je Kunde (gegen Reihenfolge).
+    """
+    __tablename__ = 'stripe_ereignisse'
+    # Die ID von Stripe ("evt_..."), nicht unsere eigene.
+    id = Column(String(80), primary_key=True)
+    typ = Column(String(60))
+    kunde = Column(String(80), index=True, nullable=True)
+    # Unix-Zeit aus dem Ereignis selbst -- nicht der Empfangszeitpunkt. Nur der
+    # sagt, welches von zwei Ereignissen das neuere ist.
+    erstellt = Column(Integer, index=True, nullable=True)
+    verarbeitet_am = Column(DateTime, default=datetime.utcnow)
+
+
+class KiNutzung(Base):
+    """Monatlicher KI-Verbrauch je Nutzer -- der Zähler, der das Limit trägt.
+
+    Vorher lag dieser Zähler ausschliesslich in Redis, und ohne Redis wurde das
+    Limit GAR NICHT durchgesetzt ("fail-open"). Jeder Gemini-Aufruf kostet aber
+    echtes Geld: ein fehlendes REDIS_URL oder ein Redis-Ausfall hätte damit
+    unbegrenzte Kosten bedeutet, ohne dass irgendetwas auffällt.
+
+    Die Datenbank ist ohnehin da -- läuft sie nicht, läuft die Anwendung nicht.
+    Damit ist der Zähler genau so verfügbar wie das Produkt selbst, gilt über
+    alle Worker hinweg und übersteht einen Neustart.
+
+    Ein Eintrag je (Nutzer, Monat, Art). Alte Monate räumt die Wartungsaufgabe
+    weg; sie zu behalten wäre kein Fehler, nur unnötig.
+    """
+    __tablename__ = 'ki_nutzung'
+    benutzername = Column(String(50), primary_key=True)
+    monat = Column(String(7), primary_key=True)   # '2026-08'
+    art = Column(String(10), primary_key=True)    # 'text' | 'vision'
+    # Float, weil Vision in Minuten zählt und nicht in ganzen Aufrufen.
+    wert = Column(Float, nullable=False, default=0.0)
+    erstellt_am = Column(DateTime, default=datetime.utcnow)
+
 
 async def init_db():
     async with engine.begin() as conn:

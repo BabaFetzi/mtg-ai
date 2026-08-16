@@ -234,7 +234,7 @@ async def test_ws_vision_throttles_gemini_calls_within_window(monkeypatch):
     monkeypatch.setattr(routers.vision, "detect_cards_from_image", fake_detect)
     monkeypatch.setattr(routers.vision, "generate_board_advice", fake_advice)
     monkeypatch.setattr(routers.vision, "check_user_premium", AsyncMock(return_value=True))
-    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", MagicMock(return_value=True))
+    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", AsyncMock(return_value=True))
     # Große Schwelle -> der zweite Frame landet garantiert noch im selben Drossel-Fenster.
     monkeypatch.setattr(routers.vision, "VISION_WS_MIN_GEMINI_INTERVAL_SECONDS", 60.0)
 
@@ -265,7 +265,7 @@ async def test_ws_vision_calls_gemini_again_after_throttle_window_passes(monkeyp
     monkeypatch.setattr(routers.vision, "detect_cards_from_image", fake_detect)
     monkeypatch.setattr(routers.vision, "generate_board_advice", fake_advice)
     monkeypatch.setattr(routers.vision, "check_user_premium", AsyncMock(return_value=True))
-    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", MagicMock(return_value=True))
+    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", AsyncMock(return_value=True))
     # Winzige Schwelle -> das asyncio.sleep(1) im Loop reicht, um sie zu überschreiten.
     monkeypatch.setattr(routers.vision, "VISION_WS_MIN_GEMINI_INTERVAL_SECONDS", 0.01)
 
@@ -285,7 +285,7 @@ async def test_ws_vision_blocked_when_monthly_minutes_limit_reached(monkeypatch)
 
     monkeypatch.setattr(routers.vision, "detect_cards_from_image", fake_detect_should_not_run)
     monkeypatch.setattr(routers.vision, "check_user_premium", AsyncMock(return_value=True))
-    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", MagicMock(return_value=False))
+    monkeypatch.setattr(routers.vision, "check_and_increment_vision_minutes", AsyncMock(return_value=False))
 
     with client.websocket_connect(f"/api/vision/ws?token={_TEST_TOKEN}") as ws:
         ws.send_bytes(b"frame1")

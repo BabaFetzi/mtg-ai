@@ -16,6 +16,7 @@ sowie Zahlungsausfall und die Frage, ob ein Ereignis fremde Konten berührt.
 
 import hashlib
 import hmac
+import itertools
 import json
 import time
 from contextlib import asynccontextmanager
@@ -89,15 +90,25 @@ def _signiere(rohdaten: bytes) -> str:
     return f"t={zeitpunkt},v1={signatur}"
 
 
-def _ereignis(typ: str, objekt: dict) -> bytes:
+_zaehler = itertools.count(1)
+
+
+def _ereignis(typ: str, objekt: dict, ereignis_id: str = None,
+              erstellt: int = None) -> bytes:
+    """Ein Stripe-Ereignis. Jedes bekommt standardmaessig eine eigene ID --
+    zwei Ereignisse mit derselben ID sind fuer den Webhook (zu Recht) eine
+    Wiederholung und werden uebersprungen."""
     return json.dumps({
-        "id": "evt_lebenszyklus", "object": "event", "type": typ,
+        "id": ereignis_id or f"evt_{next(_zaehler)}",
+        "object": "event", "type": typ,
+        "created": erstellt if erstellt is not None else int(time.time()),
         "data": {"object": objekt},
     }).encode()
 
 
-def _sende(db, typ: str, objekt: dict):
-    rohdaten = _ereignis(typ, objekt)
+def _sende(db, typ: str, objekt: dict, ereignis_id: str = None,
+           erstellt: int = None):
+    rohdaten = _ereignis(typ, objekt, ereignis_id, erstellt)
     with patch("routers.payments.get_db_session", _sitzungsfabrik(db)):
         return client.post(
             "/api/checkout/webhook",
@@ -153,13 +164,122 @@ async def test_abo_ende_stuft_zurueck(db):
     assert nachher["stripe_subscription_id"] is None
 
 
-@pytest.mark.asyncio
-async def test_zahlungsausfall_stuft_zurueck(db):
+def _kaufen(db):
     _sende(db, "checkout.session.completed", {
         "customer": "cus_kaeufer", "subscription": "sub_kaeufer",
         "metadata": {"benutzername": "kaeufer"},
     })
+
+
+@pytest.mark.asyncio
+async def test_zahlungsausfall_nimmt_nicht_sofort_den_zugang(db):
+    """Der erste Fehlversuch darf nicht herabstufen.
+
+    Stripe versucht eine fehlgeschlagene Zahlung noch tagelang erneut, und
+    meistens klappt sie. Vorher verlor ein Kunde mit kurz abgelaufener Karte
+    sofort seinen Zugang -- obwohl er weiter zahlt -- und bekam ihn NIE
+    zurueck, weil das Gegenereignis nicht verarbeitet wurde.
+    """
+    _kaufen(db)
     _sende(db, "invoice.payment_failed", {"customer": "cus_kaeufer"})
+
+    assert (await _zustand(db, "kaeufer"))["rolle"] == "premium"
+
+
+@pytest.mark.asyncio
+async def test_nach_geglueckter_wiederholung_bleibt_premium(db):
+    """Der haeufigste Verlauf: Zahlung scheitert, Stripe probiert es erneut,
+    es klappt. Der Kunde darf davon gar nichts merken."""
+    _kaufen(db)
+    _sende(db, "invoice.payment_failed", {"customer": "cus_kaeufer"})
+    _sende(db, "customer.subscription.updated",
+           {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "past_due"})
+    assert (await _zustand(db, "kaeufer"))["rolle"] == "premium"
+
+    _sende(db, "customer.subscription.updated",
+           {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "active"})
+    assert (await _zustand(db, "kaeufer"))["rolle"] == "premium"
+
+
+@pytest.mark.asyncio
+async def test_erschoepfte_wiederholungen_stufen_herab(db):
+    """Gibt Stripe auf, muss der Zugang weg sein -- sonst zahlt niemand mehr."""
+    _kaufen(db)
+    _sende(db, "customer.subscription.updated",
+           {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "unpaid"})
+
+    assert (await _zustand(db, "kaeufer"))["rolle"] == "free"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,erwartet", [
+    ("active", "premium"),
+    ("trialing", "premium"),
+    ("past_due", "premium"),   # Karenz: Stripe versucht es noch
+    ("unpaid", "free"),
+    ("canceled", "free"),
+    ("incomplete", "free"),
+    ("incomplete_expired", "free"),
+])
+async def test_jeder_abo_status_ergibt_die_richtige_rolle(db, status, erwartet):
+    _kaufen(db)
+    _sende(db, "customer.subscription.updated",
+           {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": status})
+
+    assert (await _zustand(db, "kaeufer"))["rolle"] == erwartet
+
+
+# ----------------------------------------------------------------------
+# Wiederholung und Reihenfolge
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_dasselbe_ereignis_zweimal_wird_nur_einmal_verarbeitet(db):
+    _kaufen(db)
+    erste = _sende(db, "customer.subscription.updated",
+                   {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "canceled"},
+                   ereignis_id="evt_gleich")
+    zweite = _sende(db, "customer.subscription.updated",
+                    {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "canceled"},
+                    ereignis_id="evt_gleich")
+
+    assert erste.json()["status"] == "success"
+    assert zweite.json()["status"] == "duplicate"
+
+
+@pytest.mark.asyncio
+async def test_ein_verspaetetes_altes_ereignis_nimmt_kein_premium_weg(db):
+    """Stripe garantiert KEINE Reihenfolge. Kaeme ein altes "canceled" nach
+    einem neuen "active" an, verloere ein zahlender Kunde seinen Zugang --
+    ohne dass irgendwo ein Fehler auftaucht."""
+    _kaufen(db)
+    jetzt = int(time.time())
+
+    _sende(db, "customer.subscription.updated",
+           {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "active"},
+           erstellt=jetzt)
+    antwort = _sende(db, "customer.subscription.updated",
+                     {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "canceled"},
+                     erstellt=jetzt - 3600)
+
+    assert antwort.json()["status"] == "stale"
+    assert (await _zustand(db, "kaeufer"))["rolle"] == "premium"
+
+
+@pytest.mark.asyncio
+async def test_die_reihenfolge_gilt_je_kunde(db):
+    """Ein neueres Ereignis eines ANDEREN Kunden darf dieses hier nicht
+    blockieren -- sonst haengt das Abo davon ab, wer sonst gerade zahlt."""
+    jetzt = int(time.time())
+    _sende(db, "customer.subscription.updated",
+           {"id": "sub_fremd", "customer": "cus_fremd", "status": "active"},
+           erstellt=jetzt)
+
+    _kaufen(db)
+    antwort = _sende(db, "customer.subscription.updated",
+                     {"id": "sub_kaeufer", "customer": "cus_kaeufer", "status": "canceled"},
+                     erstellt=jetzt - 3600)
+
+    assert antwort.json()["status"] == "success"
     assert (await _zustand(db, "kaeufer"))["rolle"] == "free"
 
 

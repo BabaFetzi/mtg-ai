@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import auth as auth_module
-from auth import create_access_token, login_attempts, record_login_attempt
+from auth import create_access_token
 from database import Base
 from main import app
 
@@ -81,53 +81,20 @@ def test_user_role_allows_self(mock_db):
 
 
 # ----------------------------------------------------------------------
-# 3. Login-Ratenbegrenzer: begrenzter Speicher
+# 3. Login-Ratenbegrenzer
 # ----------------------------------------------------------------------
-def test_login_attempt_registry_is_pruned():
-    """Wer Logins für zehntausende Benutzernamen durchprobiert, darf den
-    Serverspeicher nicht volllaufen lassen."""
-    login_attempts.clear()
-    auth_module._attempt_seen.clear()
-
-    alt = time.time() - (auth_module.LOGIN_ATTEMPT_TTL_SECONDS + 60)
-    for i in range(50):
-        key = ("1.2.3.4", f"opfer{i}")
-        login_attempts[key] = (1, 0.0)          # nicht gesperrt
-        auth_module._attempt_seen[key] = alt     # und veraltet
-
-    auth_module._prune_login_attempts(time.time())
-    assert login_attempts == {}
-    assert auth_module._attempt_seen == {}
-
-
-def test_pruning_keeps_actively_blocked_entries():
-    """Aktive Sperren dürfen NICHT wegoptimiert werden (sonst liesse sich die
-    Sperre durch Warten auf die Bereinigung umgehen)."""
-    login_attempts.clear()
-    auth_module._attempt_seen.clear()
-
-    key = ("9.9.9.9", "angreifer")
-    now = time.time()
-    login_attempts[key] = (5, now + 900)                      # gesperrt
-    auth_module._attempt_seen[key] = now - 999999             # aber alt
-
-    auth_module._prune_login_attempts(now)
-    assert key in login_attempts
-
-    login_attempts.clear()
-    auth_module._attempt_seen.clear()
-
-
-def test_successful_login_clears_tracking():
-    login_attempts.clear()
-    auth_module._attempt_seen.clear()
-
-    record_login_attempt("5.5.5.5", "user", success=False)
-    assert ("5.5.5.5", "user") in auth_module._attempt_seen
-
-    record_login_attempt("5.5.5.5", "user", success=True)
-    assert ("5.5.5.5", "user") not in login_attempts
-    assert ("5.5.5.5", "user") not in auth_module._attempt_seen
+# Die Tests dieses Abschnitts prüften die Bereinigung eines Dictionaries im
+# Prozessspeicher (begrenztes Wachstum, aktive Sperren überleben, Erfolg
+# löscht den Eintrag).
+#
+# Der Zähler liegt inzwischen in der Datenbank -- im Prozessspeicher hatte
+# jeder uvicorn-Worker seinen eigenen, und ein Neustart löschte alle Sperren.
+# Dieselben drei Zusicherungen prüft jetzt tests/test_auth.py gegen eine echte
+# Datenbank:
+#
+#   test_abgelaufene_eintraege_werden_aufgeraeumt   begrenztes Wachstum
+#   test_laufende_sperre_wird_nicht_weggeraeumt     aktive Sperren überleben
+#   test_erfolgreiche_anmeldung_loescht_den_zaehler Erfolg setzt zurück
 
 
 # ----------------------------------------------------------------------

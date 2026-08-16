@@ -82,7 +82,7 @@ async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str 
             "antwort": "PAYWALL: Der KI-Judge steht nur Premium-Mitgliedern zur Verfügung. Bitte upgrade deine Rolle im Premium-Tab!"
         }
 
-    if not check_and_increment_ai_usage(current_user):
+    if not await check_and_increment_ai_usage(current_user):
         return {
             "antwort": "Du hast dein monatliches KI-Anfragen-Limit erreicht. Es setzt sich zu Beginn des nächsten Monats zurück."
         }
@@ -502,7 +502,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 seen_names.add(c_name.lower().strip())
 
         # 4. Fallback zu Gemini AI falls keine Combos gefunden wurden oder API fehlschlug (run_scan_combos_bg)
-        if not merged_combos and model_lite and check_and_increment_ai_usage(benutzername):
+        if not merged_combos and model_lite and await check_and_increment_ai_usage(benutzername):
             prompt = (
                 "Du bist ein präziser Magic: The Gathering Schiedsrichter und Combo-Datenbank-Experte.\n"
                 f"Analysiere diese Liste von Karten und finde NUR echte, spielentscheidende Combos (z.B. Infinite Mana, Infinite Damage, Instant Win) im Format '{format_name}'.\n\n"
@@ -641,7 +641,7 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
             logger.exception("Error calling Spellbook API in run_combos_bg")
 
         # Fallback zu Gemini AI falls Spellbook keine Ergebnisse liefert
-        if not spellbook_combos and model_lite and check_and_increment_ai_usage(benutzername):
+        if not spellbook_combos and model_lite and await check_and_increment_ai_usage(benutzername):
             prompt = (
                 "Du bist ein präziser Magic: The Gathering Schiedsrichter und Combo-Datenbank-Experte.\n"
                 f"Finde bekannte Magic The Gathering Kombinationen (Combos) für die Karte '{card_name}' im Format '{format_name}'.\n\n"

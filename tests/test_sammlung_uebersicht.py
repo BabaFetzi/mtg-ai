@@ -10,12 +10,58 @@ gerechnet hat?
 """
 
 import json
+from contextlib import asynccontextmanager
+from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
+from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
+from auth import create_access_token
+from database import Base
+from main import app
 from routers.collection import (MAX_PRO_SEITE, SORTIERUNGEN, STANDARD_PRO_SEITE,
                                 _filter_antwort, _top_antwort, _uebersicht_bauen,
                                 karten_preis, preis_zahl, sortiere_karten)
+
+client = TestClient(app)
+
+
+def _drucke(nach_id):
+    """Ersatz für druecke_nach_ids, der eine feste Zuordnung liefert."""
+    async def _hole(ids):
+        return {i: nach_id[i] for i in ids if i in nach_id}
+    return _hole
+
+
+@pytest_asyncio.fixture
+async def sammlungs_db():
+    """Echte Datenbank plus Anmeldekopf für "tester"."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    macher = async_sessionmaker(engine, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def _sitzung():
+        async with macher() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    with patch("routers.collection.get_db_session", _sitzung):
+        yield macher, {"Authorization": f"Bearer {create_access_token({'sub': 'tester'})}"}
+    await engine.dispose()
 
 
 def zeile(id, name, album, preis, foil=0, bild="http://x/y.jpg"):
@@ -305,6 +351,79 @@ def test_unbekannte_sortierung_faellt_auf_den_namen_zurueck():
     karten = [{"name": "B"}, {"name": "A"}]
 
     assert _sortiert(karten, "voelliger-unsinn") == ["A", "B"]
+
+
+# ----------------------------------------------------------------------
+# Editionsliste -- muss zu dem passen, wonach der Filter filtert
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_editionsliste_zeigt_die_besessene_auflage(sammlungs_db):
+    """Der Kern des Fehlers: angezeigt wurde die Edition des NEUESTEN
+    Nachdrucks, gefiltert wird aber nach der gespeicherten. Wer eine alte
+    Auflage besitzt, fand sie in der Auswahlliste deshalb nicht.
+    """
+    macher, kopf = sammlungs_db
+    async with macher() as s:
+        await s.execute(text(
+            "INSERT INTO sammlung_alben (benutzername, karten_name, album_name, "
+            "preis, edition, scryfall_id) VALUES "
+            "('tester', 'Lightning Bolt', 'Ordner', '480.00', 'lea', 'id-lea')"))
+        await s.commit()
+
+    with patch("routers.collection.druecke_nach_ids", _drucke({
+            "id-lea": {"set": "lea", "set_name": "Limited Edition Alpha"}})):
+        antwort = client.get("/api/sammlung/tester/editions", headers=kopf)
+
+    daten = antwort.json()
+    assert daten["erfolg"] is True
+    assert daten["editions"] == [
+        {"set_code": "lea", "set_name": "Limited Edition Alpha"}]
+
+
+@pytest.mark.asyncio
+async def test_editionsliste_ohne_scryfall_zeigt_den_code(sammlungs_db):
+    """Lässt sich der Klarname nicht auflösen, steht der Code da. Einen
+    Namen zu erfinden wäre schlechter als die Abkürzung."""
+    macher, kopf = sammlungs_db
+    async with macher() as s:
+        await s.execute(text(
+            "INSERT INTO sammlung_alben (benutzername, karten_name, album_name, "
+            "preis, edition) VALUES ('tester', 'Sol Ring', 'Ordner', '1.00', 'c21')"))
+        await s.commit()
+
+    with patch("routers.collection.druecke_nach_ids", _drucke({})):
+        antwort = client.get("/api/sammlung/tester/editions", headers=kopf)
+
+    assert antwort.json()["editions"] == [{"set_code": "c21", "set_name": "C21"}]
+
+
+@pytest.mark.asyncio
+async def test_editionsliste_fragt_scryfall_nicht_je_karte(sammlungs_db):
+    """Vorher wurde für JEDEN eindeutigen Kartennamen aufgelöst. Bei einer
+    grossen Sammlung sind das tausende Abfragen -- bei jedem Ordnerwechsel."""
+    macher, kopf = sammlungs_db
+    async with macher() as s:
+        for i in range(50):
+            await s.execute(text(
+                "INSERT INTO sammlung_alben (benutzername, karten_name, album_name, "
+                "preis, edition, scryfall_id) VALUES "
+                f"('tester', 'Karte {i}', 'Ordner', '1.00', 'c21', 'id-{i}')"))
+        await s.commit()
+
+    gefragt = []
+
+    async def _mitzaehlen(ids):
+        gefragt.append(list(ids))
+        return {ids[0]: {"set": "c21", "set_name": "Commander 2021"}} if ids else {}
+
+    with patch("routers.collection.druecke_nach_ids", _mitzaehlen):
+        antwort = client.get("/api/sammlung/tester/editions", headers=kopf)
+
+    assert antwort.json()["editions"] == [
+        {"set_code": "c21", "set_name": "Commander 2021"}]
+    # Eine Edition -> ein Beispieldruck, nicht 50.
+    assert gefragt == [[gefragt[0][0]]]
+    assert len(gefragt[0]) == 1
 
 
 def test_grenzen_sind_gesetzt():

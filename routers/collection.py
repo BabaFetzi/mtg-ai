@@ -28,7 +28,8 @@ import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException, BackgroundTasks, Depends
+from fastapi import (APIRouter, UploadFile, File, Form, Query, HTTPException,
+                     BackgroundTasks, Depends, Request)
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -36,6 +37,7 @@ from sqlalchemy import text
 from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.antwort import json_antwort
+from services.limiter import limiter
 from services.bestand import bedarf_aus_deck, bestand_aus_zeilen, fehlende_exemplare
 from services.scryfall import (DRUCK_CACHE_PRAEFIX, druck_nach_id, druecke_nach_ids,
                                fetch_card_details_cached, parse_decklist,
@@ -176,6 +178,29 @@ def parse_import_csv(csv_text: str, default_album: str) -> List[Dict[str, Any]]:
     return parsed
 
 logger = logging.getLogger(__name__)
+
+# ======================================================================
+# Drosselung
+# ======================================================================
+# Diese Datei hatte KEINE einzige Grenze, während routers/decks.py sechs hat.
+# Das fiel nicht auf, weil slowapi ohne default_limits nur dort greift, wo ein
+# Dekorator steht -- ein fehlender Dekorator sieht aus wie kein Problem.
+#
+# Gezählt wird je angemeldetem Nutzer (services/limiter.py), nicht je IP.
+# Die Zahlen richten sich danach, was eine Anfrage kostet:
+#
+#   240/min  Schreiben einzelner Karten, Ordnernamen -- klein und häufig.
+#            Wer eine Sammlung einpflegt, klickt schnell.
+#   120/min  Ordnerübersicht, Filter, Editionen. Eine Filterseite je Klick,
+#            dazu "Mehr laden" -- 120 lässt zügiges Blättern zu.
+#    60/min  Top-Liste und Kartennamen: seltener gebraucht, aber sie lesen
+#            die gesamte Sammlung.
+#    30/min  Ordner löschen, Deckübernahme -- selten und weitreichend.
+#    10/min  Vollabruf, CSV-Import und -Export. Jeder Aufruf liest die
+#            komplette Sammlung; die Oberfläche braucht das höchstens einmal.
+#     5/min  Preisaktualisierung: fragt Scryfall für jede Karte an. Ohne
+#            Grenze könnte ein einzelner Nutzer damit sowohl den Server als
+#            auch das Kontingent bei Scryfall aufbrauchen.
 
 # ======================================================================
 # Strukturierte Kartenmetadaten
@@ -455,7 +480,8 @@ router = APIRouter(
     "/sammlung/{benutzername}",
     summary="Sammlung abrufen",
 )
-async def get_sammlung(benutzername: str, current_user: str = Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def get_sammlung(benutzername: str, request: Request, current_user: str = Depends(get_current_user)):
     """Die vollstaendige Sammlung in einer Antwort.
 
     Die Oberflaeche ruft das nicht mehr auf: sie laedt die Ordneruebersicht
@@ -556,7 +582,8 @@ def _uebersicht_bauen(rows, daten_je_zeile) -> Dict[str, Any]:
     "/sammlung/{benutzername}/uebersicht",
     summary="Ordneruebersicht ohne die einzelnen Karten",
 )
-async def sammlung_uebersicht(benutzername: str,
+@limiter.limit("120/minute")
+async def sammlung_uebersicht(benutzername: str, request: Request,
                               current_user: str = Depends(get_current_user)):
     if benutzername != current_user:
         raise HTTPException(status_code=403,
@@ -586,7 +613,8 @@ MAX_TOP = 50
     "/sammlung/{benutzername}/top",
     summary="Die wertvollsten Karten der Sammlung",
 )
-async def sammlung_top(benutzername: str,
+@limiter.limit("60/minute")
+async def sammlung_top(benutzername: str, request: Request,
                        limit: int = Query(default=10, ge=1, le=MAX_TOP),
                        current_user: str = Depends(get_current_user)):
     """Fuer "Top 10 Wertvollste Karten".
@@ -627,7 +655,8 @@ def _top_antwort(rows, daten_je_zeile, limit: int) -> Response:
     "/sammlung/{benutzername}/alben",
     summary="Nur die Ordnernamen",
 )
-async def sammlung_albennamen(benutzername: str,
+@limiter.limit("240/minute")
+async def sammlung_albennamen(benutzername: str, request: Request,
                               current_user: str = Depends(get_current_user)):
     """Fuer Auswahlfelder ("In welchen Ordner legen?").
 
@@ -654,7 +683,8 @@ async def sammlung_albennamen(benutzername: str,
     "/sammlung/{benutzername}/kartennamen",
     summary="Kartennamen eines Ordners",
 )
-async def sammlung_kartennamen(benutzername: str,
+@limiter.limit("60/minute")
+async def sammlung_kartennamen(benutzername: str, request: Request,
                                album: str = Query(...),
                                current_user: str = Depends(get_current_user)):
     """Fuer den Synergie-Scanner, der nur die Namen braucht.
@@ -850,6 +880,13 @@ def _filter_antwort(rows, daten_je_zeile, suche, farbe, seltenheit, edition,
 STANDARD_PRO_SEITE = 100
 MAX_PRO_SEITE = 500
 
+# Wie viele Zeilen ohne gespeicherte Edition höchstens über den Namen
+# aufgelöst werden. Das betrifft nur Altbestände; die Wartungsaufgabe füllt
+# die Spalte nach, danach ist die Liste vollständig ohne einen einzigen
+# Scryfall-Aufruf. Die Grenze verhindert, dass eine grosse, noch nicht
+# nachgefüllte Sammlung den Filterbereich ausbremst.
+MAX_EDITION_RUECKFALL = 300
+
 # Führende Zahl wie parseFloat sie liest: "1.50 €" -> 1.50, "abc" -> nichts.
 _ZAHL_AM_ANFANG = re.compile(r"^\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 
@@ -936,7 +973,8 @@ def _alben_aufbauen(rows, daten_je_zeile) -> Dict[str, List[Dict[str, Any]]]:
     "/sammlung/hinzufuegen",
     summary="Karte zur Sammlung hinzufügen",
 )
-async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_user)):
+@limiter.limit("240/minute")
+async def add_karte(data: AddKarteData, request: Request, current_user: str = Depends(get_current_user)):
     # Strukturierte Metadaten gleich mitschreiben. Der Aufruf ist praktisch
     # gratis: die Karte wurde soeben gesucht und liegt daher im Cache. Der
     # Platzhalter für leere Alben wird bewusst nicht aufgelöst.
@@ -1010,7 +1048,8 @@ MAX_UEBERNAHME = 250
     "/sammlung/aus-deck",
     summary="Fehlende Karten eines Decks in die Sammlung übernehmen",
 )
-async def sammlung_aus_deck(data: DeckUebernahmeData, current_user: str = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def sammlung_aus_deck(data: DeckUebernahmeData, request: Request, current_user: str = Depends(get_current_user)):
     """Legt die Exemplare an, die dem Deck in der Sammlung noch fehlen.
 
     Bewusst nur die fehlenden: zweimal Drücken ändert beim zweiten Mal nichts.
@@ -1100,7 +1139,8 @@ async def sammlung_aus_deck(data: DeckUebernahmeData, current_user: str = Depend
     "/sammlung/loeschen",
     summary="Karte aus Sammlung löschen",
 )
-async def delete_karte(data: DeleteKarteData, current_user: str = Depends(get_current_user)):
+@limiter.limit("240/minute")
+async def delete_karte(data: DeleteKarteData, request: Request, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         await session.execute(
             text("DELETE FROM sammlung_alben WHERE id = :id AND benutzername = :user"),
@@ -1115,7 +1155,8 @@ async def delete_karte(data: DeleteKarteData, current_user: str = Depends(get_cu
     "/sammlung/album_loeschen",
     summary="Gesamtes Album löschen",
 )
-async def delete_album(data: DeleteAlbumData, current_user: str = Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def delete_album(data: DeleteAlbumData, request: Request, current_user: str = Depends(get_current_user)):
     async with get_db_session() as session:
         await session.execute(
             text("DELETE FROM sammlung_alben WHERE benutzername = :user AND album_name = :album"),
@@ -1130,8 +1171,10 @@ async def delete_album(data: DeleteAlbumData, current_user: str = Depends(get_cu
     "/sammlung/{benutzername}/filter",
     summary="Sammlung filtern",
 )
+@limiter.limit("120/minute")
 async def sammlung_filter(
     benutzername: str,
+    request: Request,
     farbe: str = Query(default=None, description="Farbe (W, U, B, R, G)"),
     seltenheit: str = Query(default=None, description="Seltenheit (common, uncommon, rare, mythic)"),
     edition: str = Query(default=None, description="Edition / Set-Code"),
@@ -1217,38 +1260,78 @@ async def sammlung_filter(
     "/sammlung/{benutzername}/editions",
     summary="Editionen in der Sammlung abfragen",
 )
-async def sammlung_editions(benutzername: str, album: str = Query(default=None), current_user: str = Depends(get_current_user)):
+@limiter.limit("120/minute")
+async def sammlung_editions(benutzername: str, request: Request, album: str = Query(default=None), current_user: str = Depends(get_current_user)):
+    """Die Editionen, die tatsächlich in der Sammlung liegen.
+
+    Vorher wurde für JEDEN eindeutigen Kartennamen der Standarddruck bei
+    Scryfall aufgelöst und dessen Edition genommen. Das war doppelt falsch:
+
+    * Zu langsam. Der Filterbereich ruft das bei jedem Ordnerwechsel auf, und
+      es waren so viele Auflösungen wie eindeutige Kartennamen -- bei einer
+      grossen Sammlung tausende.
+    * Zu ungenau. Wer eine alte Auflage besitzt, hat sie hier nicht gefunden:
+      angezeigt wurde die Edition des NEUESTEN Nachdrucks. Der Filter selbst
+      geht dagegen vom gespeicherten Druck aus -- die Auswahlliste passte also
+      nicht zu dem, wonach gefiltert wird.
+
+    Jetzt beantwortet die gespeicherte Spalte die Frage. Für den Klarnamen der
+    Edition genügt EIN Druck je Edition statt einer je Karte.
+    """
     if benutzername != current_user:
         raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     try:
+        bedingungen = ["benutzername = :name"]
+        params: Dict[str, Any] = {"name": current_user}
+        if album:
+            bedingungen.append("album_name = :album")
+            params["album"] = album
+        wo = " AND ".join(bedingungen)
+
         async with get_db_session() as session:
-            if album:
-                res = await session.execute(
-                    text("SELECT DISTINCT karten_name FROM sammlung_alben WHERE benutzername = :name AND album_name = :album"),
-                    {"name": current_user, "album": album}
-                )
-            else:
-                res = await session.execute(
-                    text("SELECT DISTINCT karten_name FROM sammlung_alben WHERE benutzername = :name"),
-                    {"name": current_user}
-                )
-            rows = res.mappings().all()
+            # Je Edition ein Beispieldruck -- daraus kommt der Klarname.
+            res = await session.execute(
+                text(f"SELECT edition, MAX(scryfall_id) AS kennung FROM sammlung_alben "
+                     f"WHERE {wo} AND edition IS NOT NULL AND edition != '' "
+                     f"GROUP BY edition"),
+                params)
+            gruppen = res.mappings().all()
 
-        if not rows:
-            return {"erfolg": True, "editions": []}
+            # Zeilen aus der Zeit vor der Spalte haben keine Edition. Ohne sie
+            # verschwänden Altbestände aus der Auswahl, bis die Wartungsaufgabe
+            # sie nachgefüllt hat.
+            res = await session.execute(
+                text(f"SELECT DISTINCT karten_name FROM sammlung_alben "
+                     f"WHERE {wo} AND (edition IS NULL OR edition = '') "
+                     f"AND karten_name != '__PLACEHOLDER__' "
+                     f"LIMIT {MAX_EDITION_RUECKFALL}"),
+                params)
+            ohne_edition = [z["karten_name"] for z in res.mappings().all()]
 
-        unique_names = [row["karten_name"] for row in rows]
-        scryfall_data = await fetch_card_details_cached(unique_names)
+        editionen: Dict[str, str] = {}
 
-        editions_seen = set()
-        editions = []
-        for card_info in scryfall_data.values():
-            set_code = card_info.get("set", "")
-            set_name = card_info.get("set_name", set_code)
-            if set_code and set_code not in editions_seen:
-                editions_seen.add(set_code)
-                editions.append({"set_code": set_code, "set_name": set_name})
+        kennungen = [g["kennung"] for g in gruppen if g["kennung"]]
+        drucke = await druecke_nach_ids(kennungen) if kennungen else {}
+        namen_je_code = {(d.get("set") or "").lower(): d.get("set_name")
+                         for d in drucke.values() if d.get("set")}
 
+        for gruppe in gruppen:
+            code = (gruppe["edition"] or "").lower()
+            if not code:
+                continue
+            # Ist kein Klarname auflösbar, steht der Code da. Einen Namen zu
+            # erfinden wäre schlechter als die Abkürzung.
+            editionen[code] = namen_je_code.get(code) or code.upper()
+
+        if ohne_edition:
+            nach_name = await fetch_card_details_cached(ohne_edition)
+            for info in nach_name.values():
+                code = (info.get("set") or "").lower()
+                if code and code not in editionen:
+                    editionen[code] = info.get("set_name") or code.upper()
+
+        editions = [{"set_code": code, "set_name": name}
+                    for code, name in editionen.items()]
         editions.sort(key=lambda e: e["set_name"])
         return {"erfolg": True, "editions": editions}
     except Exception as e:
@@ -1380,8 +1463,10 @@ async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, alb
     "/sammlung/import-csv",
     summary="CSV-Kartenliste importieren",
 )
+@limiter.limit("10/minute")
 async def sammlung_import_csv(
     background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     album_name: str = Form("Import"),
     current_user: str = Depends(get_current_user),
@@ -1447,7 +1532,8 @@ async def get_import_status(job_id: str, current_user: str = Depends(get_current
     "/sammlung/{benutzername}/export-csv",
     summary="Sammlung als CSV exportieren",
 )
-async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def sammlung_export_csv(benutzername: str, request: Request, current_user: str = Depends(get_current_user)):
     if benutzername != current_user:
         raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     try:
@@ -1520,7 +1606,8 @@ async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get
     "/sammlung/{benutzername}/refresh-prices",
     summary="Sammlungspreise live aktualisieren",
 )
-async def refresh_sammlung_prices(benutzername: str, current_user: str = Depends(get_current_user)):
+@limiter.limit("5/minute")
+async def refresh_sammlung_prices(benutzername: str, request: Request, current_user: str = Depends(get_current_user)):
     if benutzername != current_user:
         raise HTTPException(status_code=403, detail="Kein Zugriff auf die Sammlung dieses Benutzers.")
     is_premium = await check_user_premium(current_user)

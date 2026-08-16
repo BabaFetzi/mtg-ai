@@ -16,6 +16,7 @@ import logging
 import os
 import time
 import urllib.parse
+from datetime import datetime, timezone
 from typing import Optional
 
 import stripe
@@ -58,6 +59,23 @@ def get_stripe_val(obj, key, default=None):
 # ein Dutzend. Bei mehreren tausend Nutzern wäre das ein Vielfaches der
 # Stripe-Ratengrenze -- und jeder Aufruf verzögert den Seitenaufbau.
 PREIS_CACHE_SEKUNDEN = int(os.getenv("PREMIUM_PRICE_CACHE_SECONDS", "600"))
+
+# ======================================================================
+# Welche Abo-Zustände Premium bedeuten
+# ======================================================================
+# Stripe kennt sieben Zustände. Entscheidend ist "past_due": die Zahlung ist
+# offen, Stripe versucht es aber noch tagelang erneut, und meistens klappt es.
+# Wer in dieser Zeit ausgesperrt wird, verliert seinen Zugang, obwohl er zahlt
+# -- genau das ist vorher passiert, weil schon der erste Fehlversuch
+# herabstufte.
+#
+#   active, trialing  -> bezahlt bzw. Testphase          -> Premium
+#   past_due          -> Zahlung offen, Stripe probiert  -> Premium (Karenz)
+#   unpaid            -> Wiederholungen erschöpft        -> free
+#   canceled          -> beendet                         -> free
+#   incomplete        -> erste Zahlung nie abgeschlossen -> free
+#   incomplete_expired-> Frist dafür abgelaufen          -> free
+PREMIUM_STATUS = frozenset({"active", "trialing", "past_due"})
 _PREIS_CACHE_KEY = "checkout:preis:v1"
 
 
@@ -350,47 +368,183 @@ async def handle_stripe_webhook_logic(request: Request):
         event_type = get_stripe_val(event, "type")
         event_data = get_stripe_val(event, "data", {})
         event_obj = get_stripe_val(event_data, "object")
-        
-        if event_type == "checkout.session.completed":
-            metadata = get_stripe_val(event_obj, "metadata", {})
-            benutzername = get_stripe_val(metadata, "benutzername")
-            customer_id = get_stripe_val(event_obj, "customer")
-            subscription_id = get_stripe_val(event_obj, "subscription")
-            if benutzername:
-                async with get_db_session() as session_db:
-                    await session_db.execute(
-                        text("UPDATE nutzer SET rolle='premium', stripe_customer_id = :cust_id, stripe_subscription_id = :sub_id WHERE benutzername = :name"),
-                        {"cust_id": customer_id, "sub_id": subscription_id, "name": benutzername}
-                    )
-                logger.info(
-                    "User %s upgraded to premium via Stripe. Customer: %s, Subscription: %s.",
-                    benutzername, customer_id, subscription_id,
-                )
-                return {"status": "success", "message": f"User {benutzername} upgraded to premium"}
-                
-        elif event_type == "customer.subscription.deleted":
-            customer_id = get_stripe_val(event_obj, "customer")
-            if customer_id:
-                async with get_db_session() as session_db:
-                    await session_db.execute(
-                        text("UPDATE nutzer SET rolle='free', stripe_subscription_id = NULL WHERE stripe_customer_id = :cust_id"),
-                        {"cust_id": customer_id}
-                    )
-                logger.info("Downgraded user with Stripe Customer ID %s to free.", customer_id)
-                return {"status": "success", "message": "User subscription cancelled"}
-                
-        elif event_type == "invoice.payment_failed":
-            customer_id = get_stripe_val(event_obj, "customer")
-            if customer_id:
-                async with get_db_session() as session_db:
-                    await session_db.execute(
-                        text("UPDATE nutzer SET rolle='free', stripe_subscription_id = NULL WHERE stripe_customer_id = :cust_id"),
-                        {"cust_id": customer_id}
-                    )
-                logger.info("Downgraded user with Stripe Customer ID %s due to payment failure.", customer_id)
-                return {"status": "success", "message": "User subscription suspended"}
-            
+        event_id = get_stripe_val(event, "id")
+        event_created = get_stripe_val(event, "created")
+        kunde_im_ereignis = get_stripe_val(event_obj, "customer")
+
+        # Wiederholung und Reihenfolge pruefen, BEVOR irgendetwas geaendert
+        # wird. Siehe database.StripeEreignis.
+        if event_id:
+            if await _schon_verarbeitet(event_id):
+                logger.info("Stripe-Ereignis %s war schon da -- übersprungen.", event_id)
+                return {"status": "duplicate", "message": "event already processed"}
+            if event_type in ABO_EREIGNISSE and await _veraltet(
+                    kunde_im_ereignis, event_created):
+                logger.warning(
+                    "Stripe-Ereignis %s (%s) ist älter als ein bereits "
+                    "verarbeitetes -- ignoriert.", event_id, event_type)
+                await _ereignis_merken(event_id, event_type, kunde_im_ereignis,
+                                       event_created)
+                return {"status": "stale", "message": "older than processed event"}
+
+        # Erst verarbeiten, dann merken. Bricht die Verarbeitung ab, wird das
+        # Ereignis NICHT als erledigt vermerkt und Stripe darf es erneut
+        # zustellen. Das setzt voraus, dass die Handler unten Zustaende SETZEN
+        # und nichts hochzaehlen -- wer hier etwas Zaehlendes ergaenzt, muss
+        # das Merken in dieselbe Transaktion holen.
+        antwort = await _ereignis_verarbeiten(event_type, event_obj)
+        if event_id:
+            await _ereignis_merken(event_id, event_type, kunde_im_ereignis,
+                                   event_created)
+        return antwort
+
     return {"status": "ignored"}
+
+
+# Nur fuer diese Ereignisse ist die Reihenfolge entscheidend -- sie beschreiben
+# alle denselben Abo-Zustand und wuerden sich sonst gegenseitig ueberschreiben.
+ABO_EREIGNISSE = frozenset({
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+})
+
+
+async def _schon_verarbeitet(event_id: str) -> bool:
+    try:
+        async with get_db_session() as session_db:
+            res = await session_db.execute(
+                text("SELECT 1 FROM stripe_ereignisse WHERE id = :id"),
+                {"id": event_id})
+            return res.scalar_one_or_none() is not None
+    except Exception:
+        # Lieber einmal zu viel verarbeiten als ein Ereignis verlieren: die
+        # Handler setzen Zustaende und vertragen eine Wiederholung.
+        logger.warning("Ereignis-Wiederholung nicht prüfbar", exc_info=True)
+        return False
+
+
+async def _veraltet(kunde: Optional[str], erstellt: Optional[int]) -> bool:
+    """Gibt es für diesen Kunden schon ein NEUERES Abo-Ereignis?"""
+    if not kunde or not erstellt:
+        return False
+    platzhalter = {f"t{i}": t for i, t in enumerate(sorted(ABO_EREIGNISSE))}
+    inliste = ", ".join(f":{name}" for name in platzhalter)
+    try:
+        async with get_db_session() as session_db:
+            res = await session_db.execute(
+                text(f"SELECT MAX(erstellt) FROM stripe_ereignisse "
+                     f"WHERE kunde = :kunde AND typ IN ({inliste})"),
+                {"kunde": kunde, **platzhalter})
+            neuestes = res.scalar_one_or_none()
+        return neuestes is not None and int(neuestes) > int(erstellt)
+    except Exception:
+        logger.warning("Reihenfolge der Stripe-Ereignisse nicht prüfbar", exc_info=True)
+        return False
+
+
+async def _ereignis_merken(event_id: str, typ: Optional[str],
+                           kunde: Optional[str], erstellt: Optional[int]) -> None:
+    try:
+        async with get_db_session() as session_db:
+            await session_db.execute(
+                text("INSERT INTO stripe_ereignisse (id, typ, kunde, erstellt, "
+                     "verarbeitet_am) VALUES (:id, :typ, :kunde, :erstellt, :jetzt) "
+                     "ON CONFLICT (id) DO NOTHING"),
+                {"id": event_id, "typ": typ, "kunde": kunde,
+                 "erstellt": erstellt, "jetzt": datetime.now(timezone.utc)})
+    except Exception:
+        logger.warning("Stripe-Ereignis %s nicht vermerkbar", event_id, exc_info=True)
+
+
+async def _ereignis_verarbeiten(event_type: Optional[str], event_obj):
+    if event_type == "checkout.session.completed":
+        metadata = get_stripe_val(event_obj, "metadata", {})
+        benutzername = get_stripe_val(metadata, "benutzername")
+        customer_id = get_stripe_val(event_obj, "customer")
+        subscription_id = get_stripe_val(event_obj, "subscription")
+        if benutzername:
+            async with get_db_session() as session_db:
+                await session_db.execute(
+                    text("UPDATE nutzer SET rolle='premium', stripe_customer_id = :cust_id, stripe_subscription_id = :sub_id WHERE benutzername = :name"),
+                    {"cust_id": customer_id, "sub_id": subscription_id, "name": benutzername}
+                )
+            logger.info(
+                "User %s upgraded to premium via Stripe. Customer: %s, Subscription: %s.",
+                benutzername, customer_id, subscription_id,
+            )
+            return {"status": "success", "message": f"User {benutzername} upgraded to premium"}
+            
+    elif event_type == "customer.subscription.deleted":
+        customer_id = get_stripe_val(event_obj, "customer")
+        if customer_id:
+            await _rolle_setzen(customer_id, "free", abo_behalten=False)
+            logger.info("Abo von Kunde %s beendet -- zurück auf free.", customer_id)
+            return {"status": "success", "message": "User subscription cancelled"}
+
+    elif event_type in ("customer.subscription.updated", "customer.subscription.created"):
+        # DIE massgebliche Quelle für den Abo-Zustand. Stripe schickt das
+        # bei jedem Statuswechsel -- auch, wenn eine zunächst
+        # fehlgeschlagene Zahlung im zweiten Anlauf doch klappt. Ohne
+        # dieses Ereignis kam ein Nutzer nach einem Zahlungsproblem NIE
+        # wieder auf Premium zurück.
+        customer_id = get_stripe_val(event_obj, "customer")
+        status = (get_stripe_val(event_obj, "status") or "").lower()
+        subscription_id = get_stripe_val(event_obj, "id")
+        if customer_id and status:
+            rolle = "premium" if status in PREMIUM_STATUS else "free"
+            await _rolle_setzen(customer_id, rolle,
+                                abo_behalten=(rolle == "premium"),
+                                subscription_id=subscription_id)
+            logger.info("Abo von Kunde %s hat Status %s -> Rolle %s.",
+                        customer_id, status, rolle)
+            return {"status": "success", "message": f"subscription {status} -> {rolle}"}
+
+    elif event_type == "invoice.payment_failed":
+        # KEIN sofortiges Herabstufen mehr.
+        #
+        # Vorher setzte schon der erste Fehlversuch die Rolle auf 'free'.
+        # Stripe versucht danach aber noch tagelang erneut (Dunning), und
+        # meistens geht die Zahlung durch -- eine kurz abgelaufene Karte
+        # kostete den Kunden also sofort seinen Zugang, obwohl er weiter
+        # zahlt. Zurueck kam er nie, weil das Gegenereignis nicht
+        # verarbeitet wurde.
+        #
+        # Das Herabstufen erledigen jetzt die Abo-Ereignisse: bei
+        # erschöpften Wiederholungen meldet Stripe den Statuswechsel
+        # (unpaid/canceled) oder loescht das Abo.
+        customer_id = get_stripe_val(event_obj, "customer")
+        logger.warning(
+            "Zahlung von Kunde %s fehlgeschlagen. Premium bleibt vorerst "
+            "bestehen -- Stripe versucht es erneut.", customer_id)
+        return {"status": "success", "message": "payment failure noted, access kept"}
+
+    return {"status": "ignored"}
+
+
+async def _rolle_setzen(customer_id: str, rolle: str, abo_behalten: bool,
+                        subscription_id: Optional[str] = None) -> None:
+    """Setzt die Rolle anhand der Stripe-Kundennummer.
+
+    `abo_behalten=False` leert zusätzlich stripe_subscription_id -- das Abo
+    existiert dann nicht mehr. Bei einer blossen Herabstufung (Status
+    unpaid/canceled) bleibt die Nummer stehen, damit ein spaeteres
+    Wiederaufleben demselben Abo zugeordnet werden kann.
+    """
+    if subscription_id and abo_behalten:
+        sql = ("UPDATE nutzer SET rolle = :rolle, stripe_subscription_id = :sub "
+               "WHERE stripe_customer_id = :cust")
+        params = {"rolle": rolle, "sub": subscription_id, "cust": customer_id}
+    elif abo_behalten:
+        sql = "UPDATE nutzer SET rolle = :rolle WHERE stripe_customer_id = :cust"
+        params = {"rolle": rolle, "cust": customer_id}
+    else:
+        sql = ("UPDATE nutzer SET rolle = :rolle, stripe_subscription_id = NULL "
+               "WHERE stripe_customer_id = :cust")
+        params = {"rolle": rolle, "cust": customer_id}
+
+    async with get_db_session() as session_db:
+        await session_db.execute(text(sql), params)
 
 # ======================================================================
 # POST /api/checkout/webhook – Stripe Webhook Event Handler (Legacy)

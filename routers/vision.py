@@ -429,7 +429,7 @@ async def ws_vision_endpoint(websocket: WebSocket, token: str = ""):
 
             now = time.time()
             if now - last_gemini_time >= VISION_WS_MIN_GEMINI_INTERVAL_SECONDS:
-                if check_and_increment_vision_minutes(benutzername, VISION_WS_MIN_GEMINI_INTERVAL_SECONDS / 60):
+                if await check_and_increment_vision_minutes(benutzername, VISION_WS_MIN_GEMINI_INTERVAL_SECONDS / 60):
                     last_gemini_time = now
                     detection = await detect_cards_from_image(data)
                     last_cards = detection.get("cards", [])
@@ -799,7 +799,7 @@ async def vision_detection_loop(session_id: str):
                             # (analog /ws) -- ohne Besitzer/über Limit kein
                             # KI-Aufruf.
                             owner = session.get("owner", "")
-                            if check_and_increment_vision_minutes(owner, 12.5 / 60):
+                            if await check_and_increment_vision_minutes(owner, 12.5 / 60):
                                 logger.info("Board state changed to: %s. Requesting AI advice...", board_signature)
                                 session["last_gemini_request_time"] = now_time
                                 advice = await generate_board_advice(cards_raw)

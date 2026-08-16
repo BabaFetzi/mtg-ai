@@ -31,6 +31,23 @@ NUTZER_TABELLEN = [
     ("sessions", "benutzername"),
     ("passwort_resets", "benutzername"),
     ("ai_calls", "benutzername"),
+    # Monatlicher KI-Verbrauch. Gehört zum Konto und sagt etwas über die
+    # Nutzung aus -- also Auskunft UND Löschung.
+    ("ki_nutzung", "benutzername"),
+]
+
+# Wird gelöscht, aber NICHT in die Auskunft aufgenommen.
+#
+# anmeldeversuche verknüpft einen Benutzernamen mit IP-Adressen. Das sind
+# nicht zwingend die des Kontoinhabers: wer fremde Zugänge durchprobiert,
+# hinterlässt hier SEINE Adresse unter dem angegriffenen Namen. Diese Zeilen
+# dem Kontoinhaber auszuhändigen hiesse, Daten Dritter offenzulegen.
+#
+# Gelöscht werden müssen sie trotzdem: ohne das bliebe nach einer Löschung ein
+# Benutzername mit IP-Adressen zurück. Von selbst verfallen sie ohnehin nach
+# einer Stunde (services/anmeldeversuche.py).
+TABELLEN_NUR_LOESCHEN = [
+    ("anmeldeversuche", "benutzername"),
 ]
 
 # Bewusst NICHT dabei: der Sperrvermerk gelöschter Konten. Er enthält nur den
@@ -107,7 +124,7 @@ async def loesche_nutzerdaten(session, benutzer: str) -> Dict[str, int]:
     """
     geloescht: Dict[str, int] = {}
 
-    for tabelle, spalte in NUTZER_TABELLEN:
+    for tabelle, spalte in NUTZER_TABELLEN + TABELLEN_NUR_LOESCHEN:
         try:
             res = await session.execute(
                 text(f"DELETE FROM {tabelle} WHERE {spalte} = :name"), {"name": benutzer})

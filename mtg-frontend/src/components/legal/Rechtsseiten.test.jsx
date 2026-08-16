@@ -21,22 +21,26 @@ function rendereRoute(pfad) {
   );
 }
 
+// Die Rechtsseiten werden inzwischen erst beim Aufruf nachgeladen (App.jsx),
+// damit das erste Paket klein bleibt. Sie sind deshalb einen Wimpernschlag
+// später da -- erreichbar sein müssen sie unverändert, und genau das prüfen
+// diese Tests mit findBy statt getBy.
 describe('Rechtsseiten', () => {
-  test('/impressum ist ohne Anmeldung erreichbar', () => {
+  test('/impressum ist ohne Anmeldung erreichbar', async () => {
     rendereRoute('/impressum');
-    expect(screen.getByRole('heading', { name: 'Impressum', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Impressum', level: 1 })).toBeInTheDocument();
     // Beweis, dass NICHT die Landing Page gerendert wurde.
     expect(screen.queryByText(/Beherrsche den Stack/)).not.toBeInTheDocument();
   });
 
-  test('/datenschutz ist ohne Anmeldung erreichbar', () => {
+  test('/datenschutz ist ohne Anmeldung erreichbar', async () => {
     rendereRoute('/datenschutz');
-    expect(screen.getByRole('heading', { name: 'Datenschutzerklärung', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Datenschutzerklärung', level: 1 })).toBeInTheDocument();
   });
 
-  test('/agb ist ohne Anmeldung erreichbar', () => {
+  test('/agb ist ohne Anmeldung erreichbar', async () => {
     rendereRoute('/agb');
-    expect(screen.getByRole('heading', { name: /Allgemeine Geschäftsbedingungen/, level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Allgemeine Geschäftsbedingungen/, level: 1 })).toBeInTheDocument();
   });
 
   test('die Landing Page verlinkt alle drei Seiten', () => {

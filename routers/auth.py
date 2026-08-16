@@ -121,7 +121,7 @@ async def login(data: LoginData, request: Request):
     
     # 1. Rate Limiting prüfen
     try:
-        check_login_rate_limit(ip, data.benutzername)
+        await check_login_rate_limit(ip, data.benutzername)
     except HTTPException as limit_exc:
         return {"erfolg": False, "error": limit_exc.detail}
 
@@ -133,7 +133,7 @@ async def login(data: LoginData, request: Request):
         row = res.mappings().first()
         
         if not row:
-            record_login_attempt(ip, data.benutzername, success=False)
+            await record_login_attempt(ip, data.benutzername, erfolg=False)
             return {"erfolg": False, "error": "Falscher Benutzername oder Passwort."}
             
         stored_hash = row["passwort_hash"]
@@ -152,7 +152,7 @@ async def login(data: LoginData, request: Request):
                 
         if not is_valid:
             try:
-                verbleibend = record_login_attempt(ip, data.benutzername, success=False)
+                verbleibend = await record_login_attempt(ip, data.benutzername, erfolg=False)
             except HTTPException as block_exc:
                 return {"erfolg": False, "error": block_exc.detail}
             # Vor der Sperre warnen, statt den Nutzer unangekündigt für 15
@@ -174,7 +174,7 @@ async def login(data: LoginData, request: Request):
             )
             
         # Login-Versuch erfolgreich loggen
-        record_login_attempt(ip, data.benutzername, success=True)
+        await record_login_attempt(ip, data.benutzername, erfolg=True)
         
         # JWT Tokens generieren
         token_data = {"sub": row["benutzername"], "role": row["rolle"] or "free"}

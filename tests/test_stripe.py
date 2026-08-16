@@ -47,10 +47,26 @@ def _webhook_env(monkeypatch):
     yield
 
 
+def _leere_db() -> AsyncMock:
+    """Nachgebaute Sitzung, die auf jede Abfrage "nichts gefunden" antwortet.
+
+    Der Webhook fragt inzwischen zuerst, ob das Ereignis schon einmal da war.
+    Ein blanker AsyncMock liefert darauf ein wahrheitswertiges Objekt -- das
+    Ereignis gaelte als Wiederholung und wuerde uebersprungen. Diese Tests
+    prueften dann nichts mehr, ohne rot zu werden.
+    """
+    mock_db = AsyncMock()
+    ergebnis = MagicMock()
+    ergebnis.scalar_one_or_none.return_value = None
+    ergebnis.scalar_one.return_value = None
+    mock_db.execute.return_value = ergebnis
+    return mock_db
+
+
 @pytest.mark.asyncio
 @patch('routers.payments.get_db_session')
 async def test_stripe_webhook_checkout_session_completed(mock_get_db):
-    mock_db = AsyncMock()
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     body = _payload("checkout.session.completed", {
@@ -65,9 +81,15 @@ async def test_stripe_webhook_checkout_session_completed(mock_get_db):
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
-    mock_db.execute.assert_called_once()
-    sql_arg = mock_db.execute.call_args[0][0].text
-    params_arg = mock_db.execute.call_args[0][1]
+    # Genau eine Freischaltung -- daneben laufen die Abfragen fuer
+    # Wiederholung und Reihenfolge.
+    freischaltungen = [
+        a for a in mock_db.execute.call_args_list
+        if "UPDATE nutzer" in a[0][0].text
+    ]
+    assert len(freischaltungen) == 1
+    sql_arg = freischaltungen[0][0][0].text
+    params_arg = freischaltungen[0][0][1]
     assert "UPDATE nutzer SET rolle='premium'" in sql_arg
     assert params_arg["cust_id"] == "cus_test_12345"
     assert params_arg["name"] == "premium_user"
@@ -76,7 +98,7 @@ async def test_stripe_webhook_checkout_session_completed(mock_get_db):
 @pytest.mark.asyncio
 @patch('routers.payments.get_db_session')
 async def test_stripe_webhook_subscription_deleted(mock_get_db):
-    mock_db = AsyncMock()
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     body = _payload("customer.subscription.deleted", {"customer": "cus_test_12345"})
@@ -88,17 +110,25 @@ async def test_stripe_webhook_subscription_deleted(mock_get_db):
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
-    mock_db.execute.assert_called_once()
-    sql_arg = mock_db.execute.call_args[0][0].text
-    params_arg = mock_db.execute.call_args[0][1]
-    assert "UPDATE nutzer SET rolle='free'" in sql_arg
-    assert params_arg["cust_id"] == "cus_test_12345"
+    # Unter den Aufrufen muss das Herabstufen fuer genau diesen Kunden sein.
+    # (Daneben laufen die Abfragen fuer Wiederholung und Reihenfolge.)
+    herabstufungen = [
+        a for a in mock_db.execute.call_args_list
+        if "rolle" in a[0][0].text and "UPDATE nutzer" in a[0][0].text
+    ]
+    assert len(herabstufungen) == 1
+    assert herabstufungen[0][0][1]["rolle"] == "free"
+    assert herabstufungen[0][0][1]["cust"] == "cus_test_12345"
 
 
 @pytest.mark.asyncio
 @patch('routers.payments.get_db_session')
-async def test_stripe_webhook_invoice_payment_failed(mock_get_db):
-    mock_db = AsyncMock()
+async def test_zahlungsausfall_stuft_nicht_sofort_herab(mock_get_db):
+    """Stripe versucht eine fehlgeschlagene Zahlung noch tagelang erneut, und
+    meistens klappt sie. Wer beim ERSTEN Fehlversuch herabstuft, nimmt einem
+    Kunden mit kurz abgelaufener Karte sofort den Zugang -- obwohl er zahlt.
+    Das Herabstufen erledigen die Abo-Ereignisse, wenn Stripe aufgibt."""
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     body = _payload("invoice.payment_failed", {"customer": "cus_test_12345"})
@@ -108,13 +138,12 @@ async def test_stripe_webhook_invoice_payment_failed(mock_get_db):
         headers={"stripe-signature": _sign(body), "Content-Type": "application/json"},
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "success"
 
-    mock_db.execute.assert_called_once()
-    sql_arg = mock_db.execute.call_args[0][0].text
-    params_arg = mock_db.execute.call_args[0][1]
-    assert "UPDATE nutzer SET rolle='free'" in sql_arg
-    assert params_arg["cust_id"] == "cus_test_12345"
+    rollenaenderungen = [
+        a for a in mock_db.execute.call_args_list
+        if "UPDATE nutzer" in a[0][0].text
+    ]
+    assert rollenaenderungen == []
 
 
 # ============================================================================
@@ -128,7 +157,7 @@ async def test_stripe_webhook_invoice_payment_failed(mock_get_db):
 @pytest.mark.asyncio
 @patch('routers.payments.get_db_session')
 async def test_webhook_rejects_missing_signature_even_with_dev_mode_true(mock_get_db):
-    mock_db = AsyncMock()
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     body = _payload("checkout.session.completed", {
@@ -146,7 +175,7 @@ async def test_webhook_rejects_missing_signature_even_with_dev_mode_true(mock_ge
 @pytest.mark.asyncio
 @patch('routers.payments.get_db_session')
 async def test_webhook_rejects_forged_signature_even_with_dev_mode_true(mock_get_db):
-    mock_db = AsyncMock()
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     body = _payload("checkout.session.completed", {
@@ -299,7 +328,7 @@ async def test_checkout_price_fallback_handles_comma_decimal(monkeypatch):
 @patch('routers.payments.get_db_session')
 async def test_verify_session_grants_premium_when_paid_and_owned(mock_get_db, monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
-    mock_db = AsyncMock()
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     fake_session = {
@@ -326,7 +355,7 @@ async def test_verify_session_grants_premium_when_paid_and_owned(mock_get_db, mo
 @patch('routers.payments.get_db_session')
 async def test_verify_session_rejects_foreign_session(mock_get_db, monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
-    mock_db = AsyncMock()
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     fake_session = {
@@ -349,7 +378,7 @@ async def test_verify_session_rejects_foreign_session(mock_get_db, monkeypatch):
 @patch('routers.payments.get_db_session')
 async def test_verify_session_rejects_unpaid(mock_get_db, monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
-    mock_db = AsyncMock()
+    mock_db = _leere_db()
     mock_get_db.return_value.__aenter__.return_value = mock_db
 
     fake_session = {
