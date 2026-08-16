@@ -126,10 +126,25 @@ class VerifySessionReq(BaseModel):
 # KARTEN-SUCHE (Cards) – Response-Schemas für Dokumentation
 # ======================================================================
 class CardPrint(BaseModel):
-    """Ein einzelner Druck einer Karte (Set + Bild + Preis)."""
+    """Ein einzelner Druck einer Karte.
+
+    Die Kennung, das Set-Kürzel und die Sammlernummer sind nötig, damit beim
+    Hinzufügen in die Sammlung festgehalten werden kann, WELCHE Auflage jemand
+    besitzt. Ohne sie wurde später immer der Standarddruck bewertet -- bei alten
+    Karten ein Vielfaches daneben.
+
+    Das Antwortschema filtert alles heraus, was hier nicht steht. Neue Felder
+    im Endpunkt ohne Eintrag hier kommen beim Client nicht an.
+    """
+    id: Optional[str] = None
+    set: Optional[str] = None
     set_name: Optional[str] = None
+    sammlernummer: Optional[str] = None
+    seltenheit: Optional[str] = None
     bild_url: str = ""
     preis: str = "0.00"
+    # Leer, wenn es die Karte in dieser Auflage nicht als Foil gibt.
+    preis_foil: str = ""
 
 
 class CardSearchResult(BaseModel):

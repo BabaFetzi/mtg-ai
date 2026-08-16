@@ -558,6 +558,88 @@ def _schedule_background_refresh(names: List[str]) -> None:
     loop.create_task(_run())
 
 
+# Wie lange ein einzelner Druck im Cache bleibt. Preise ändern sich täglich,
+# Set und Sammlernummer nie -- ein Tag ist der Kompromiss.
+DRUCK_CACHE_PRAEFIX = "druck:"
+
+
+async def druck_nach_id(scryfall_id: str) -> Optional[Dict[str, Any]]:
+    """Daten genau eines Drucks (Auflage) anhand seiner Scryfall-Kennung.
+
+    Nötig, weil die Sammlung festhält, WELCHE Auflage jemand besitzt. Über den
+    Kartennamen bekäme man immer den Standarddruck -- und damit dessen Preis,
+    der bei alten Karten um ein Vielfaches abweicht.
+    """
+    scryfall_id = (scryfall_id or "").strip()
+    if not scryfall_id:
+        return None
+
+    schluessel = f"{DRUCK_CACHE_PRAEFIX}{scryfall_id}"
+    zwischengespeichert = scryfall_cache.get(schluessel)
+    if zwischengespeichert:
+        return zwischengespeichert
+
+    try:
+        async with scryfall_client() as client:
+            antwort = await scryfall_request(
+                client, "GET", f"https://api.scryfall.com/cards/{urllib.parse.quote(scryfall_id)}")
+    except Exception:
+        logger.warning("Druck %s nicht abrufbar", scryfall_id, exc_info=True)
+        return None
+
+    if antwort.status_code != 200:
+        return None
+
+    daten = antwort.json()
+    info = _extract_card_info(daten)
+    info["scryfall_id"] = daten.get("id")
+    info["sammlernummer"] = daten.get("collector_number")
+    scryfall_cache.set(schluessel, info)
+    return info
+
+
+async def druecke_nach_ids(ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Mehrere Drucke auf einmal, gebündelt über den Sammel-Endpunkt.
+
+    Einzeln abgefragt wären das bei einer Sammlung mit tausend Karten tausend
+    Anfragen. Scryfall nimmt 75 Kennungen pro Aufruf; gecachte Drucke werden gar
+    nicht erst angefragt.
+    """
+    ergebnis: Dict[str, Dict[str, Any]] = {}
+    offen: List[str] = []
+    for kennung in {(i or "").strip() for i in ids if (i or "").strip()}:
+        vorhanden = scryfall_cache.get(f"{DRUCK_CACHE_PRAEFIX}{kennung}")
+        if vorhanden:
+            ergebnis[kennung] = vorhanden
+        else:
+            offen.append(kennung)
+
+    if not offen:
+        return ergebnis
+
+    async with scryfall_client() as client:
+        for start in range(0, len(offen), 75):
+            teil = offen[start:start + 75]
+            try:
+                antwort = await scryfall_request(
+                    client, "POST", "https://api.scryfall.com/cards/collection",
+                    json={"identifiers": [{"id": k} for k in teil]},
+                )
+            except Exception:
+                logger.warning("Drucke nicht abrufbar", exc_info=True)
+                break
+            if antwort.status_code != 200:
+                logger.warning("Drucke: HTTP %s", antwort.status_code)
+                break
+            for daten in antwort.json().get("data", []):
+                info = _extract_card_info(daten)
+                info["scryfall_id"] = daten.get("id")
+                info["sammlernummer"] = daten.get("collector_number")
+                scryfall_cache.set(f"{DRUCK_CACHE_PRAEFIX}{daten.get('id')}", info)
+                ergebnis[daten.get("id")] = info
+    return ergebnis
+
+
 async def _fetch_uncached(uncached_names: List[str]) -> Dict[str, Dict[str, Any]]:
     """
     Holt Kartendaten für nicht (mehr) gecachte Namen vom Netzwerk.

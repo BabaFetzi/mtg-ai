@@ -34,7 +34,9 @@ from sqlalchemy import text
 from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.bestand import bedarf_aus_deck, bestand_aus_zeilen, fehlende_exemplare
-from services.scryfall import fetch_card_details_cached, parse_decklist, preis_fuer_variante
+from services.scryfall import (DRUCK_CACHE_PRAEFIX, druck_nach_id, druecke_nach_ids,
+                               fetch_card_details_cached, parse_decklist,
+                               preis_fuer_variante)
 
 
 # ======================================================================
@@ -183,9 +185,11 @@ logger = logging.getLogger(__name__)
 _SAMMLUNG_INSERT_SQL = (
     "INSERT INTO sammlung_alben "
     "(benutzername, karten_name, album_name, bild_url, preis, "
-    " edition, seltenheit, farben, manakosten, kartentyp, foil, sprache) "
+    " edition, seltenheit, farben, manakosten, kartentyp, foil, sprache, "
+    " scryfall_id, sammlernummer, zustand) "
     "VALUES (:user, :name, :album, :url, :price, "
-    " :edition, :seltenheit, :farben, :manakosten, :kartentyp, :foil, :sprache)"
+    " :edition, :seltenheit, :farben, :manakosten, :kartentyp, :foil, :sprache, "
+    " :scryfall_id, :sammlernummer, :zustand)"
 )
 
 
@@ -204,6 +208,49 @@ SPRACHEN = {
     "ru": "Russisch", "zhs": "Chinesisch (vereinfacht)", "zht": "Chinesisch (traditionell)",
     "ph": "Phyrexianisch",
 }
+
+
+# Die übliche Zustandsskala im Kartenhandel (Cardmarket).
+ZUSTAENDE = {
+    "M": "Mint",
+    "NM": "Near Mint",
+    "EX": "Excellent",
+    "GD": "Good",
+    "LP": "Light Played",
+    "PL": "Played",
+    "PO": "Poor",
+}
+
+
+def zustand_von(row) -> Optional[str]:
+    """Zustand der Zeile oder None.
+
+    Alte Zeilen haben keinen -- sie als "Near Mint" auszugeben wäre eine
+    erfundene Angabe über fremdes Eigentum.
+    """
+    try:
+        wert = row["zustand"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    wert = (wert or "").strip().upper()
+    return wert if wert in ZUSTAENDE else None
+
+
+def druck_von(row) -> Dict[str, Any]:
+    """Angaben zum besessenen Druck (Auflage, Sammlernummer, Kennung)."""
+    def feld(name):
+        try:
+            wert = row[name]
+        except (KeyError, IndexError, TypeError):
+            return None
+        wert = (wert or "").strip() if isinstance(wert, str) else wert
+        return wert or None
+
+    return {
+        "edition": feld("edition"),
+        "sammlernummer": feld("sammlernummer"),
+        "scryfall_id": feld("scryfall_id"),
+    }
 
 
 def sprache_von(row) -> Optional[str]:
@@ -236,6 +283,42 @@ def live_preis_fuer(card_info: Optional[Dict[str, Any]], row, ersatz) -> str:
     # Keine Angabe für diese Ausführung: lieber der zuletzt gespeicherte Wert
     # als ein Preis der jeweils anderen Ausführung.
     return ersatz
+
+
+async def kartendaten_fuer_zeilen(rows) -> Dict[Any, Dict[str, Any]]:
+    """Kartendaten je Sammlungszeile -- vorrangig aus dem gespeicherten Druck.
+
+    Ohne das wurde für jede Zeile der Standarddruck angesetzt. Wer einen alten
+    Druck besitzt, sah den Preis des neuesten Nachdrucks; bei alten Karten ist
+    das ein Vielfaches. Zeilen ohne gespeicherten Druck (Altbestand, CSV-Import)
+    fallen weiterhin auf den Namen zurück -- eine Zeile ohne Preis wäre
+    schlechter als eine mit ungefährem.
+    """
+    ids = [druck_von(r)["scryfall_id"] for r in rows]
+    ids = [i for i in ids if i]
+    namen = [r["karten_name"] for r in rows if not druck_von(r)["scryfall_id"]]
+
+    nach_id: Dict[str, Dict[str, Any]] = {}
+    if ids:
+        try:
+            nach_id = await druecke_nach_ids(ids)
+        except Exception:
+            logger.warning("Drucke nicht auflösbar -- weiche auf die Namen aus", exc_info=True)
+
+    # Namen aller Zeilen holen, für die es keinen (auflösbaren) Druck gibt.
+    fehlend = [r["karten_name"] for r in rows
+               if not nach_id.get(druck_von(r)["scryfall_id"] or "")]
+    nach_name: Dict[str, Dict[str, Any]] = {}
+    if namen or fehlend:
+        nach_name = await fetch_card_details_cached(list({*namen, *fehlend}))
+
+    zuordnung: Dict[Any, Dict[str, Any]] = {}
+    for r in rows:
+        kennung = druck_von(r)["scryfall_id"]
+        info = nach_id.get(kennung or "") or nach_name.get((r["karten_name"] or "").lower().strip())
+        if info:
+            zuordnung[r["id"]] = info
+    return zuordnung
 
 
 def karten_metadaten(card_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -345,6 +428,13 @@ class AddKarteData(BaseModel):
     # Sprache der physischen Karte ("en", "de", ...). Leer bedeutet
     # "nicht angegeben" und wird auch so gespeichert, statt Englisch zu raten.
     sprache: str = ""
+    # Der besessene Druck. Ohne diese Angaben wurde immer der Standarddruck
+    # angesetzt -- bei alten Karten weicht dessen Preis um ein Vielfaches ab.
+    scryfall_id: str = ""
+    edition: str = ""
+    sammlernummer: str = ""
+    # Zustand nach der üblichen Skala. Leer heisst "nicht angegeben".
+    zustand: str = ""
 
 # ======================================================================
 # Router-Instanz
@@ -375,8 +465,8 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
         )
         rows = res.mappings().all()
 
-    unique_names = list(set(row["karten_name"] for row in rows if row["karten_name"] != "__PLACEHOLDER__"))
-    scryfall_data = await fetch_card_details_cached(unique_names)
+    echte = [r for r in rows if r["karten_name"] != "__PLACEHOLDER__"]
+    daten_je_zeile = await kartendaten_fuer_zeilen(echte)
 
     alben = {}
     for row in rows:
@@ -385,7 +475,8 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
             alben[album] = []
 
         karten_name = row["karten_name"]
-        card_info = scryfall_data.get(karten_name.lower().strip())
+        card_info = daten_je_zeile.get(row["id"])
+        druck = druck_von(row)
 
         live_preis = live_preis_fuer(card_info, row, row["preis"])
         live_bild = card_info.get("image", row["bild_url"]) if card_info else row["bild_url"]
@@ -398,6 +489,10 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
             "livePreis": live_preis,
             "foil": ist_foil(row),
             "sprache": sprache_von(row),
+            "zustand": zustand_von(row),
+            "edition": druck["edition"],
+            "sammlernummer": druck["sammlernummer"],
+            "edition_name": (card_info or {}).get("set_name"),
         })
     return {"erfolg": True, "alben": alben}
 
@@ -414,13 +509,26 @@ async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_
     # Platzhalter für leere Alben wird bewusst nicht aufgelöst.
     card_info = None
     if data.karten_name and data.karten_name != "__PLACEHOLDER__":
-        try:
-            treffer = await fetch_card_details_cached([data.karten_name])
-            card_info = treffer.get(data.karten_name.lower().strip())
-        except Exception:
-            logger.warning("Kartenmetadaten für %r nicht auflösbar", data.karten_name, exc_info=True)
+        # Der ausgewählte Druck hat Vorrang: nur er sagt, WELCHE Auflage im
+        # Ordner liegt. Über den Namen käme immer der Standarddruck -- und
+        # damit dessen Preis, der bei alten Karten um ein Vielfaches abweicht.
+        if data.scryfall_id:
+            try:
+                card_info = await druck_nach_id(data.scryfall_id)
+            except Exception:
+                logger.warning("Druck %r nicht auflösbar", data.scryfall_id, exc_info=True)
+        if not card_info:
+            try:
+                treffer = await fetch_card_details_cached([data.karten_name])
+                card_info = treffer.get(data.karten_name.lower().strip())
+            except Exception:
+                logger.warning("Kartenmetadaten für %r nicht auflösbar", data.karten_name, exc_info=True)
 
     meta = karten_metadaten(card_info)
+    # Angaben des Clients gehen vor, wo sie den Druck genauer beschreiben als
+    # der aufgelöste Datensatz -- er hat die Auflage schliesslich ausgewählt.
+    if data.edition.strip():
+        meta["edition"] = data.edition.strip().lower()
 
     # Preis passend zur Ausführung festhalten. Übergibt der Client keinen
     # (oder den Normalpreis für eine Foil-Karte), wird er hier korrigiert --
@@ -432,12 +540,27 @@ async def add_karte(data: AddKarteData, current_user: str = Depends(get_current_
         if passend:
             preis = passend
 
+    zustand = (data.zustand or "").strip().upper()
+    if zustand and zustand not in ZUSTAENDE:
+        raise HTTPException(status_code=400, detail=f"Unbekannter Zustand: {data.zustand}")
+
     async with get_db_session() as session:
         await session.execute(
             text(_SAMMLUNG_INSERT_SQL),
             {"user": current_user, "name": data.karten_name, "album": data.album_name,
              "url": data.bild_url, "price": preis, "foil": bool(data.foil),
-             "sprache": (data.sprache or "").strip().lower() or None, **meta}
+             "sprache": (data.sprache or "").strip().lower() or None,
+             # NUR wenn der Client eine Auflage ausgewählt hat. Sonst bliebe
+             # hier die Kennung des Standarddrucks stehen -- eine Behauptung
+             # darüber, welches Exemplar jemand besitzt, die niemand aufgestellt
+             # hat. Ohne Kennung greift bei der Bewertung der Standarddruck,
+             # und das ist als Näherung erkennbar.
+             "scryfall_id": data.scryfall_id.strip() or None,
+             "sammlernummer": (data.sammlernummer.strip()
+                               or (card_info or {}).get("sammlernummer")
+                               if data.scryfall_id.strip() else None) or None,
+             "zustand": zustand or None,
+             **meta}
         )
     return {"erfolg": True}
 
@@ -511,10 +634,16 @@ async def sammlung_aus_deck(data: DeckUebernahmeData, current_user: str = Depend
                 "album": album,
                 "url": posten["bild"],
                 "price": str(preis),
-                # Ausführung und Sprache kennt die Deckliste nicht -- beides
-                # bleibt offen, statt "normal, englisch" zu unterstellen.
+                # Ausführung, Sprache, Auflage und Zustand kennt eine
+                # Deckliste nicht -- alles bleibt offen, statt "normal,
+                # englisch, Near Mint" zu unterstellen. Die Preisangabe stammt
+                # vom Standarddruck und ist als Näherung gekennzeichnet, indem
+                # keine Druck-Kennung gespeichert wird.
                 "foil": False,
                 "sprache": None,
+                "scryfall_id": None,
+                "sammlernummer": None,
+                "zustand": None,
                 **meta,
             })
 
@@ -626,13 +755,14 @@ async def sammlung_filter(
         if not rows:
             return {"erfolg": True, "karten": []}
 
-        unique_names = list(set(row["karten_name"] for row in rows))
-        scryfall_data = await fetch_card_details_cached(unique_names)
+        daten_je_zeile = await kartendaten_fuer_zeilen(rows)
 
         result = []
         for row in rows:
-            name_lower = row["karten_name"].lower().strip()
-            card_info = scryfall_data.get(name_lower)
+            # Vorrangig der gespeicherte Druck: Seltenheit und Edition
+            # unterscheiden sich zwischen Auflagen, und gefiltert wird nach
+            # dem, was tatsächlich im Ordner liegt.
+            card_info = daten_je_zeile.get(row["id"])
             if not card_info:
                 continue
 
@@ -652,9 +782,9 @@ async def sammlung_filter(
                 if card_rarity != seltenheit.lower():
                     continue
 
-            # Edition / Set
+            # Edition / Set -- die gespeicherte Auflage hat Vorrang.
             if edition:
-                card_set = card_info.get("set", "").lower()
+                card_set = (druck_von(row)["edition"] or card_info.get("set", "")).lower()
                 if card_set != edition.lower():
                     continue
 
@@ -681,12 +811,14 @@ async def sammlung_filter(
                 "colors": card_info.get("colors", []),
                 "cmc": card_info.get("cmc", 0),
                 "rarity": card_info.get("rarity", ""),
-                "set": card_info.get("set", ""),
+                "set": (druck_von(row)["edition"] or card_info.get("set", "")),
                 "image_url": card_info.get("image", row["bild_url"]),
                 "price": live_preis_fuer(card_info, row, row["preis"]),
                 "originalPrice": row["preis"],
                 "foil": ist_foil(row),
                 "sprache": sprache_von(row),
+                "zustand": zustand_von(row),
+                "sammlernummer": druck_von(row)["sammlernummer"],
                 "album_name": row["album_name"]
             })
 
@@ -822,6 +954,13 @@ async def run_csv_import_task(job_id: str, csv_text: str, benutzername: str, alb
                     # Annahme -- sie bewertet eher zu niedrig als zu hoch.
                     "foil": bool(r.get("foil")),
                     "sprache": (r.get("sprache") or "").strip().lower() or None,
+                    # Der Import kennt die genaue Auflage nicht: eine
+                    # Set-Angabe in der Datei ist ein Kürzel, keine Kennung
+                    # eines bestimmten Drucks. Deshalb bleibt sie offen und der
+                    # Preis stammt vom Standarddruck.
+                    "scryfall_id": None,
+                    "sammlernummer": None,
+                    "zustand": None,
                     **meta,
                 })
             imported += r["anzahl"]
@@ -940,30 +1079,39 @@ async def sammlung_export_csv(benutzername: str, current_user: str = Depends(get
         for row in rows:
             # Nach Ausführung getrennt: normale und Foil-Karten haben eigene
             # Preise und gehören im Export in eigene Zeilen.
-            key = (row["karten_name"], row["album_name"], ist_foil(row), sprache_von(row) or "")
+            # Nach Auflage und Zustand getrennt: zwei Exemplare derselben
+            # Karte aus verschiedenen Ausgaben sind nicht dasselbe und haben
+            # unterschiedliche Preise.
+            druck = druck_von(row)
+            key = (row["karten_name"], row["album_name"], ist_foil(row), sprache_von(row) or "",
+                   druck["edition"] or "", zustand_von(row) or "")
             if key not in aggregated:
-                aggregated[key] = {"anzahl": 0, "preis": row["preis"], "foil": ist_foil(row)}
+                aggregated[key] = {"anzahl": 0, "preis": row["preis"], "foil": ist_foil(row),
+                                   "zeile": row}
             aggregated[key]["anzahl"] += 1
 
-        unique_names = list(set(k[0] for k in aggregated.keys()))
-        scryfall_data = await fetch_card_details_cached(unique_names) if unique_names else {}
+        zeilen_fuer_daten = [w["zeile"] for w in aggregated.values()]
+        daten_je_zeile = await kartendaten_fuer_zeilen(zeilen_fuer_daten) if zeilen_fuer_daten else {}
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Kartenname", "Anzahl", "Edition", "Album", "Foil", "Sprache", "Preis_EUR"])
+        writer.writerow(["Kartenname", "Anzahl", "Edition", "Sammlernummer", "Album",
+                         "Foil", "Sprache", "Zustand", "Preis_EUR"])
 
-        for (karten_name, album_name, foil, sprache), info in sorted(aggregated.items()):
-            name_lower = karten_name.lower().strip()
-            card_info = scryfall_data.get(name_lower, {})
-            edition_code = card_info.get("set", "")
+        for (karten_name, album_name, foil, sprache, edition, zustand), info in sorted(aggregated.items()):
+            card_info = daten_je_zeile.get(info["zeile"]["id"], {})
+            druck = druck_von(info["zeile"])
+            edition_code = edition or card_info.get("set", "")
             price_eur = preis_fuer_variante(card_info.get("prices") or {}, foil=foil) or info["preis"]
             writer.writerow([
                 card_info.get("name", karten_name),
                 info["anzahl"],
                 edition_code,
+                druck["sammlernummer"] or "",
                 album_name,
                 "ja" if foil else "nein",
                 sprache,
+                zustand,
                 price_eur
             ])
 
@@ -999,18 +1147,23 @@ async def refresh_sammlung_prices(benutzername: str, current_user: str = Depends
             content={"erfolg": False, "error": "Paywall: Dieses Feature steht nur Premium-Mitgliedern zur Verfügung."}
         )
     try:
-        # 1. Alle einzigartigen Karten des Benutzers aus der DB holen
+        # 1. Karten des Benutzers holen -- mit der Kennung des besessenen
+        #    Drucks, denn genau dessen Preis soll aufgefrischt werden.
         async with get_db_session() as session:
             res = await session.execute(
-                text("SELECT DISTINCT karten_name FROM sammlung_alben WHERE benutzername = :name AND karten_name != '__PLACEHOLDER__'"),
+                text("SELECT DISTINCT karten_name, scryfall_id FROM sammlung_alben "
+                     "WHERE benutzername = :name AND karten_name != '__PLACEHOLDER__'"),
                 {"name": current_user}
             )
             rows = res.mappings().all()
-            
-        unique_names = [row["karten_name"] for row in rows]
+
+        unique_names = list({row["karten_name"] for row in rows})
+        # Über druck_von gelesen: fehlt die Spalte (Altbestand, Testdoppel),
+        # soll die Auffrischung weiterlaufen statt mit einem Fehler abzubrechen.
+        druck_ids = list({(druck_von(row)["scryfall_id"] or "") for row in rows} - {""})
         if not unique_names:
             return {"erfolg": True, "nachricht": "Keine Karten in der Sammlung vorhanden."}
-            
+
         # 2. Aus dem Cache löschen
         from services.cache import scryfall_cache
         for name in unique_names:
@@ -1019,10 +1172,14 @@ async def refresh_sammlung_prices(benutzername: str, current_user: str = Depends
             if "//" in clean_name:
                 front_face = clean_name.split("//")[0].strip()
                 scryfall_cache.delete(f"card:{front_face}")
-                
+        for kennung in druck_ids:
+            scryfall_cache.delete(f"{DRUCK_CACHE_PRAEFIX}{kennung}")
+
         # 3. Frisch von Scryfall holen (schreibt es direkt neu in den Cache)
         await fetch_card_details_cached(unique_names)
-        
+        if druck_ids:
+            await druecke_nach_ids(druck_ids)
+
         return {"erfolg": True}
     except Exception as e:
         logger.exception("Fehler bei refresh_sammlung_prices")

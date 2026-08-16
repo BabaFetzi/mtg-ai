@@ -33,6 +33,10 @@ function KartenSuche({ currentUser }) {
   // Sprache der physischen Karte. Leer heisst "nicht angegeben" und wird auch
   // so gespeichert -- Englisch zu unterstellen wäre eine erfundene Angabe.
   const [sprache, setSprache] = useState("");
+  // Zustand nach der üblichen Handelsskala. Leer heisst "nicht angegeben" --
+  // eine Behauptung über den eigenen Kartenzustand soll niemand ungefragt
+  // zugeschrieben bekommen.
+  const [zustand, setZustand] = useState("");
   const [loadedImages, setLoadedImages] = useState({});
   const [popularTags, setPopularTags] = useState([]);
   const [nichtGefunden, setNichtGefunden] = useState(null);
@@ -99,7 +103,22 @@ function KartenSuche({ currentUser }) {
     try {
       const res = await fetch(`/api/sammlung/hinzufuegen`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ benutzername: currentUser, karten_name: karte.name, album_name: zielAlbum, bild_url: actP.bild_url || "", preis: speicherPreis, foil: istFoil, sprache })
+          body: JSON.stringify({
+            benutzername: currentUser,
+            karten_name: karte.name,
+            album_name: zielAlbum,
+            bild_url: actP.bild_url || "",
+            preis: speicherPreis,
+            foil: istFoil,
+            sprache,
+            zustand,
+            // Die AUSGEWÄHLTE Auflage mitschicken. Ohne sie bewertet der Server
+            // später den Standarddruck -- bei alten Karten ein Vielfaches
+            // daneben.
+            scryfall_id: actP.id || "",
+            edition: actP.set || "",
+            sammlernummer: actP.sammlernummer || "",
+          })
       });
       const data = await res.json();
       if (data && data.erfolg) { 
@@ -425,6 +444,26 @@ function KartenSuche({ currentUser }) {
                         <option value="zhs">Chinesisch (vereinfacht)</option>
                         <option value="zht">Chinesisch (traditionell)</option>
                         <option value="ph">Phyrexianisch</option>
+                      </select>
+                    </label>
+
+                    {/* Der Zustand bestimmt beim Verkauf einen erheblichen Teil
+                        des Preises. Leer bleibt leer -- nichts wird geraten. */}
+                    <label style={{display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px', fontSize: '0.92rem', color: 'var(--text-muted)'}}>
+                      <span>Zustand</span>
+                      <select
+                        value={zustand}
+                        onChange={e => setZustand(e.target.value)}
+                        style={{padding: '8px 12px', borderRadius: '8px', background: 'var(--input-bg)', border: '1px solid var(--border-color)', color: 'var(--text-main)', width: 'auto'}}
+                      >
+                        <option value="">Keine Angabe</option>
+                        <option value="M">Mint (M)</option>
+                        <option value="NM">Near Mint (NM)</option>
+                        <option value="EX">Excellent (EX)</option>
+                        <option value="GD">Good (GD)</option>
+                        <option value="LP">Light Played (LP)</option>
+                        <option value="PL">Played (PL)</option>
+                        <option value="PO">Poor (PO)</option>
                       </select>
                     </label>
 

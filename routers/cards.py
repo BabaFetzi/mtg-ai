@@ -29,7 +29,8 @@ from sqlalchemy import text
 
 from auth import get_current_user_optional
 from services.cache import scryfall_cache
-from services.scryfall import fetch_card_details_cached, scryfall_client, scryfall_request, best_market_price
+from services.scryfall import (fetch_card_details_cached, scryfall_client, scryfall_request,
+                               best_market_price, preis_fuer_variante)
 from services.multilingual_search import finde_karte_sprachunabhaengig
 from services.ai_service import model_lite, KI_VERFUEGBAR
 from services.usage_limiter import check_and_increment_ai_usage
@@ -76,7 +77,12 @@ async def suche_karte(
     # v2: Cache-Key-Version erhöht, weil das Antwortschema jetzt zusätzlich
     # 'marktwert' enthält -- so werden vor dem Deploy gecachte Einträge (ohne
     # marktwert) nicht mehr ausgeliefert und der Preis wird neu berechnet.
-    cache_key = f"suche:v2:{search_term.lower().strip()}:{is_premium}"
+    # Versionsnummer im Schlüssel: die Antwort enthält seit v3 die Kennung,
+    # das Set-Kürzel und die Sammlernummer jeder Auflage. Ohne Erhöhung
+    # lieferte der Cache nach dem Ausrollen weiter die alte Form -- die
+    # Oberfläche hätte dann keine Auflage mitschicken können und der Preis
+    # wäre stillschweigend der des Standarddrucks geblieben.
+    cache_key = f"suche:v3:{search_term.lower().strip()}:{is_premium}"
 
     # --- Cache-Hit → sofort zurückgeben ---
     cached = scryfall_cache.get(cache_key)
@@ -531,25 +537,38 @@ async def _fetch_prints(
                     if not img_print and "card_faces" in item:
                         img_print = item["card_faces"][0].get("image_uris", {}).get("normal", "")
 
-                    price_eur = (
-                        item.get("prices", {}).get("eur")
-                        or item.get("prices", {}).get("eur_foil")
-                        or "0.00"
-                    )
+                    preise = item.get("prices", {}) or {}
+                    # Normal- und Foilpreis getrennt: der frühere Rückfall von
+                    # 'eur' auf 'eur_foil' zeigte für eine normale Karte den
+                    # Foilpreis -- bei begehrten Karten schnell Faktor fünf.
                     prints.append({
+                        # Die Kennung des Drucks. Ohne sie liess sich später
+                        # nicht mehr feststellen, WELCHE Auflage jemand besitzt;
+                        # jede Preisauffrischung nahm den Standarddruck.
+                        "id": item.get("id"),
+                        "set": item.get("set"),
                         "set_name": item.get("set_name"),
+                        "sammlernummer": item.get("collector_number"),
+                        "seltenheit": item.get("rarity"),
                         "bild_url": img_print,
-                        "preis": price_eur,
+                        "preis": preis_fuer_variante(preise, foil=False) or "0.00",
+                        "preis_foil": preis_fuer_variante(preise, foil=True) or "",
                     })
         except Exception:
             logger.exception("Error fetching prints")
 
     # Mindestens den aktuellen Print zurückgeben
     if not prints:
+        preise = data.get("prices", {}) or {}
         prints = [{
+            "id": data.get("id"),
+            "set": data.get("set"),
             "set_name": data.get("set_name"),
+            "sammlernummer": data.get("collector_number"),
+            "seltenheit": data.get("rarity"),
             "bild_url": fallback_bild,
-            "preis": data.get("prices", {}).get("eur", "0.00"),
+            "preis": preis_fuer_variante(preise, foil=False) or "0.00",
+            "preis_foil": preis_fuer_variante(preise, foil=True) or "",
         }]
 
     return prints

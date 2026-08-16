@@ -78,6 +78,12 @@ class Collection(Base):
     # Tauschen, beim Verkaufen und beim Zusammenstellen eines Decks für ein
     # Turnier. NULL bedeutet "nicht erfasst", nicht "englisch".
     sprache = Column(String(5), nullable=True)
+    # Sammlernummer des besessenen Drucks. Zusammen mit `edition` und
+    # `scryfall_id` legt sie fest, WELCHE Auflage jemand hat -- entscheidend für
+    # den Wert: ein alter Druck und ein neuer Nachdruck derselben Karte
+    # unterscheiden sich schnell um das Zehnfache. Vorher wurde immer der
+    # Standarddruck angesetzt, egal was im Ordner liegt.
+    sammlernummer = Column(String(10), nullable=True)
     hinzugefuegt_am = Column(DateTime, default=datetime.utcnow)
 
 class Deck(Base):
@@ -172,6 +178,7 @@ async def init_db():
         # Schritt, sonst schlägt jeder Zugriff auf die neue Spalte fehl.
         await _spalte_ergaenzen(conn, "sammlung_alben", "foil", "BOOLEAN DEFAULT 0")
         await _spalte_ergaenzen(conn, "sammlung_alben", "sprache", "VARCHAR(5)")
+        await _spalte_ergaenzen(conn, "sammlung_alben", "sammlernummer", "VARCHAR(10)")
 
 
 async def _spalte_ergaenzen(conn, tabelle: str, spalte: str, definition: str) -> None:

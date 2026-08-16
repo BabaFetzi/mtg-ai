@@ -23,6 +23,25 @@ function sprachKuerzel(code) {
   return String(code).toUpperCase();
 }
 
+// Die übliche Handelsskala. Fehlt die Angabe, steht nichts da.
+const ZUSTANDSNAMEN = {
+  M: 'Mint', NM: 'Near Mint', EX: 'Excellent', GD: 'Good',
+  LP: 'Light Played', PL: 'Played', PO: 'Poor',
+};
+
+function zustandName(code) {
+  if (!code) return null;
+  return ZUSTANDSNAMEN[String(code).toUpperCase()] || String(code).toUpperCase();
+}
+
+/** "LEA · 161" -- die Auflage, die tatsächlich im Ordner liegt. */
+function druckText(karte) {
+  const teile = [];
+  if (karte?.edition) teile.push(String(karte.edition).toUpperCase());
+  if (karte?.sammlernummer) teile.push(`#${karte.sammlernummer}`);
+  return teile.length ? teile.join(' · ') : null;
+}
+
 function sprachName(code) {
   if (!code) return null;
   return SPRACHNAMEN[String(code).toLowerCase()] || String(code).toUpperCase();
@@ -905,7 +924,13 @@ function MeineSammlung({ currentUser, userRole, setUserRole, onShowPremiumModal 
                              </span>
                            )}
                          </div>
-                         <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>In: {k?.albumName}</div>
+                         <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                           In: {k?.albumName}
+                           {/* Auflage und Zustand: beides entscheidet über den
+                               Wert und stand bisher nirgends. */}
+                           {druckText(k) && <> • <span title={k.edition_name || undefined}>{druckText(k)}</span></>}
+                           {k?.zustand && <> • <span title={zustandName(k.zustand)}>{k.zustand}</span></>}
+                         </div>
                        </div>
                        <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--price-color)' }}>{formatEuro(k?.livePreis || k?.preis)}</div>
                      </div>
