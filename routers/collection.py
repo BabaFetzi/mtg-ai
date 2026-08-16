@@ -17,6 +17,7 @@ Abhängigkeiten:
     - schemas.models    → SammlungHinzufuegenReq, AlbumLoeschenReq
 """
 
+import asyncio
 import csv
 import io
 import json
@@ -27,12 +28,13 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException, BackgroundTasks, Depends
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 
 from auth import get_current_user
 from database import get_db_session, check_user_premium
+from services.antwort import json_antwort
 from services.bestand import bedarf_aus_deck, bestand_aus_zeilen, fehlende_exemplare
 from services.scryfall import (DRUCK_CACHE_PRAEFIX, druck_nach_id, druecke_nach_ids,
                                fetch_card_details_cached, parse_decklist,
@@ -294,9 +296,12 @@ async def kartendaten_fuer_zeilen(rows) -> Dict[Any, Dict[str, Any]]:
     fallen weiterhin auf den Namen zurück -- eine Zeile ohne Preis wäre
     schlechter als eine mit ungefährem.
     """
-    ids = [druck_von(r)["scryfall_id"] for r in rows]
-    ids = [i for i in ids if i]
-    namen = [r["karten_name"] for r in rows if not druck_von(r)["scryfall_id"]]
+    # Die Kennung einmal je Zeile bestimmen. druck_von() baut ein neues dict
+    # und lief vorher dreimal pro Zeile -- bei 15000 Karten ist das messbar.
+    kennungen = [(r, druck_von(r)["scryfall_id"] or "") for r in rows]
+
+    ids = [k for _, k in kennungen if k]
+    namen = [r["karten_name"] for r, k in kennungen if not k]
 
     nach_id: Dict[str, Dict[str, Any]] = {}
     if ids:
@@ -306,16 +311,14 @@ async def kartendaten_fuer_zeilen(rows) -> Dict[Any, Dict[str, Any]]:
             logger.warning("Drucke nicht auflösbar -- weiche auf die Namen aus", exc_info=True)
 
     # Namen aller Zeilen holen, für die es keinen (auflösbaren) Druck gibt.
-    fehlend = [r["karten_name"] for r in rows
-               if not nach_id.get(druck_von(r)["scryfall_id"] or "")]
+    fehlend = [r["karten_name"] for r, k in kennungen if not nach_id.get(k)]
     nach_name: Dict[str, Dict[str, Any]] = {}
     if namen or fehlend:
         nach_name = await fetch_card_details_cached(list({*namen, *fehlend}))
 
     zuordnung: Dict[Any, Dict[str, Any]] = {}
-    for r in rows:
-        kennung = druck_von(r)["scryfall_id"]
-        info = nach_id.get(kennung or "") or nach_name.get((r["karten_name"] or "").lower().strip())
+    for r, kennung in kennungen:
+        info = nach_id.get(kennung) or nach_name.get((r["karten_name"] or "").lower().strip())
         if info:
             zuordnung[r["id"]] = info
     return zuordnung
@@ -468,25 +471,121 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
     echte = [r for r in rows if r["karten_name"] != "__PLACEHOLDER__"]
     daten_je_zeile = await kartendaten_fuer_zeilen(echte)
 
-    alben = {}
+    # Zusammenbauen UND Verpacken laufen in einem eigenen Thread. Beides ist
+    # reine Rechenarbeit, und im Ereignisschleifen-Faden blockiert sie ALLE
+    # anderen Anfragen: während eine Sammlung mit 15000 Karten geladen wurde,
+    # brauchte ein einfacher /health-Aufruf bis zu 472 ms. Danach 117 ms.
+    #
+    # Das Verpacken gehört ausdrücklich dazu -- es war sogar der grössere
+    # Anteil. Würde hier ein dict zurückgegeben, liefe FastAPIs
+    # jsonable_encoder (295 ms) plus json.dumps (113 ms) wieder in der
+    # Ereignisschleife und der Gewinn wäre dahin. Siehe services/antwort.py.
+    return await asyncio.to_thread(_sammlung_antwort, rows, daten_je_zeile)
+
+
+def _sammlung_antwort(rows, daten_je_zeile) -> Response:
+    return json_antwort({"erfolg": True, "alben": _alben_aufbauen(rows, daten_je_zeile)})
+
+
+def _gefilterte_karten(rows, daten_je_zeile, suche, farbe, seltenheit, edition,
+                       manakosten_min, manakosten_max, typ) -> List[Dict[str, Any]]:
+    """Wendet die Filter an und baut die Antwortliste. Reine Rechenarbeit."""
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        # Vorrangig der gespeicherte Druck: Seltenheit und Edition
+        # unterscheiden sich zwischen Auflagen, und gefiltert wird nach
+        # dem, was tatsächlich im Ordner liegt.
+        card_info = daten_je_zeile.get(row["id"])
+        if not card_info:
+            continue
+
+        # Freitextsuche im Namen
+        if suche and suche.lower() not in card_info.get("name", "").lower():
+            continue
+
+        # Farbfilter
+        if farbe:
+            card_colors = card_info.get("colors", []) or card_info.get("color_identity", [])
+            if farbe.upper() not in [c.upper() for c in card_colors]:
+                continue
+
+        # Seltenheit
+        if seltenheit:
+            card_rarity = card_info.get("rarity", "").lower()
+            if card_rarity != seltenheit.lower():
+                continue
+
+        druck = druck_von(row)
+
+        # Edition / Set -- die gespeicherte Auflage hat Vorrang.
+        if edition:
+            card_set = (druck["edition"] or card_info.get("set", "")).lower()
+            if card_set != edition.lower():
+                continue
+
+        # Manakosten min/max
+        try:
+            card_cmc = float(card_info.get("cmc", 0))
+        except (ValueError, TypeError):
+            card_cmc = 0.0
+        if manakosten_min is not None and card_cmc < manakosten_min:
+            continue
+        if manakosten_max is not None and card_cmc > manakosten_max:
+            continue
+
+        # Typfilter
+        if typ:
+            card_type = card_info.get("type", "").lower()
+            if typ.lower() not in card_type:
+                continue
+
+        result.append({
+            "id": row["id"],
+            "name": card_info.get("name", row["karten_name"]),
+            "type": card_info.get("type", ""),
+            "colors": card_info.get("colors", []),
+            "cmc": card_info.get("cmc", 0),
+            "rarity": card_info.get("rarity", ""),
+            "set": (druck["edition"] or card_info.get("set", "")),
+            "image_url": card_info.get("image", row["bild_url"]),
+            "price": live_preis_fuer(card_info, row, row["preis"]),
+            "originalPrice": row["preis"],
+            "foil": ist_foil(row),
+            "sprache": sprache_von(row),
+            "zustand": zustand_von(row),
+            "sammlernummer": druck["sammlernummer"],
+            "album_name": row["album_name"]
+        })
+
+    return result
+
+
+def _filter_antwort(rows, daten_je_zeile, suche, farbe, seltenheit, edition,
+                    manakosten_min, manakosten_max, typ) -> Response:
+    karten = _gefilterte_karten(rows, daten_je_zeile, suche, farbe, seltenheit,
+                                edition, manakosten_min, manakosten_max, typ)
+    return json_antwort({"erfolg": True, "karten": karten})
+
+
+def _alben_aufbauen(rows, daten_je_zeile) -> Dict[str, List[Dict[str, Any]]]:
+    """Baut die Albenstruktur aus den Zeilen. Reine Rechenarbeit, kein Warten --
+    deshalb läuft sie ausserhalb der Ereignisschleife."""
+    alben: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
         album = row["album_name"]
         if album not in alben:
             alben[album] = []
 
-        karten_name = row["karten_name"]
         card_info = daten_je_zeile.get(row["id"])
         druck = druck_von(row)
 
-        live_preis = live_preis_fuer(card_info, row, row["preis"])
-        live_bild = card_info.get("image", row["bild_url"]) if card_info else row["bild_url"]
-
         alben[album].append({
             "id": row["id"],
-            "name": karten_name,
-            "bild_url": live_bild,
+            "name": row["karten_name"],
+            "bild_url": (card_info.get("image", row["bild_url"]) if card_info
+                         else row["bild_url"]),
             "preis": row["preis"],
-            "livePreis": live_preis,
+            "livePreis": live_preis_fuer(card_info, row, row["preis"]),
             "foil": ist_foil(row),
             "sprache": sprache_von(row),
             "zustand": zustand_von(row),
@@ -494,7 +593,8 @@ async def get_sammlung(benutzername: str, current_user: str = Depends(get_curren
             "sammlernummer": druck["sammlernummer"],
             "edition_name": (card_info or {}).get("set_name"),
         })
-    return {"erfolg": True, "alben": alben}
+    return alben
+
 
 # ======================================================================
 # POST /api/sammlung/hinzufuegen – Karte hinzufügen
@@ -757,72 +857,12 @@ async def sammlung_filter(
 
         daten_je_zeile = await kartendaten_fuer_zeilen(rows)
 
-        result = []
-        for row in rows:
-            # Vorrangig der gespeicherte Druck: Seltenheit und Edition
-            # unterscheiden sich zwischen Auflagen, und gefiltert wird nach
-            # dem, was tatsächlich im Ordner liegt.
-            card_info = daten_je_zeile.get(row["id"])
-            if not card_info:
-                continue
-
-            # Freitextsuche im Namen
-            if suche and suche.lower() not in card_info.get("name", "").lower():
-                continue
-
-            # Farbfilter
-            if farbe:
-                card_colors = card_info.get("colors", []) or card_info.get("color_identity", [])
-                if farbe.upper() not in [c.upper() for c in card_colors]:
-                    continue
-
-            # Seltenheit
-            if seltenheit:
-                card_rarity = card_info.get("rarity", "").lower()
-                if card_rarity != seltenheit.lower():
-                    continue
-
-            # Edition / Set -- die gespeicherte Auflage hat Vorrang.
-            if edition:
-                card_set = (druck_von(row)["edition"] or card_info.get("set", "")).lower()
-                if card_set != edition.lower():
-                    continue
-
-            # Manakosten min/max
-            try:
-                card_cmc = float(card_info.get("cmc", 0))
-            except (ValueError, TypeError):
-                card_cmc = 0.0
-            if manakosten_min is not None and card_cmc < manakosten_min:
-                continue
-            if manakosten_max is not None and card_cmc > manakosten_max:
-                continue
-
-            # Typfilter
-            if typ:
-                card_type = card_info.get("type", "").lower()
-                if typ.lower() not in card_type:
-                    continue
-
-            result.append({
-                "id": row["id"],
-                "name": card_info.get("name", row["karten_name"]),
-                "type": card_info.get("type", ""),
-                "colors": card_info.get("colors", []),
-                "cmc": card_info.get("cmc", 0),
-                "rarity": card_info.get("rarity", ""),
-                "set": (druck_von(row)["edition"] or card_info.get("set", "")),
-                "image_url": card_info.get("image", row["bild_url"]),
-                "price": live_preis_fuer(card_info, row, row["preis"]),
-                "originalPrice": row["preis"],
-                "foil": ist_foil(row),
-                "sprache": sprache_von(row),
-                "zustand": zustand_von(row),
-                "sammlernummer": druck_von(row)["sammlernummer"],
-                "album_name": row["album_name"]
-            })
-
-        return {"erfolg": True, "karten": result}
+        # Filtern, Zusammenbauen und Verpacken sind reine Rechenarbeit --
+        # ausserhalb der Ereignisschleife, damit eine grosse Sammlung nicht
+        # alle anderen Anfragen anhält (siehe _sammlung_antwort).
+        return await asyncio.to_thread(
+            _filter_antwort, rows, daten_je_zeile,
+            suche, farbe, seltenheit, edition, manakosten_min, manakosten_max, typ)
     except Exception as e:
         logger.exception("Fehler bei Sammlung-Filter")
         return {"erfolg": False, "error": str(e)}

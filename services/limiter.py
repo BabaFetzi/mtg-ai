@@ -44,4 +44,42 @@ def _resolve_storage_uri():
         return None
 
 
-limiter = Limiter(key_func=get_remote_address, storage_uri=_resolve_storage_uri())
+# Hinter einem Reverse-Proxy (nginx, Caddy, Cloudflare -- also überall, wo TLS
+# terminiert wird) ist request.client.host die Adresse des PROXYS. Mit
+# get_remote_address teilen sich dann ALLE Nutzer der Welt ein einziges
+# Kontingent: 30 Anfragen pro Minute für die gesamte Seite. Im Lasttest waren
+# bei 25 gleichzeitigen Nutzern 88 Prozent der Deck-Aufrufe HTTP 429.
+#
+# Deshalb wird nach Möglichkeit der angemeldete Nutzer als Schlüssel genommen.
+# Das ist auch fairer: ein Nutzer kann andere nicht mehr aussperren, egal wie
+# viele hinter derselben Adresse sitzen (Wohnung, Firma, Mobilfunk).
+def _weiterleitungs_ip(request) -> str:
+    """Adresse aus X-Forwarded-For -- nur, wenn dem Proxy vertraut wird.
+
+    Ohne dieses Vertrauen könnte jeder die Kopfzeile selbst setzen und damit
+    das Limit umgehen. Standard ist deshalb aus.
+    """
+    if os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() not in ("1", "true", "yes"):
+        return ""
+    kette = request.headers.get("x-forwarded-for", "")
+    # Der erste Eintrag ist der ursprüngliche Absender.
+    return kette.split(",")[0].strip()
+
+
+def limit_schluessel(request) -> str:
+    """Angemeldeter Nutzer, sonst Adresse."""
+    kopf = request.headers.get("authorization", "")
+    if kopf.lower().startswith("bearer "):
+        try:
+            from auth import decode_token
+            nutzdaten = decode_token(kopf.split(" ", 1)[1].strip())
+            if nutzdaten and nutzdaten.get("sub"):
+                return f"nutzer:{nutzdaten['sub']}"
+        except Exception:
+            # Ein kaputtes Token darf die Drosselung nicht sprengen -- dann
+            # zählt eben die Adresse.
+            pass
+    return f"ip:{_weiterleitungs_ip(request) or get_remote_address(request)}"
+
+
+limiter = Limiter(key_func=limit_schluessel, storage_uri=_resolve_storage_uri())

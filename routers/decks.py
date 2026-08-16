@@ -54,6 +54,13 @@ from schemas.models import (
 
 logger = logging.getLogger(__name__)
 
+# Warum 120 pro Minute und nicht 30: ein einziger Blick auf "Analyse & Stats"
+# löst fünf dieser Aufrufe gleichzeitig aus (Statistik, Wert, Regelcheck,
+# Farbquellen, Sammlungsabgleich). Mit 30 war nach sechs Deckansichten pro
+# Minute Schluss -- im Lasttest die häufigste Fehlerursache. Gezählt wird seit
+# services/limiter.py pro angemeldetem Nutzer, nicht mehr pro Adresse; damit
+# ist eine höhere Zahl auch vertretbar.
+
 # ======================================================================
 # Lokale Request-Modelle für Add/Remove (zur API-Kompatibilität)
 # ======================================================================
@@ -258,7 +265,7 @@ async def delete_deck(data: DeckLoeschenReq, current_user: str = Depends(get_cur
     "/deck/visualize",
     summary="Kartenbilder für Deck auflösen",
 )
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def deck_visualize(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     parsed = parse_decklist(req.deck_liste)
     if not parsed:
@@ -303,7 +310,7 @@ async def deck_visualize(req: DeckAnalyseReq, request: Request, current_user: st
     "/deck/stats",
     summary="Statistiken berechnen",
 )
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def deck_stats(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     parsed = parse_decklist(req.deck_liste)
     unique_names = list(set([p["name"] for p in parsed]))
@@ -356,7 +363,7 @@ async def deck_stats(req: DeckAnalyseReq, request: Request, current_user: str = 
     "/deck/manabasis",
     summary="Farbquellen prüfen",
 )
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def deck_manabasis(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     """Prüft, ob die Länder zu den Farbanforderungen des Decks passen.
 
@@ -408,7 +415,7 @@ async def bestand_des_nutzers(benutzer: str) -> Dict[str, int]:
     "/deck/abgleich",
     summary="Deck mit der eigenen Sammlung abgleichen",
 )
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def deck_abgleich(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     """Vergleicht die Deckliste mit der Sammlung des angemeldeten Nutzers.
 
@@ -436,7 +443,7 @@ async def deck_abgleich(req: DeckAnalyseReq, request: Request, current_user: str
     "/deck/wert",
     summary="Deckwert berechnen",
 )
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def deck_wert(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
     parsed = parse_decklist(req.deck_liste)
     unique_names = list(set([p["name"] for p in parsed]))
@@ -639,7 +646,7 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
     "/deck/validate",
     summary="Deck-Validierung",
 )
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 async def validate_deck(req: ValidateDeckReq, request: Request, current_user: str = Depends(get_current_user)):
     try:
         result = await FormatValidator.validate_deck(req.deck_liste, req.format, fetch_card_details_cached)

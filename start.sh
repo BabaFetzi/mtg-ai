@@ -196,5 +196,12 @@ echo    "      - Anfragen an  /api  auf  http://127.0.0.1:${PORT}  weiterreicht 
 echo    "  * TLS am Reverse-Proxy terminieren; ALLOWED_ORIGINS/FRONTEND_URL müssen zur echten Domain passen."
 echo    "  * Migration bestehender SQLite-Daten nach Postgres (einmalig):  python migrate_sqlite_to_postgres.py"
 echo
+# --proxy-headers: hinter einem Reverse-Proxy ist die Gegenstelle sonst immer
+# der Proxy selbst. Alle Nutzer sähen damit für Drosselung und Protokoll wie
+# EIN Besucher aus. FORWARDED_ALLOW_IPS sagt, welchem Proxy dabei geglaubt wird
+# -- standardmässig nur dem auf demselben Rechner.
+FORWARDED="${FORWARDED_ALLOW_IPS:-127.0.0.1}"
+
 # exec -> uvicorn ersetzt die Shell, damit Signale (systemd/Strg+C) sauber ankommen.
-exec uvicorn main:app --host 0.0.0.0 --port "${PORT}" --workers "${WORKERS}" --no-access-log
+exec uvicorn main:app --host 0.0.0.0 --port "${PORT}" --workers "${WORKERS}" \
+     --proxy-headers --forwarded-allow-ips "${FORWARDED}" --no-access-log

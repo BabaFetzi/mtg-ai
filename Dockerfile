@@ -58,4 +58,7 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8001\")}/health', timeout=3)" || exit 1
 
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}
+# --proxy-headers: sonst ist die Gegenstelle hinter einem Reverse-Proxy
+# immer der Proxy, und alle Nutzer teilen sich ein Drosselungs-Kontingent.
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT} \
+    --proxy-headers --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-*}"
