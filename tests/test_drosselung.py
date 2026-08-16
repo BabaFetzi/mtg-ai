@@ -89,6 +89,33 @@ SAMMLUNGSPFADE = [
 ]
 
 
+# Die Suchendpunkte. Sie lösen als einzige KI-Aufrufe aus, ohne dass ein
+# Premium-Konto dahintersteht -- und einer davon hatte gar keine Anmeldung.
+SUCHPFADE = [
+    "/api/suche/{search_term}",
+    "/api/karten/suchen",
+]
+
+
+@pytest.mark.parametrize("pfad", SUCHPFADE)
+def test_die_suchendpunkte_sind_gedrosselt(pfad):
+    """Über diese beiden lief der einzige Weg, auf dem ein Besucher ohne Konto
+    Gemini-Aufrufe auslösen konnte -- bis zu zwei je Suche, auf Rechnung des
+    Betreibers."""
+    mit_grenze = _routen_mit_grenze()
+
+    assert pfad in mit_grenze, f"{pfad} hat keine Drosselung"
+
+
+def test_die_listensuche_verlangt_eine_anmeldung():
+    """/api/karten/suchen hatte gar keine Anmeldung -- und erreichte die
+    KI-Stufe."""
+    with TestClient(app) as client:
+        antwort = client.get("/api/karten/suchen?q=Lightning+Bolt")
+
+    assert antwort.status_code in (401, 403), antwort.status_code
+
+
 @pytest.mark.parametrize("pfad", SAMMLUNGSPFADE)
 def test_jeder_sammlungsendpunkt_hat_eine_grenze(pfad):
     mit_grenze = _routen_mit_grenze()

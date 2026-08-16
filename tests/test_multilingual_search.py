@@ -14,12 +14,25 @@ Sicherheitsprinzip: Ein Modellvorschlag wird NIE direkt ausgeliefert. Nur was
 Scryfall als reale Karte bestätigt, zählt.
 """
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import services.multilingual_search as ml
 from routers.cards import _namensschluessel, _fallback_lang_search
+
+# Die KI-Stufe braucht seit der Kostenabsicherung einen angemeldeten Nutzer und
+# bucht auf dessen Monatskontingent. Diese Tests prüfen die SUCHLOGIK, nicht die
+# Abrechnung -- das Kontingent wird deshalb hier als vorhanden angenommen.
+# Dass ohne Anmeldung gar nichts passiert, prüft tests/test_ki_kosten_schutz.py.
+NUTZER = "suchtester"
+
+
+@pytest.fixture(autouse=True)
+def kontingent_vorhanden():
+    with patch("services.usage_limiter.check_and_increment_search_ai",
+               new=AsyncMock(return_value=True)):
+        yield
 
 
 class FakeResponse:
@@ -177,7 +190,7 @@ async def test_exact_proposal_still_needs_confirmation():
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Lightning Bolt")), \
          patch.object(ml, "scryfall_request", _scryfall(exakt={"Lightning Bolt": "Lightning Bolt"})):
-        karte = await ml.finde_karte_sprachunabhaengig(None, "Blitzschlag")
+        karte = await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Blitzschlag")
 
     assert karte["name"] == "Lightning Bolt"
 
@@ -206,7 +219,7 @@ async def test_real_but_wrong_card_proposal_is_not_taken_blindly():
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "_modell_waehlt_aus_echten_namen", waehlt), \
          patch.object(ml, "scryfall_request", scryfall):
-        karte = await ml.finde_karte_sprachunabhaengig(None, "Steinstimmen-Goblins")
+        karte = await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Steinstimmen-Goblins")
 
     assert karte["name"] == "Stony-Voiced Goblins"
     assert "Stoneforge Mystic" in gezeigt["auswahl"], \
@@ -229,7 +242,7 @@ async def test_words_of_the_original_query_are_searched_too():
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Stony-Voiced Goblins")), \
          patch.object(ml, "scryfall_request", scryfall):
-        karte = await ml.finde_karte_sprachunabhaengig(None, "Steinstimmen-Goblins")
+        karte = await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Steinstimmen-Goblins")
 
     assert karte["name"] == "Stony-Voiced Goblins"
 
@@ -274,7 +287,7 @@ async def test_real_card_is_found_via_word_search():
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "_modell_waehlt_aus_echten_namen", waehlt), \
          patch.object(ml, "scryfall_request", scryfall):
-        karte = await ml.finde_karte_sprachunabhaengig(None, "Steinstimmen-Goblins")
+        karte = await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Steinstimmen-Goblins")
 
     assert karte["name"] == "Stony-Voiced Goblins"
     assert "Stoneforge Mystic" not in vorgelegt["auswahl"], \
@@ -320,7 +333,7 @@ async def test_hallucinated_card_yields_nothing():
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "scryfall_request", _scryfall()):
-        assert await ml.finde_karte_sprachunabhaengig(None, "Irgendein Fantasiename") is None
+        assert await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Irgendein Fantasiename") is None
 
 
 @pytest.mark.asyncio
@@ -335,8 +348,8 @@ async def test_result_is_cached_so_model_runs_once(cache):
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Fearsome Goblin Duo")), \
          patch.object(ml, "scryfall_request", scryfall):
-        await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
-        await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
+        await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo")
+        await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo")
 
     assert aufrufe["n"] == 1, "Dieselbe Eingabe darf nur EINEN Modellaufruf kosten"
 
@@ -352,8 +365,8 @@ async def test_negative_result_is_cached_too(cache):
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "scryfall_request", _scryfall()):
-        await ml.finde_karte_sprachunabhaengig(None, "Unauffindbarer Kartenname")
-        await ml.finde_karte_sprachunabhaengig(None, "Unauffindbarer Kartenname")
+        await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Unauffindbarer Kartenname")
+        await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Unauffindbarer Kartenname")
 
     assert aufrufe["n"] == 1
 
@@ -379,13 +392,13 @@ async def test_negative_cache_expires_so_a_card_is_not_lost_for_a_day(cache):
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Fearsome Goblin Pair")), \
          patch.object(ml, "scryfall_request", scryfall):
-        assert await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo") is None
+        assert await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo") is None
 
         for eintrag in cache.daten.values():
             eintrag["zeit"] -= ml.NEGATIV_CACHE_SEKUNDEN + 1
 
         gefunden["ja"] = True
-        karte = await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
+        karte = await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo")
 
     assert aufrufe["n"] == 2, "Nach Ablauf muss erneut gefragt werden"
     assert karte["name"] == "Fearsome Goblin Pair"
@@ -400,7 +413,7 @@ async def test_missing_model_is_not_remembered_as_a_failure(cache):
         return []
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kein_modell):
-        assert await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo") is None
+        assert await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo") is None
 
     assert cache.daten == {}, "Ein technischer Ausfall darf nichts zementieren"
 
@@ -411,7 +424,7 @@ async def test_missing_model_is_not_remembered_as_a_failure(cache):
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
          patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Fearsome Goblin Pair")), \
          patch.object(ml, "scryfall_request", scryfall):
-        karte = await ml.finde_karte_sprachunabhaengig(None, "Furchterregendes Goblin-Duo")
+        karte = await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo")
 
     assert karte["name"] == "Fearsome Goblin Pair"
 
@@ -440,7 +453,7 @@ async def test_gibberish_does_not_trigger_a_model_call():
 
     with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten):
         for unsinn in ["xy", "?!", "   ", "a"]:
-            assert await ml.finde_karte_sprachunabhaengig(None, unsinn) is None
+            assert await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff=unsinn) is None
 
     assert aufrufe["n"] == 0
 
@@ -461,4 +474,4 @@ async def test_unspecific_word_search_is_skipped():
 @pytest.mark.asyncio
 async def test_can_be_disabled():
     with patch.object(ml, "UEBERSETZUNGSSUCHE_AKTIV", False):
-        assert await ml.finde_karte_sprachunabhaengig(None, "Blitzschlag") is None
+        assert await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Blitzschlag") is None

@@ -48,8 +48,20 @@ logger = logging.getLogger(__name__)
 MONTHLY_TEXT_LIMIT = 300
 MONTHLY_VISION_MINUTES_LIMIT = 90.0
 
+# Eigenes Kontingent für die sprachunabhängige Kartensuche.
+#
+# Bewusst NICHT aus dem Text-Kontingent bedient: die Suche ist eine
+# Grundfunktion, Judge und Deck-Analyse sind Premium-Funktionen. Wer viel
+# sucht, soll nicht seine Analysen verlieren.
+#
+# 100 ist grosszügig, weil die KI-Stufe nur greift, wenn Scryfall die Karte
+# in KEINER Sprache findet -- also praktisch nur bei brandneuen Sets. Ein
+# normaler Nutzer erreicht die Zahl nie; sie deckelt den Missbrauch.
+MONTHLY_SEARCH_LIMIT = 100
+
 ART_TEXT = "text"
 ART_VISION = "vision"
+ART_SUCHE = "suche"
 
 # Ein einziger Schritt: anlegen oder erhöhen, und der neue Stand kommt zurück.
 # Zwei getrennte Schritte (lesen, dann schreiben) hätten bei gleichzeitigen
@@ -104,6 +116,58 @@ async def check_and_increment_ai_usage(benutzername: str,
     if not benutzername:
         return True
     stand = await _erhoehen(benutzername, ART_TEXT, 1)
+    if stand is None:
+        return True
+    return stand <= limit
+
+
+async def gutschreiben(benutzername: str, art: str = ART_TEXT,
+                       menge: float = 1) -> None:
+    """Bucht einen Aufruf zurück, der nie stattgefunden hat.
+
+    Gezählt wird VOR dem KI-Aufruf -- anders ginge es nicht, sonst liesse sich
+    das Limit durch gleichzeitige Anfragen überrennen. Scheitert der Aufruf
+    danach (Guthaben aufgebraucht, Modell überlastet, Netzwerk), hat der
+    Nutzer aber eine seiner 300 Anfragen verloren, ohne je eine Antwort
+    bekommen zu haben.
+
+    Besonders unschön, wenn das Google-Guthaben leer ist: dann scheitert jeder
+    Versuch, und ein zahlender Kunde verbraucht sein Monatskontingent für
+    lauter Fehlermeldungen.
+    """
+    if not benutzername:
+        return
+
+    from database import get_db_session
+
+    try:
+        async with get_db_session() as session:
+            # Bedingtes UPDATE statt Erhöhung um eine negative Zahl: so kann
+            # der Zähler nicht unter null rutschen, egal wie oft
+            # zurückgebucht wird. Die Zeile existiert bereits -- gezählt
+            # wurde ja unmittelbar vorher.
+            await session.execute(
+                text("UPDATE ki_nutzung SET wert = wert - :menge "
+                     "WHERE benutzername = :b AND monat = :m AND art = :a "
+                     "AND wert >= :menge"),
+                {"b": benutzername, "m": _monat(), "a": art, "menge": menge})
+    except Exception:
+        logger.warning("Rückbuchung des KI-Kontingents fehlgeschlagen", exc_info=True)
+
+
+async def check_and_increment_search_ai(benutzername: str,
+                                        limit: int = MONTHLY_SEARCH_LIMIT) -> bool:
+    """Zählt einen KI-Aufruf der sprachunabhängigen Kartensuche.
+
+    Ohne Benutzernamen wird ABGELEHNT -- anders als bei den übrigen Funktionen.
+    Der Grund: die Suche war der einzige Weg, über den ein nicht angemeldeter
+    Besucher KI-Aufrufe auslösen konnte, ungezählt und ungedrosselt. Wer
+    tausend erfundene Kartennamen durchprobiert, hat damit direkt auf fremde
+    Rechnung Gemini befragt.
+    """
+    if not benutzername:
+        return False
+    stand = await _erhoehen(benutzername, ART_SUCHE, 1)
     if stand is None:
         return True
     return stand <= limit

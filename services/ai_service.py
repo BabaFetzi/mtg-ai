@@ -87,6 +87,22 @@ def _extract_usage(response):
     return prompt_tokens, antwort_tokens, gesamt
 
 
+def _tatsaechliches_modell(response, angefragt: str) -> str:
+    """Welches Modell wirklich geantwortet hat -- und damit abgerechnet wurde.
+
+    Angefragt wird ein Alias ("gemini-flash-latest"), weil fest versionierte
+    Namen für neue Schlüssel wegbrechen können. Google zeigt den Alias aber
+    laufend auf neuere Modelle um: in der Abrechnung tauchten dadurch Gemini
+    2.5 Flash, 3.5 Flash Lite, 3.6 Flash und 3.7 Flash nebeneinander auf.
+
+    Wer im Protokoll nur den Alias stehen hat, kann die Kosten hinterher
+    keinem Modell zuordnen -- und merkt auch nicht, wenn ein Umschwenken den
+    Preis ändert. Deshalb wird die konkrete Fassung aus der Antwort
+    festgehalten, sofern das SDK sie mitliefert.
+    """
+    return getattr(response, "model_version", None) or angefragt
+
+
 def _beschreibe_fehler(e: Exception) -> str:
     code = getattr(e, "code", None) or getattr(e, "status_code", None)
     status = getattr(e, "status", None)
@@ -150,7 +166,8 @@ class _GeminiModel:
             dauer_ms = int((time.perf_counter() - start) * 1000)
             prompt_tokens, antwort_tokens, gesamt = _extract_usage(response)
             _protokolliere(
-                funktion=feature, modell=model_name, erfolg=True, latenz_ms=dauer_ms,
+                funktion=feature, modell=_tatsaechliches_modell(response, model_name),
+                erfolg=True, latenz_ms=dauer_ms,
                 prompt_tokens=prompt_tokens, antwort_tokens=antwort_tokens,
                 gesamt_tokens=gesamt, benutzername=benutzername,
                 frage=_als_text(contents), antwort=getattr(response, "text", None),

@@ -42,7 +42,7 @@ from services.ai_service import model, model_lite
 from services.bestand import abgleichen, bedarf_aus_deck, bestand_aus_zeilen
 from services.manabasis import analysiere as analysiere_manabasis
 from services.limiter import limiter
-from services.usage_limiter import check_and_increment_ai_usage
+from services.usage_limiter import check_and_increment_ai_usage, gutschreiben
 from format_engine import BASIC_LANDS, FormatValidator
 from schemas.models import (
     DeckErstellenReq,
@@ -562,6 +562,10 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
             return result
         except Exception as e:
             logger.exception("Error generating deck analysis")
+            # Der Aufruf wurde gezaehlt, hat aber nie geantwortet -- sonst
+            # verbraucht ein zahlender Kunde sein Monatskontingent fuer
+            # lauter Fehlermeldungen.
+            await gutschreiben(current_user)
             
     fallback_res = {
         # Kein Ersatz-Ergebnis erfinden: Ohne KI-Antwort gibt es KEINE Bewertung.
@@ -628,6 +632,7 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
             return result
         except Exception as e:
             logger.exception("Error generating deck roast")
+            await gutschreiben(current_user)
             
     fallback_res = {
         # Auch hier keine erfundene Bewertung: salt_score 50 sah aus wie ein

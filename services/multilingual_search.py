@@ -352,18 +352,32 @@ async def _modell_waehlt_aus_echten_namen(begriff: str, auswahl: List[str]) -> O
     return None
 
 
-async def finde_karte_sprachunabhaengig(client, begriff: str) -> Optional[dict]:
+async def finde_karte_sprachunabhaengig(client, begriff: str,
+                                        benutzername: str = "") -> Optional[dict]:
     """
     Letzte Suchstufe: Kartenname in beliebiger Sprache -> bestätigte Karte.
 
     Args:
         client: offener httpx-AsyncClient (Scryfall).
         begriff: Eingabe des Nutzers in beliebiger Sprache.
+        benutzername: Wer sucht. OHNE Namen wird die KI-Stufe nicht
+            ausgeführt -- siehe unten.
 
     Returns:
         Das vollständige Scryfall-Kartenobjekt, oder None wenn nichts bestätigt
         werden konnte. Es wird NIEMALS ein unbestätigter Vorschlag geliefert --
         auch dann nicht, wenn er zufällig eine echt existierende Karte trifft.
+
+    Warum ein Benutzername nötig ist
+    --------------------------------
+    Diese Stufe kostet bis zu zwei Gemini-Aufrufe. Sie war der einzige Weg, auf
+    dem ein NICHT angemeldeter Besucher KI-Aufrufe auslösen konnte -- ungezählt
+    und ungedrosselt. Wer tausend erfundene Kartennamen durchprobiert, hat
+    damit direkt auf fremde Rechnung Gemini befragt.
+
+    Der Cache bleibt für alle da: ein bereits aufgelöster Name wird auch ohne
+    Anmeldung beantwortet. Nur das ERZEUGEN eines neuen Eintrags kostet
+    Kontingent.
     """
     if not UEBERSETZUNGSSUCHE_AKTIV or not _wirkt_wie_kartenname(begriff):
         return None
@@ -378,6 +392,16 @@ async def finde_karte_sprachunabhaengig(client, begriff: str) -> Optional[dict]:
             "Sprachunabhängige Suche übersprungen für %r: vor weniger als %d s bereits "
             "erfolglos versucht", begriff, NEGATIV_CACHE_SEKUNDEN,
         )
+        return None
+
+    # Ab hier kostet es. Erst jetzt prüfen, damit ein Treffer aus dem Cache
+    # kein Kontingent verbraucht.
+    from services.usage_limiter import check_and_increment_search_ai
+
+    if not await check_and_increment_search_ai(benutzername):
+        logger.info(
+            "Sprachunabhängige Suche übersprungen für %r: %s", begriff,
+            "nicht angemeldet" if not benutzername else "Monatskontingent erreicht")
         return None
 
     kandidaten = await _frage_modell_nach_englischen_namen(begriff)

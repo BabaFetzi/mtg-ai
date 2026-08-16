@@ -122,6 +122,21 @@ async def test_scryfall_failure_yields_no_suggestions_not_an_error():
 # ======================================================================
 # Alchemy-Fassungen ausblenden
 # ======================================================================
+def _anfrage():
+    """Minimale echte Request.
+
+    Der Endpunkt ist inzwischen gedrosselt (slowapi), und der Dekorator
+    besteht auf einer echten starlette-Request. Beim direkten Aufruf der
+    Funktion -- also unter Umgehung von FastAPI -- muss sie gestellt werden.
+    """
+    from starlette.requests import Request
+
+    return Request({
+        "type": "http", "method": "GET", "path": "/api/karten/suchen",
+        "headers": [], "query_string": b"", "client": ("127.0.0.1", 1234),
+    })
+
+
 @pytest.mark.asyncio
 async def test_alchemy_rebalanced_cards_are_excluded():
     """Regression: die Suche nach "Orcish Bowmaster" lieferte ZWEI Treffer --
@@ -140,7 +155,9 @@ async def test_alchemy_rebalanced_cards_are_excluded():
 
     with patch("routers.cards.scryfall_request", fake_request), \
          patch("routers.cards.scryfall_cache", _LeererCache()):
-        ergebnis = await karten_suchen_liste(q="Orcish Bowmaster", limit=5)
+        ergebnis = await karten_suchen_liste(
+            q="Orcish Bowmaster", request=_anfrage(), limit=5,
+            current_user="tester")
 
     assert [k["name"] for k in ergebnis["karten"]] == ["Orcish Bowmasters"]
     assert gestellte_fragen, "Es wurde gar nicht gesucht"

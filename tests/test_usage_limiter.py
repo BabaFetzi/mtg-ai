@@ -175,6 +175,69 @@ async def test_bei_gestoerter_datenbank_wird_zugelassen(db):
 
 
 # ----------------------------------------------------------------------
+# Rückbuchung bei Fehlschlag
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_fehlgeschlagener_aufruf_wird_zurueckgebucht(db):
+    """Gezählt wird VOR dem KI-Aufruf -- anders liesse sich das Limit durch
+    gleichzeitige Anfragen überrennen. Scheitert der Aufruf danach (leeres
+    Google-Guthaben, Modell überlastet), hätte der Kunde eine seiner 300
+    Anfragen für eine Fehlermeldung bezahlt."""
+    await ul.check_and_increment_ai_usage("kunde", limit=300)
+    assert await ul.stand_abfragen("kunde") == 1
+
+    await ul.gutschreiben("kunde")
+
+    assert await ul.stand_abfragen("kunde") == 0
+
+
+@pytest.mark.asyncio
+async def test_rueckbuchung_geht_nie_unter_null(db):
+    """Sonst sammelte ein Nutzer durch wiederholte Fehlschläge ein Guthaben an
+    und hätte im nächsten Monat mehr als 300 Anfragen frei."""
+    await ul.check_and_increment_ai_usage("kunde", limit=300)
+
+    for _ in range(5):
+        await ul.gutschreiben("kunde")
+
+    assert await ul.stand_abfragen("kunde") == 0
+
+
+@pytest.mark.asyncio
+async def test_rueckbuchung_trifft_die_richtige_art(db):
+    await ul.check_and_increment_ai_usage("kunde", limit=300)
+    await ul.check_and_increment_vision_minutes("kunde", 5.0, limit=90.0)
+
+    await ul.gutschreiben("kunde", ul.ART_VISION, 5.0)
+
+    assert await ul.stand_abfragen("kunde", ul.ART_TEXT) == 1
+    assert await ul.stand_abfragen("kunde", ul.ART_VISION) == 0
+
+
+# ----------------------------------------------------------------------
+# Kartensuche -- der Weg, ueber den Nichtangemeldete KI ausloesen konnten
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_suche_ohne_anmeldung_wird_abgelehnt(db):
+    """Der Kern der Luecke: die sprachunabhaengige Suche war der einzige Weg,
+    auf dem ein nicht angemeldeter Besucher Gemini-Aufrufe ausloesen konnte --
+    ungezaehlt und ungedrosselt."""
+    assert await ul.check_and_increment_search_ai("") is False
+
+
+@pytest.mark.asyncio
+async def test_suche_hat_ein_eigenes_kontingent(db):
+    """Wer viel sucht, darf nicht seine Deck-Analysen verlieren: die Suche ist
+    eine Grundfunktion, Judge und Analyse sind Premium-Funktionen."""
+    for _ in range(3):
+        assert await ul.check_and_increment_search_ai("sucher", limit=3) is True
+    assert await ul.check_and_increment_search_ai("sucher", limit=3) is False
+
+    # Das Textkontingent ist davon voellig unberuehrt.
+    assert await ul.check_and_increment_ai_usage("sucher", limit=1) is True
+
+
+# ----------------------------------------------------------------------
 # Aufräumen
 # ----------------------------------------------------------------------
 @pytest.mark.asyncio

@@ -24,16 +24,17 @@ from typing import Optional
 
 import httpx
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import text
 
-from auth import get_current_user_optional
+from auth import get_current_user, get_current_user_optional
 from services.cache import scryfall_cache
 from services.scryfall import (fetch_card_details_cached, scryfall_client, scryfall_request,
                                best_market_price, preis_fuer_variante)
+from services.limiter import limiter
 from services.multilingual_search import finde_karte_sprachunabhaengig
 from services.ai_service import model_lite, KI_VERFUEGBAR
-from services.usage_limiter import check_and_increment_ai_usage
+from services.usage_limiter import check_and_increment_ai_usage, gutschreiben
 from database import get_db_session, check_user_premium
 from schemas.models import CardSearchResult, TrendsResponse
 
@@ -58,8 +59,10 @@ router = APIRouter(
                 "Premium-User erhalten eine deutsche Übersetzung des Kartentexts via KI.",
     response_model=CardSearchResult,
 )
+@limiter.limit("120/minute")
 async def suche_karte(
     search_term: str,
+    request: Request,
     current_user: str = Depends(get_current_user_optional),
 ):
     """
@@ -114,7 +117,8 @@ async def suche_karte(
             # englische Namen vor, Scryfall bestätigt sie -- nur Bestätigtes
             # zählt. Greift genau dann, wenn es für ein brandneues Set noch gar
             # keine lokalisierten Daten gibt.
-            uebersetzt = await finde_karte_sprachunabhaengig(client, search_term)
+            uebersetzt = await finde_karte_sprachunabhaengig(
+                client, search_term, current_user or "")
             if uebersetzt is not None:
                 data = uebersetzt
                 resp = None  # ab hier normal weiterverarbeiten
@@ -176,7 +180,9 @@ async def suche_karte(
     description="Liefert mehrere Treffer zu einem Suchbegriff -- für die "
                 "Karten-Datenbank im Deck-Editor.",
 )
-async def karten_suchen_liste(q: str, limit: int = 15):
+@limiter.limit("120/minute")
+async def karten_suchen_liste(q: str, request: Request, limit: int = 15,
+                              current_user: str = Depends(get_current_user)):
     """
     Vorher suchte der Deck-Editor DIREKT aus dem Browser bei Scryfall. Damit
     umging er die globale Drossel und den Cache (bei vielen Nutzern ein
@@ -257,7 +263,8 @@ async def karten_suchen_liste(q: str, limit: int = 15):
         if not karten:
             # Letzte Stufe: Name in beliebiger Sprache (Modell schlägt vor,
             # Scryfall bestätigt). Gilt für ALLE Sets und alle Sprachen.
-            uebersetzt = await finde_karte_sprachunabhaengig(client, begriff)
+            uebersetzt = await finde_karte_sprachunabhaengig(
+                client, begriff, current_user)
             if uebersetzt is not None:
                 ergebnis = {"karten": _aufbereiten([uebersetzt])}
                 scryfall_cache.set(cache_key, ergebnis)
@@ -355,6 +362,7 @@ async def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzernam
             )
             return response.text.strip()
         except Exception:
+            await gutschreiben(benutzername)
             return f"Originaltext (Englisch):\n{oracle_text}"
     elif not is_premium:
         return (

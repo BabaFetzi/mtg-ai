@@ -38,7 +38,7 @@ from services.scryfall import parse_decklist, extract_card_name_candidates, fetc
 from services.card_query_tool import karten_suchen
 from services.rules_corpus import suche_regeln
 from services.synergies import detect_synergies
-from services.usage_limiter import check_and_increment_ai_usage
+from services.usage_limiter import check_and_increment_ai_usage, gutschreiben
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,8 @@ async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str 
             return {"antwort": antwort}
         except Exception:
             logger.exception("Error calling judge model")
+            # Gezaehlt, aber nie beantwortet -- zurueckbuchen.
+            await gutschreiben(current_user)
 
     return {"antwort": "Der KI-Judge ist momentan beschäftigt oder nicht eingerichtet. Bitte überprüfe deinen API Key."}
 

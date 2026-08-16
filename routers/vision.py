@@ -47,10 +47,14 @@ async def detect_cards_from_image(jpeg_bytes: bytes) -> Dict[str, Any]:
             "Detect all cards, their names, coordinates (x and y, 0-100), and whether they are tapped. "
             "Return JSON in this format: {\"cards\": [{\"name\": \"Card Name\", \"zone\": \"battlefield\", \"tapped\": false, \"x\": 50, \"y\": 50}]}"
         )
+        # Mit Funktionsnamen: ohne ihn landen die teuersten Aufrufe der
+        # ganzen Anwendung als "unbekannt" im Protokoll und lassen sich in
+        # der Kostenrechnung keinem Posten zuordnen.
         response = await asyncio.to_thread(
             model_lite.generate_content,
             [{"mime_type": "image/jpeg", "data": jpeg_bytes}, prompt],
-            generation_config={"response_mime_type": "application/json"}
+            generation_config={"response_mime_type": "application/json"},
+            feature="vision_erkennung",
         )
         text = response.text.strip()
         if text.startswith("```json"):
@@ -80,7 +84,8 @@ async def generate_board_advice(cards: List[Dict[str, Any]]) -> str:
             f"Analyze the following Magic: The Gathering battlefield cards: {json.dumps(cards)}. "
             "Provide tactical advice, check for synergies, infinite combos, and suggest your next moves."
         )
-        response = await asyncio.to_thread(model_lite.generate_content, prompt)
+        response = await asyncio.to_thread(
+            model_lite.generate_content, prompt, None, "vision_rat")
         return response.text
     except Exception as e:
         err_msg = str(e)
@@ -390,7 +395,8 @@ async def identify_single_card(warped_bytes: bytes) -> str:
         )
         response = await asyncio.to_thread(
             model_lite.generate_content,
-            [{"mime_type": "image/jpeg", "data": warped_bytes}, prompt]
+            [{"mime_type": "image/jpeg", "data": warped_bytes}, prompt],
+            feature="karte_erkennen",
         )
         name = response.text.strip()
         name = name.replace('"', '').replace("'", "").strip()
