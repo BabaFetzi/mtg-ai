@@ -41,7 +41,8 @@ from auth import (
     decode_token,
     check_login_rate_limit,
     record_login_attempt,
-    get_current_user
+    get_current_user,
+    ist_gesperrt,
 )
 from schemas.models import LoginData, RegisterData, UpdateRoleReq
 
@@ -223,6 +224,14 @@ async def refresh_access_token(req: RefreshReq):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Ungültiges Refresh-Token.",
+        )
+
+    # Ein Auffrischungs-Token gilt 30 Tage. Ohne diese Prüfung könnte sich ein
+    # gelöschtes Konto damit einen Monat lang immer neue Zugriffstoken holen.
+    if await ist_gesperrt(username):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Dieses Konto wurde gelöscht.",
         )
 
     async with get_db_session() as session:

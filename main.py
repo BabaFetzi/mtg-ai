@@ -32,7 +32,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from database import init_db
 from services import ai_usage_log
 from services.limiter import limiter
-from routers import cards, auth, collection, decks, ai, payments, vision
+from routers import cards, auth, collection, decks, ai, payments, vision, konto
 
 # ======================================================================
 # Logging: zentral hier konfiguriert (Entrypoint). Jedes Modul nutzt
@@ -215,6 +215,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(auth.router)
 app.include_router(cards.router)
 app.include_router(collection.router)
+app.include_router(konto.router)
 app.include_router(decks.router)
 app.include_router(ai.router)
 app.include_router(payments.router)

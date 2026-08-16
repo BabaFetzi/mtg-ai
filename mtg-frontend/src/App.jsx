@@ -22,6 +22,7 @@ import Impressum from './components/legal/Impressum'
 import Datenschutz from './components/legal/Datenschutz'
 import AGB from './components/legal/AGB'
 import PasswortNeu from './components/auth/PasswortNeu'
+import KontoSeite from './components/konto/KontoSeite'
 
 const globalStyles = `
 /* --- THEME VARIABLES (Harmonisiert & Pro) --- */
@@ -1204,6 +1205,7 @@ function App() {
           <Route path="/sammlung" element={<MeineSammlung currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/decks" element={<DecksView currentUser={currentUser} userRole={userRole} onShowPremiumModal={() => setShowPremiumModal(true)} />} />
           <Route path="/premium" element={<PremiumPage currentUser={currentUser} userRole={userRole} setUserRole={setUserRole} />} />
+          <Route path="/konto" element={<KontoSeite currentUser={currentUser} onAbgemeldet={handleLogout} />} />
           {/* Live-Playfield fürs erste Launch pausiert (siehe config.js).
               Aktive Routen nur, wenn der Feature-Schalter an ist; sonst leitet
               ein direkter /playfield-Aufruf auf die Startseite um (kein toter Link). */}

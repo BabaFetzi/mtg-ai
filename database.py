@@ -123,6 +123,22 @@ class PasswortReset(Base):
     erstellt_am = Column(DateTime, default=datetime.utcnow)
 
 
+class GeloeschtesKonto(Base):
+    """Benutzernamen gelöschter Konten -- zum Sperren noch gültiger Token.
+
+    Zugriffs- und Auffrischungs-Token sind eigenständig gültig: sie werden beim
+    Prüfen nur entschlüsselt, nicht gegen die Datenbank gehalten. Ohne diese
+    Liste könnte sich jemand nach der Löschung seines Kontos noch bis zu 30 Tage
+    mit dem alten Auffrischungs-Token neue Zugriffstoken ausstellen lassen -- und
+    dabei Daten anlegen, die es laut Löschung nicht mehr geben darf.
+
+    Einträge werden nach Ablauf der längsten Token-Gültigkeit gegenstandslos.
+    """
+    __tablename__ = 'geloeschte_konten'
+    benutzername = Column(String(50), primary_key=True)
+    geloescht_am = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class SynergyJob(Base):
     __tablename__ = 'synergy_jobs'
     job_id = Column(String(36), primary_key=True)

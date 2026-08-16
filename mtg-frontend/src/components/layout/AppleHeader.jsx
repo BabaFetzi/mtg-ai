@@ -176,6 +176,9 @@ function AppleHeader({ currentUser, setCurrentUser, isDarkMode, setIsDarkMode, s
                 </div>
 
                 <div className="konto-gruppe">
+                  <button type="button" className="konto-eintrag" onClick={() => geheZu('/konto')}>
+                    Konto und Daten
+                  </button>
                   <button type="button" className="konto-eintrag" onClick={() => geheZu('/premium')}>
                     Abonnement verwalten
                   </button>
@@ -263,6 +266,9 @@ function AppleHeader({ currentUser, setCurrentUser, isDarkMode, setIsDarkMode, s
               <Farbwahl activeTheme={activeTheme} setActiveTheme={setActiveTheme} />
             </div>
             <div className="handy-gruppe">
+              <button type="button" className="handy-link" onClick={() => geheZu('/konto')}>
+                Konto und Daten
+              </button>
               <button type="button" className="handy-link" onClick={() => geheZu('/premium')}>
                 Abonnement verwalten
               </button>

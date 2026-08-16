@@ -67,6 +67,13 @@ REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/login", auto_error=False)
 
+# Gesperrte (gelöschte) Konten: die Liste lebt in services/sperrliste.py --
+# dort gibt es sie genau einmal, auch wenn dieses Modul neu geladen wird.
+from services.sperrliste import (  # noqa: E402
+    ist_gesperrt,
+    sofort_sperren as konto_sofort_sperren,
+)
+
 # Simple in-memory rate limiter for login
 # Key: (ip, username), Value: (attempts_count, block_until_timestamp)
 login_attempts: Dict[Tuple[str, str], Tuple[int, float]] = {}
@@ -231,6 +238,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
             detail="Ungültiges Token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Gelöschtes Konto: das Token ist rechnerisch noch gültig, das Konto gibt es
+    # aber nicht mehr. Ohne diese Prüfung liessen sich damit weiter Daten
+    # anlegen -- die Löschung wäre nur halb passiert.
+    if await ist_gesperrt(username):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Dieses Konto wurde gelöscht.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return username
 
 # Dependency für Endpunkte, die anonyme Nutzung weiterhin erlauben (z.B.
@@ -245,4 +261,8 @@ async def get_current_user_optional(token: str = Depends(oauth2_scheme)) -> Opti
         return None
     if payload.get("type", "access") != "access":
         return None
-    return payload.get("sub")
+    benutzer = payload.get("sub")
+    # Auch hier: ein gelöschtes Konto soll nicht als angemeldet gelten.
+    if benutzer and await ist_gesperrt(benutzer):
+        return None
+    return benutzer

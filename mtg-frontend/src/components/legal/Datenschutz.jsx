@@ -150,7 +150,14 @@ function Datenschutz() {
           Wirkung für die Zukunft widerrufen.
         </p>
         <p style={{ marginTop: '12px' }}>
-          Schreib uns dazu an{' '}
+          Zwei dieser Rechte kannst du sofort selbst ausüben, ohne uns zu
+          schreiben: Unter <strong>Konto und Daten</strong> (im Menü unter deinem
+          Benutzernamen) lädst du alle zu dir gespeicherten Daten als
+          JSON-Datei herunter und löschst dort auch dein Konto samt allen
+          Inhalten.
+        </p>
+        <p style={{ marginTop: '12px' }}>
+          Für alles Weitere schreib uns an{' '}
           <a href={`mailto:${BETREIBER.email}`} style={{ color: 'var(--accent-color)' }}>
             {BETREIBER.email}
           </a>. Du kannst dich ausserdem bei einer Aufsichtsbehörde beschweren —
