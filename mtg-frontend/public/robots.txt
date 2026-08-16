@@ -1,0 +1,12 @@
+# Grana -- was Suchmaschinen sehen dürfen.
+User-agent: *
+# Angemeldete Bereiche haben in einem Suchindex nichts verloren: sie zeigen
+# ohne Anmeldung ohnehin nichts und würden nur leere Treffer erzeugen.
+Disallow: /sammlung
+Disallow: /decks
+Disallow: /konto
+Disallow: /playfield
+Disallow: /passwort-neu
+Allow: /
+
+Sitemap: https://DEINE-DOMAIN.tld/sitemap.xml

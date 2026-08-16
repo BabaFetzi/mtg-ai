@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Öffentlich erreichbare Seiten. Bereiche hinter der Anmeldung stehen bewusst
+  nicht drin, weil sie ohne Konto nichts zeigen.
+  Vor dem Start: DEINE-DOMAIN.tld überall durch die echte Domain ersetzen.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://DEINE-DOMAIN.tld/</loc><priority>1.0</priority></url>
+  <url><loc>https://DEINE-DOMAIN.tld/premium</loc><priority>0.8</priority></url>
+  <url><loc>https://DEINE-DOMAIN.tld/impressum</loc><priority>0.3</priority></url>
+  <url><loc>https://DEINE-DOMAIN.tld/datenschutz</loc><priority>0.3</priority></url>
+  <url><loc>https://DEINE-DOMAIN.tld/agb</loc><priority>0.3</priority></url>
+</urlset>
