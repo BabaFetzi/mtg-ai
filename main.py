@@ -171,6 +171,14 @@ async def lifespan(app: FastAPI):
             logger.warning("Abschließender KI-Protokoll-Flush fehlgeschlagen", exc_info=True)
 
 # ======================================================================
+# Fehlermeldung
+# ======================================================================
+# Muss VOR dem Anlegen der App passieren, damit auch Fehler beim Start
+# gemeldet werden. Ohne SENTRY_DSN passiert nichts.
+from services.fehlermeldung import einrichten as fehlermeldung_einrichten  # noqa: E402
+FEHLERMELDUNG_AKTIV = fehlermeldung_einrichten()
+
+# ======================================================================
 # FastAPI App Setup
 # ======================================================================
 app = FastAPI(
@@ -204,6 +212,15 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error("GLOBALER FEHLER bei %s %s", request.method, request.url.path, exc_info=exc)
+    # An die Überwachung weiterreichen. Der eigene Handler fängt die Ausnahme
+    # ab, bevor Sentry sie von selbst sehen würde -- ohne diese Zeile bliebe
+    # genau die Klasse Fehler unsichtbar, für die man die Überwachung hat.
+    if FEHLERMELDUNG_AKTIV:
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+        except Exception:
+            logger.debug("Fehlerbericht nicht absendbar", exc_info=True)
     return JSONResponse(
         status_code=500,
         content={"erfolg": False, "error": str(exc)}

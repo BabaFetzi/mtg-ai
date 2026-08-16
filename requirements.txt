@@ -17,6 +17,10 @@ stripe
 opencv-python-headless
 numpy
 
+# Fehlerüberwachung. Ohne SENTRY_DSN in der Umgebung passiert nichts -- das
+# Paket kann installiert bleiben, auch wenn die Überwachung aus ist.
+sentry-sdk
+
 # test-only
 pytest
 pytest-asyncio
