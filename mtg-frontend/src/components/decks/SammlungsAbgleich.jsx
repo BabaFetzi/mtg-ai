@@ -12,17 +12,14 @@ import { formatEuro } from '../../utils/format';
 // So viele fehlende Karten stehen ohne Aufklappen da.
 const GEKUERZT = 12;
 
-function Zeile({ karte }) {
+function Zeile({ karte, gewaehlt, umschalten }) {
   const fehlt = karte.fehlt > 0;
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: '12px',
-      padding: '10px 0',
-      borderTop: '1px solid var(--border-color)',
-    }}>
+  // Auswählbar ist nur, was auch fehlt -- bei allem anderen gäbe es nichts
+  // zu übernehmen, und ein Häkchen ohne Wirkung ist irreführend.
+  const waehlbar = fehlt && typeof umschalten === 'function';
+
+  const inhalt = (
+    <>
       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {karte.name}
         {karte.standardland && (
@@ -45,7 +42,32 @@ function Zeile({ karte }) {
         {karte.vorhanden} / {karte.benoetigt}
         {fehlt && <span style={{ fontWeight: 400, marginLeft: '8px' }}>{karte.fehlt} fehlen</span>}
       </span>
-    </div>
+    </>
+  );
+
+  const rahmen = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    padding: '10px 0',
+    borderTop: '1px solid var(--border-color)',
+  };
+
+  if (!waehlbar) return <div style={rahmen}>{inhalt}</div>;
+
+  // Die ganze Zeile ist das Bedienelement, nicht nur das kleine Kästchen --
+  // auf dem Handy trifft man ein 18px-Quadrat kaum.
+  return (
+    <label style={{ ...rahmen, cursor: 'pointer' }}>
+      <input
+        type="checkbox"
+        checked={gewaehlt}
+        onChange={() => umschalten(karte.name)}
+        style={{ width: '18px', height: '18px', flexShrink: 0, cursor: 'pointer' }}
+      />
+      {inhalt}
+    </label>
   );
 }
 
@@ -54,6 +76,20 @@ function SammlungsAbgleich({ daten, laedt, onUebernehmen, uebernimmt }) {
   // Spielern einzeln erfasst -- deshalb standardmässig aus.
   const [mitLaendern, setMitLaendern] = useState(false);
   const [alleZeigen, setAlleZeigen] = useState(false);
+  // Abgewählte Karten statt ausgewählter: Der Normalfall ist "alles
+  // übernehmen". Würde man die Auswahl sammeln, stünde man vor einer leeren
+  // Menge und müsste erst alles ankreuzen, bevor der Knopf etwas tut --
+  // mehr Arbeit für den häufigeren Fall.
+  const [abgewaehlt, setAbgewaehlt] = useState(() => new Set());
+
+  const umschalten = (name) => {
+    setAbgewaehlt((alt) => {
+      const neu = new Set(alt);
+      if (neu.has(name)) neu.delete(name);
+      else neu.add(name);
+      return neu;
+    });
+  };
   if (laedt) {
     return (
       <div className="analyse-block" style={{ marginBottom: '40px', textAlign: 'center' }}>
@@ -68,6 +104,19 @@ function SammlungsAbgleich({ daten, laedt, onUebernehmen, uebernimmt }) {
   const fehlende = daten.karten.filter((k) => k.fehlt > 0 && !k.standardland);
   // Bei 41 fehlenden Karten wird die Seite sonst zur Endlosliste.
   const sichtbare = alleZeigen ? fehlende : fehlende.slice(0, GEKUERZT);
+
+  const gewaehlte = fehlende.filter((k) => !abgewaehlt.has(k.name));
+  // Exemplare, nicht Kartennamen: Bei "4x Blitzschlag" sind das vier.
+  const gewaehlteExemplare = gewaehlte.reduce((summe, k) => summe + (k.fehlt || 0), 0);
+  // "preis" ist der Einzelpreis je Karte (services/bestand.py), der Gesamtwert
+  // also Preis mal fehlende Exemplare -- dieselbe Rechnung wie im Backend.
+  const gewaehlterWert = gewaehlte.reduce(
+    (summe, k) => summe + (parseFloat(k.preis || 0) || 0) * (k.fehlt || 0), 0);
+  const alleGewaehlt = abgewaehlt.size === 0;
+  // Standardländer stehen nicht in der Liste und lassen sich deshalb auch
+  // nicht einzeln abwählen -- für sie gilt weiterhin nur das Häkchen unten.
+  const laenderExemplare = mitLaendern ? (daten.standardlaender_fehlend || 0) : 0;
+  const nichtsGewaehlt = gewaehlteExemplare === 0 && laenderExemplare === 0;
 
   return (
     <div className="analyse-block" style={{ marginBottom: '40px' }}>
@@ -87,8 +136,16 @@ function SammlungsAbgleich({ daten, laedt, onUebernehmen, uebernimmt }) {
           </span>
         ) : (
           <>
-            <strong>{daten.fehlend}</strong> {daten.fehlend === 1 ? 'Karte fehlt' : 'Karten fehlen'} dir noch —
-            {' '}zusammen etwa <strong>{formatEuro(daten.fehlender_wert)}</strong>.
+            {/* "Exemplare" statt "Karten": Oben stand "41 Karten fehlen", der
+                Aufklapper darunter sagte "Alle 23 fehlenden Karten anzeigen".
+                Beides stimmte -- 41 Exemplare verteilt auf 23 verschiedene
+                Karten --, las sich aber wie ein Widerspruch. */}
+            <strong>{daten.fehlend}</strong>{' '}
+            {daten.fehlend === 1 ? 'Exemplar fehlt' : 'Exemplare fehlen'} dir noch
+            {fehlende.length > 0 && daten.fehlend !== fehlende.length && (
+              <> ({fehlende.length} verschiedene Karten)</>
+            )}
+            {' '}— zusammen etwa <strong>{formatEuro(daten.fehlender_wert)}</strong>.
           </>
         )}
       </p>
@@ -99,9 +156,42 @@ function SammlungsAbgleich({ daten, laedt, onUebernehmen, uebernimmt }) {
         </p>
       )}
 
+      {fehlende.length > 0 && onUebernehmen && (
+        <div style={{
+          display: 'flex', justifyContent: 'flex-end', gap: '14px',
+          marginTop: '14px', fontSize: '0.85rem',
+        }}>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => setAbgewaehlt(new Set())}
+            disabled={alleGewaehlt}
+            style={{ opacity: alleGewaehlt ? 0.45 : 1 }}
+          >
+            Alle auswählen
+          </button>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => setAbgewaehlt(new Set(fehlende.map((k) => k.name)))}
+            disabled={gewaehlte.length === 0}
+            style={{ opacity: gewaehlte.length === 0 ? 0.45 : 1 }}
+          >
+            Keine
+          </button>
+        </div>
+      )}
+
       {fehlende.length > 0 && (
         <div style={{ marginTop: '10px' }}>
-          {sichtbare.map((k) => <Zeile key={k.name} karte={k} />)}
+          {sichtbare.map((k) => (
+            <Zeile
+              key={k.name}
+              karte={k}
+              gewaehlt={!abgewaehlt.has(k.name)}
+              umschalten={onUebernehmen ? umschalten : undefined}
+            />
+          ))}
           {fehlende.length > GEKUERZT && (
             <button
               type="button"
@@ -128,12 +218,29 @@ function SammlungsAbgleich({ daten, laedt, onUebernehmen, uebernimmt }) {
           <button
             type="button"
             className="primary-btn"
-            disabled={uebernimmt}
-            onClick={() => onUebernehmen({ mitStandardlaendern: mitLaendern })}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '10px' }}
+            disabled={uebernimmt || nichtsGewaehlt}
+            onClick={() => onUebernehmen({
+              mitStandardlaendern: mitLaendern,
+              // Sind alle angekreuzt, wird KEINE Liste mitgeschickt. Das ist
+              // nicht dasselbe wie eine Liste mit allen Namen: ohne Liste
+              // nimmt der Server, was gerade fehlt. Hat sich die Sammlung
+              // zwischenzeitlich geändert, stimmt das -- eine mitgeschickte
+              // Liste wäre dann veraltet.
+              nurKarten: alleGewaehlt ? null : gewaehlte.map((k) => k.name),
+            })}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '10px',
+              opacity: nichtsGewaehlt ? 0.5 : 1,
+              cursor: nichtsGewaehlt ? 'not-allowed' : 'pointer',
+            }}
           >
             {uebernimmt && <span className="spinner" style={{ width: '14px', height: '14px', borderWidth: '2px', margin: 0 }} />}
-            {uebernimmt ? 'Wird übernommen...' : 'Fehlende Karten in die Sammlung übernehmen'}
+            {uebernimmt
+              ? 'Wird übernommen...'
+              : alleGewaehlt
+                ? 'Fehlende Karten in die Sammlung übernehmen'
+                : `${gewaehlteExemplare} ${gewaehlteExemplare === 1 ? 'Exemplar' : 'Exemplare'} `
+                  + `übernehmen — ${formatEuro(gewaehlterWert)}`}
           </button>
 
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', color: 'var(--text-muted)', cursor: 'pointer' }}>

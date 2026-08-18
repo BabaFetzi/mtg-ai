@@ -210,3 +210,92 @@ async def test_unbekanntes_deck_meldet_404(db):
 def test_ohne_anmeldung_kein_zugriff():
     antwort = client.post("/api/sammlung/aus-deck", json={"deck_id": 1})
     assert antwort.status_code in (401, 403)
+
+
+# ======================================================================
+# Einzelne Karten auswaehlen
+# ======================================================================
+# Gewuenscht: "dass man die Karten auch einzeln auswaehlen kann, welche man in
+# die Sammlung uebernehmen will."
+#
+# Uebergeben werden NUR NAMEN, keine Stueckzahlen. Wie viele Exemplare fehlen,
+# rechnet weiterhin der Server aus Bedarf und Bestand -- eine veraenderte
+# Anfrage koennte sonst beliebig viele Karten in die Sammlung schreiben, und
+# die Zahl neben dem Namen stimmte nicht mehr mit dem ueberein, was angelegt
+# wird.
+
+@pytest.mark.asyncio
+async def test_nur_die_ausgewaehlte_karte_wird_uebernommen(db):
+    antwort = _uebernehmen(db, nur_karten=["Sol Ring"])
+
+    assert antwort.status_code == 200, antwort.text
+    assert antwort.json()["hinzugefuegt"] == 1
+
+    bestand = await _bestand(db)
+    assert bestand.get(("Sol Ring", "Krenko")) == 1
+    assert ("Lightning Bolt", "Krenko") not in bestand
+
+
+@pytest.mark.asyncio
+async def test_die_anzahl_kommt_vom_server_nicht_aus_der_auswahl(db):
+    """Der Name steht in der Auswahl, die MENGE bestimmt der Bedarf.
+
+    Vier Blitzschlaege fehlen -- ein einzelner Name in der Liste legt trotzdem
+    alle vier an. Umgekehrt kann niemand ueber die Anfrage mehr anlegen, als
+    dem Deck fehlt.
+    """
+    daten = _uebernehmen(db, nur_karten=["Lightning Bolt"]).json()
+
+    assert daten["hinzugefuegt"] == 4
+    bestand = await _bestand(db)
+    assert bestand[("Lightning Bolt", "Krenko")] == 4
+
+
+@pytest.mark.asyncio
+async def test_keine_auswahl_bedeutet_weiterhin_alles(db):
+    """Wer nichts ankreuzt und einfach drueckt, bekommt das bisherige
+    Verhalten -- sonst waere die Neuerung eine Verschlechterung."""
+    ohne = _uebernehmen(db).json()
+
+    assert ohne["hinzugefuegt"] == 5
+
+
+@pytest.mark.asyncio
+async def test_leere_auswahl_legt_nichts_an(db):
+    """Der heikle Unterschied: eine LEERE Liste heisst "nichts angekreuzt",
+    nicht "alles". Wuerde man auf Wahrheitswert statt auf None pruefen,
+    landete bei null Haekchen die ganze Deckliste in der Sammlung."""
+    daten = _uebernehmen(db, nur_karten=[]).json()
+
+    assert daten["hinzugefuegt"] == 0
+    assert await _bestand(db) == {}
+
+
+@pytest.mark.asyncio
+async def test_ein_unbekannter_name_in_der_auswahl_schadet_nicht(db):
+    """Aus der Oberflaeche kann ein Name kommen, den das Deck gar nicht
+    enthaelt. Er wird uebergangen, statt die ganze Uebernahme scheitern zu
+    lassen."""
+    daten = _uebernehmen(db, nur_karten=["Sol Ring", "Black Lotus"]).json()
+
+    assert daten["hinzugefuegt"] == 1
+
+
+@pytest.mark.asyncio
+async def test_auswahl_greift_auch_bei_doppelseitigen_karten(db):
+    """Die Oberflaeche zeigt "Vorderseite // Rueckseite", die Sammlung fuehrt
+    oft nur die Vorderseite. Ein Vergleich Zeichen fuer Zeichen wuerde genau
+    die Karten uebergehen, die man angekreuzt hat."""
+    daten = _uebernehmen(db, nur_karten=["Sol Ring // Irgendwas"]).json()
+
+    assert daten["hinzugefuegt"] == 1
+
+
+@pytest.mark.asyncio
+async def test_standardlaender_lassen_sich_einzeln_auswaehlen(db):
+    daten = _uebernehmen(db, nur_karten=["Mountain"], mit_standardlaendern=True).json()
+
+    assert daten["hinzugefuegt"] == 12
+    bestand = await _bestand(db)
+    assert bestand[("Mountain", "Krenko")] == 12
+    assert ("Sol Ring", "Krenko") not in bestand

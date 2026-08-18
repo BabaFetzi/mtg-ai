@@ -31,7 +31,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import (APIRouter, UploadFile, File, Form, Query, HTTPException,
                      BackgroundTasks, Depends, Request)
 from fastapi.responses import StreamingResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from auth import get_current_user
@@ -442,6 +442,15 @@ class DeckUebernahmeData(BaseModel):
     # Standardländer sind vom Deckbau her beliebig austauschbar und werden von
     # den wenigsten Spielern einzeln erfasst -- deshalb standardmässig aus.
     mit_standardlaendern: bool = False
+    # Auswahl einzelner Karten. Leer oder nicht gesetzt heisst: alle fehlenden.
+    #
+    # Bewusst nur NAMEN, keine Stückzahlen: wie viele Exemplare fehlen, rechnet
+    # der Server aus Bedarf und Bestand. Käme die Anzahl aus der Oberfläche,
+    # könnte eine veränderte Anfrage beliebig viele Karten anlegen.
+    #
+    # Die Obergrenze schützt davor, dass jemand eine Liste mit hunderttausend
+    # Einträgen schickt und damit den Vergleich unnötig lange laufen lässt.
+    nur_karten: Optional[List[str]] = Field(default=None, max_length=500)
 
 
 class AddKarteData(BaseModel):
@@ -1093,9 +1102,14 @@ async def sammlung_aus_deck(data: DeckUebernahmeData, request: Request, current_
 
     scryfall_data = await fetch_card_details_cached(list({p["name"] for p in parsed}))
     bedarf = bedarf_aus_deck(parsed, scryfall_data)
+    # Eine LEERE Auswahl ist etwas anderes als gar keine: "nichts angekreuzt"
+    # muss nichts anlegen, nicht alles. Deshalb wird auf None geprüft und
+    # nicht auf Wahrheitswert -- sonst würde eine leere Liste stillschweigend
+    # zu "alle fehlenden Karten".
     plan = fehlende_exemplare(bedarf, bestand,
                               mit_standardlaendern=data.mit_standardlaendern,
-                              grenze=MAX_UEBERNAHME)
+                              grenze=MAX_UEBERNAHME,
+                              nur_namen=data.nur_karten)
 
     album = (data.album_name or "").strip() or deck["name"]
 

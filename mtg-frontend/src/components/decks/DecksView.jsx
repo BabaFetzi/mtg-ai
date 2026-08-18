@@ -512,10 +512,18 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
   // Fehlende Deckkarten in die Sammlung übernehmen. Angelegt werden genau die
   // fehlenden Exemplare, deshalb ist ein zweiter Druck folgenlos.
-  const uebernehmeInSammlung = async ({ mitStandardlaendern }) => {
+  const uebernehmeInSammlung = async ({ mitStandardlaendern, nurKarten }) => {
     if (!selectedDeck?.id || uebernimmt || !abgleich) return;
 
-    const anzahl = (abgleich.fehlend || 0)
+    // Bei einer Auswahl zählt nur, was angekreuzt ist -- sonst stünde in der
+    // Rückfrage eine andere Zahl als auf dem Knopf.
+    const ausgewaehlt = Array.isArray(nurKarten)
+      ? (abgleich.karten || [])
+          .filter((k) => !k.standardland && k.fehlt > 0 && nurKarten.includes(k.name))
+          .reduce((summe, k) => summe + (k.fehlt || 0), 0)
+      : (abgleich.fehlend || 0);
+
+    const anzahl = ausgewaehlt
       + (mitStandardlaendern ? (abgleich.standardlaender_fehlend || 0) : 0);
     if (anzahl <= 0) {
       melde.info("Dir fehlt keine Karte aus diesem Deck.");
@@ -539,6 +547,12 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
           deck_id: selectedDeck.id,
           album_name: selectedDeck.name,
           mit_standardlaendern: !!mitStandardlaendern,
+          // Nur mitschicken, wenn wirklich ausgewählt wurde. Ohne das Feld
+          // nimmt der Server alles Fehlende -- und das ist bei "alle
+          // angekreuzt" auch richtiger als eine Liste, die schon veraltet
+          // sein könnte. Mitgeschickt werden ausschliesslich NAMEN; wie viele
+          // Exemplare fehlen, rechnet der Server.
+          ...(Array.isArray(nurKarten) ? { nur_karten: nurKarten } : {}),
         }),
       });
       if (res.status === 403 || res.status === 404) {
