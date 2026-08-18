@@ -228,3 +228,52 @@ def test_die_grenzen_lassen_dem_echten_betrieb_luft():
     """
     assert MAX_CSV_BYTES >= 10 * 1024 * 1024
     assert VISION_MAX_BILD_BYTES >= 2 * 1024 * 1024
+
+
+# ======================================================================
+# Das Startskript zeigt auf echte Adressen
+# ======================================================================
+# start.ps1 startet die Stripe-CLI mit einer fest eingetragenen Webhook-URL.
+# Benennt jemand die Route um, laeuft der Start weiterhin durch -- die
+# Webhooks landen dann nur im Nichts, und ein Testkauf schaltet still kein
+# Premium frei. Das faellt sonst erst auf, wenn ein Kunde sich beschwert.
+
+import re
+from pathlib import Path
+
+
+def _start_skript() -> str:
+    return Path(__file__).resolve().parents[1].joinpath("start.ps1").read_text(
+        encoding="utf-8")
+
+
+def test_der_webhook_pfad_im_startskript_existiert_wirklich(client):
+    treffer = re.search(r"\$WebhookPfad\s*=\s*'([^']+)'", _start_skript())
+    assert treffer, "In start.ps1 steht kein $WebhookPfad mehr"
+    pfad = treffer.group(1)
+
+    antwort = client.post(pfad, content=b"{}")
+
+    # 400 = "Signatur fehlt" -- die Route ist da und weist die unsignierte
+    # Anfrage zurueck. 404 hiesse: das Startskript zeigt ins Leere.
+    assert antwort.status_code != 404, (
+        f"start.ps1 leitet Webhooks an {pfad} -- diese Route gibt es nicht")
+    assert antwort.status_code == 400
+
+
+def test_die_ports_im_startskript_passen_zum_frontend(client):
+    """Das Frontend spricht das Backend ueber einen fest eingetragenen Port
+    an (vite.config.js). Weichen die beiden voneinander ab, laedt die Seite,
+    aber jede Anfrage schlaegt fehl."""
+    skript = _start_skript()
+    backend = re.search(r"\$BackendPort\s*=\s*(\d+)", skript)
+    frontend = re.search(r"\$FrontendPort\s*=\s*(\d+)", skript)
+    assert backend and frontend
+
+    vite = Path(__file__).resolve().parents[1].joinpath(
+        "mtg-frontend/vite.config.js").read_text(encoding="utf-8")
+
+    assert f"127.0.0.1:{backend.group(1)}" in vite, (
+        f"start.ps1 startet das Backend auf Port {backend.group(1)}, "
+        f"vite.config.js leitet woandershin")
+    assert f"port: {frontend.group(1)}" in vite

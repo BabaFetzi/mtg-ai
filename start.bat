@@ -10,6 +10,11 @@ REM    4. startet das Frontend (in einem eigenen Fenster)
 REM
 REM  Danach im Browser oeffnen:  http://localhost:5175
 REM
+REM  OHNE STRIPE: Diese Datei startet Backend und Frontend. Webhooks kommen
+REM  damit NICHT an -- ein Testkauf laeuft bis zur Bezahlseite und danach
+REM  passiert nichts (keine Premium-Freischaltung). Wer das braucht, nimmt in
+REM  PowerShell    .\start.ps1    -- das startet zusaetzlich die Stripe-CLI.
+REM
 REM  Diese Datei ist NUR fuer den Windows-PC zum Testen gedacht.
 REM  Fuer den echten Linux-Server gibt es stattdessen start.sh .
 REM ============================================================================
