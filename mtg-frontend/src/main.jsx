@@ -9,6 +9,7 @@ import './index.css'
 // (siehe utils/authFetch.js).
 import { installAuthInterceptor } from './utils/authFetch';
 import { MeldungProvider } from './components/layout/Meldungen';
+import Fehlergrenze from './components/layout/Fehlergrenze';
 installAuthInterceptor();
 
 createRoot(document.getElementById('root')).render(
@@ -17,7 +18,13 @@ createRoot(document.getElementById('root')).render(
       {/* Ganz aussen: Rückmeldungen und Rückfragen müssen aus jeder
           Komponente erreichbar sein, auch aus der Landing Page. */}
       <MeldungProvider>
-        <App />
+        {/* Ohne diese Grenze entfernt React bei einem unbehandelten Fehler den
+            ganzen Baum -- der Nutzer sieht dann eine WEISSE SEITE ohne Hinweis
+            und ohne Weg zurück. Innerhalb von MeldungProvider, damit die
+            Ersatzansicht dieselbe Gestaltung benutzen kann. */}
+        <Fehlergrenze>
+          <App />
+        </Fehlergrenze>
       </MeldungProvider>
     </BrowserRouter>
   </StrictMode>,

@@ -9,6 +9,7 @@ und inkludiert alle modularen API-Router.
 import asyncio
 import logging
 import os
+import uuid
 
 from dotenv import load_dotenv
 
@@ -29,6 +30,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from auth import IST_PRODUKTION
 from database import init_db
 from services import ai_usage_log, umgebung
 from services.limiter import limiter
@@ -244,11 +246,48 @@ app.add_middleware(
 )
 
 # ======================================================================
+# Sicherheitskopfzeilen
+# ======================================================================
+# Diese Kopfzeilen kosten nichts und schliessen jeweils eine ganze Klasse von
+# Angriffen aus. Sie fehlten bisher komplett.
+#
+# Sie stehen hier in der Anwendung und nicht nur in der nginx-Konfiguration,
+# damit sie mitkommen, wenn die Anwendung einmal woanders läuft -- eine
+# Absicherung, die man beim Umzug vergessen kann, ist keine.
+@app.middleware("http")
+async def sicherheitskopfzeilen(request: Request, call_next):
+    antwort = await call_next(request)
+
+    # Kein Einbetten in fremde Seiten: sonst legt ein Angreifer seine eigene
+    # Seite unsichtbar über Grana und fängt Klicks ab (Clickjacking).
+    antwort.headers.setdefault("X-Frame-Options", "DENY")
+    # Der Browser soll Dateitypen nicht raten. Ohne das kann eine hochgeladene
+    # Datei als Skript ausgeführt werden, weil der Inhalt danach aussieht.
+    antwort.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Beim Wechsel auf eine fremde Seite nur die Domain mitschicken, nicht den
+    # vollen Pfad -- der kann Deck- oder Konto-Kennungen enthalten.
+    antwort.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # Kamera braucht die Anwendung selbst (Live-Vision), fremde eingebettete
+    # Inhalte nicht. Mikrofon und Standort braucht niemand.
+    antwort.headers.setdefault(
+        "Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
+
+    if IST_PRODUKTION:
+        # Nur über HTTPS kommen, auch wenn jemand http:// eintippt. Bewusst NUR
+        # in Produktion: lokal läuft alles über http, und ein einmal gesetztes
+        # HSTS merkt sich der Browser für Monate -- auf localhost wäre das eine
+        # selbstgebaute Falle, die man nur schwer wieder loswird.
+        antwort.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+    return antwort
+
+
+# ======================================================================
 # Globaler Exception Handler
 # ======================================================================
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error("GLOBALER FEHLER bei %s %s", request.method, request.url.path, exc_info=exc)
     # An die Überwachung weiterreichen. Der eigene Handler fängt die Ausnahme
     # ab, bevor Sentry sie von selbst sehen würde -- ohne diese Zeile bliebe
     # genau die Klasse Fehler unsichtbar, für die man die Überwachung hat.
@@ -258,10 +297,31 @@ async def global_exception_handler(request: Request, exc: Exception):
             sentry_sdk.capture_exception(exc)
         except Exception:
             logger.debug("Fehlerbericht nicht absendbar", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"erfolg": False, "error": str(exc)}
-    )
+    # In Produktion NICHT die Ausnahme selbst ausliefern. str(exc) enthält je
+    # nach Fehler das SQL-Statement samt Tabellen- und Spaltennamen, Dateipfade
+    # des Servers oder Teile einer Verbindungszeichenfolge -- eine
+    # Bauanleitung für den nächsten Angriff, ausgeliefert an jeden, der einen
+    # Fehler provozieren kann.
+    #
+    # Die Kennung verbindet die harmlose Antwort mit dem vollständigen
+    # Eintrag im Protokoll: Wer sich meldet, nennt sie, und man findet den
+    # Fehler sofort wieder. Ohne sie müsste man raten.
+    kennung = uuid.uuid4().hex[:12]
+    logger.error("GLOBALER FEHLER [%s] bei %s %s",
+                 kennung, request.method, request.url.path, exc_info=exc)
+
+    inhalt = {
+        "erfolg": False,
+        "fehlerkennung": kennung,
+        "error": ("Es ist ein unerwarteter Fehler aufgetreten. Bitte versuche es "
+                  "erneut. Wenn es wieder passiert, nenne uns diese Kennung: "
+                  f"{kennung}"),
+    }
+    # In der Entwicklung ist die Ursache genau das, was man sehen will.
+    if not IST_PRODUKTION:
+        inhalt["details"] = f"{type(exc).__name__}: {exc}"
+
+    return JSONResponse(status_code=500, content=inhalt)
 
 # ======================================================================
 # Router Inkludierung
@@ -280,4 +340,32 @@ app.include_router(vision.router)
 # ======================================================================
 @app.get("/health", tags=["System"])
 async def health_check():
-    return {"status": "ok", "message": "Grana App API is running and healthy"}
+    """Sagt, ob dieser Prozess Anfragen wirklich beantworten kann.
+
+    Vorher meldete er bedingungslos "ok" -- auch dann, wenn die Datenbank weg
+    war. Ein Lastverteiler glaubt das und schickt weiter Nutzer auf eine
+    Instanz, die jede Anfrage mit einem Fehler beantwortet. Genau dafür gibt
+    es diesen Endpunkt, also muss er auch etwas prüfen.
+
+    Geprüft wird nur die Datenbank: ohne sie geht gar nichts. Redis und Gemini
+    sind ausdrücklich NICHT dabei -- die Anwendung läuft ohne beide weiter
+    (SQLite-Rückfall, KI-Funktionen deaktiviert), und eine Instanz deswegen
+    aus dem Verkehr zu ziehen wäre schlimmer als das Problem.
+    """
+    from sqlalchemy import text as sql_text
+
+    from database import get_db_session
+
+    try:
+        async with get_db_session() as session:
+            await session.execute(sql_text("SELECT 1"))
+    except Exception:
+        logger.exception("Health-Check: Datenbank nicht erreichbar")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "fehler", "datenbank": False,
+                     "message": "Datenbank nicht erreichbar."},
+        )
+
+    return {"status": "ok", "datenbank": True,
+            "message": "Grana App API is running and healthy"}

@@ -877,6 +877,11 @@ def _filter_antwort(rows, daten_je_zeile, suche, farbe, seltenheit, edition,
 # bleibt aber weit unter der Groesse, ab der das Rendern im Browser ruckelt.
 # Die Obergrenze schuetzt davor, dass jemand mit ?pro_seite=999999 doch wieder
 # die ganze Sammlung in einem Stueck anfordert.
+# Grösste CSV-Datei, die der Import annimmt. Eine Sammlung mit 100.000 Karten
+# liegt bei etwa 5 MB -- 10 MB sind also reichlich, und alles darüber ist
+# entweder ein Versehen oder ein Angriff.
+MAX_CSV_BYTES = 10 * 1024 * 1024
+
 STANDARD_PRO_SEITE = 100
 MAX_PRO_SEITE = 500
 
@@ -1472,8 +1477,34 @@ async def sammlung_import_csv(
     current_user: str = Depends(get_current_user),
 ):
     try:
-        content = await file.read()
-        csv_text = content.decode("utf-8-sig")
+        # In Stücken lesen und bei Überschreitung abbrechen. `await file.read()`
+        # ohne Grenze zieht die GANZE Datei in den Arbeitsspeicher -- eine
+        # einzige 2-GB-Datei genügt, um den Arbeitsprozess zu erschlagen, und
+        # danach ist die Seite für ALLE weg. Die Drosselung (10/Minute) hilft
+        # dagegen nicht: es braucht nur eine Anfrage.
+        #
+        # Der Text wird anschliessend noch an eine Hintergrundaufgabe
+        # weitergereicht, liegt also doppelt im Speicher.
+        brocken = []
+        gelesen = 0
+        while True:
+            stueck = await file.read(64 * 1024)
+            if not stueck:
+                break
+            gelesen += len(stueck)
+            if gelesen > MAX_CSV_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(f"Die Datei ist grösser als "
+                            f"{MAX_CSV_BYTES // (1024 * 1024)} MB. Teile sie bitte auf."))
+            brocken.append(stueck)
+
+        try:
+            csv_text = b"".join(brocken).decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="Die Datei ist keine UTF-8-Textdatei. Exportiere sie als CSV (UTF-8).")
 
         job_id = str(uuid.uuid4())
 
@@ -1493,9 +1524,19 @@ async def sammlung_import_csv(
         )
         
         return {"erfolg": True, "job_id": job_id}
+    except HTTPException:
+        # "Datei zu gross" und "keine UTF-8-Datei" sind Auskünfte an den
+        # Nutzer, keine Programmfehler. Ohne dieses re-raise fängt der Block
+        # unten sie ab und macht daraus HTTP 200 mit erfolg=False -- der
+        # Browser sähe einen erfolgreichen Aufruf, und die Statusmeldung 413
+        # käme nie an.
+        raise
     except Exception as e:
         logger.exception("Fehler beim Starten des CSV-Imports")
-        return {"erfolg": False, "error": str(e)}
+        # str(e) gehört nicht zum Nutzer: bei einem Datenbankfehler steht dort
+        # das SQL samt Tabellennamen.
+        return {"erfolg": False,
+                "error": "Der Import konnte nicht gestartet werden. Bitte versuche es erneut."}
 
 # ======================================================================
 # GET /api/sammlung/import-status/{job_id} – Status abfragen

@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 # bereits im /stream-Endpoint etablierten Drossel (siehe vision_detection_loop).
 VISION_WS_MIN_GEMINI_INTERVAL_SECONDS = 12.5
 
+# Grösstes Einzelbild, das über den WebSocket angenommen wird.
+#
+# MobileCamera.jsx schickt 1280x720 bei Qualität 0.65, also rund 300 KB. 4 MB
+# lassen also sehr viel Luft -- und begrenzen trotzdem, was ein fremder Client
+# hier hineinschieben kann. Ohne Grenze nimmt receive_bytes() alles entgegen,
+# was ankommt: ein einziger Verbindungspartner kann den Arbeitsspeicher des
+# Prozesses füllen, und danach ist die Seite für ALLE weg.
+#
+# Die Drosselung schützt davor nicht: sie begrenzt, wie oft Gemini gefragt
+# wird, nicht wie viele Daten der Server annimmt.
+VISION_MAX_BILD_BYTES = 4 * 1024 * 1024
+
 router = APIRouter(
     prefix="/api/vision",
     tags=["Vision Stream"],
@@ -431,6 +443,18 @@ async def ws_vision_endpoint(websocket: WebSocket, token: str = ""):
     try:
         while True:
             data = await websocket.receive_bytes()
+            if len(data) > VISION_MAX_BILD_BYTES:
+                # Verbindung offen lassen und nur dieses Bild verwerfen: eine
+                # einzelne zu grosse Aufnahme (falsch eingestellte Kamera) soll
+                # die laufende Sitzung nicht beenden.
+                logger.warning(
+                    "Vision: Bild von %s verworfen (%d Bytes, erlaubt sind %d).",
+                    benutzername, len(data), VISION_MAX_BILD_BYTES)
+                await websocket.send_json({
+                    "fehler": "Das Bild ist zu gross. Bitte verringere die "
+                              "Auflösung der Kamera."})
+                continue
+
             is_premium = await check_user_premium(benutzername)
 
             now = time.time()
@@ -929,6 +953,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, role: str, t
             if "bytes" in message:
                 # Binary message (JPEG frame from camera)
                 data = message["bytes"]
+                # Dieselbe Grenze wie auf /ws -- hier sogar wichtiger: das Bild
+                # bleibt als "latest_frame" in active_sessions LIEGEN, also je
+                # offener Sitzung dauerhaft im Speicher.
+                if len(data) > VISION_MAX_BILD_BYTES:
+                    logger.warning(
+                        "Playfield: Bild in Sitzung %s verworfen (%d Bytes, "
+                        "erlaubt sind %d).", session_id, len(data),
+                        VISION_MAX_BILD_BYTES)
+                    continue
                 if role == "camera":
                     # Store latest frame for background loop
                     active_sessions[session_id]["latest_frame"] = data
