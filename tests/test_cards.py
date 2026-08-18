@@ -6,7 +6,7 @@ import routers.cards
 
 @pytest.mark.asyncio
 async def test_translate_oracle_text_free_user_no_gemini_call():
-    with patch('routers.cards.model_lite') as mock_model_lite:
+    with patch('services.ai_service.model_lite') as mock_model_lite:
         result = await routers.cards._translate_oracle_text("Flying, vigilance.", is_premium=False, benutzername="free_user")
         mock_model_lite.generate_content.assert_not_called()
         assert "Premium-Feature" in result
@@ -14,7 +14,7 @@ async def test_translate_oracle_text_free_user_no_gemini_call():
 
 
 @patch('routers.cards.check_and_increment_ai_usage')
-@patch('routers.cards.model_lite')
+@patch('services.ai_service.model_lite')
 @pytest.mark.asyncio
 async def test_translate_oracle_text_premium_uses_model_lite(mock_model_lite, mock_usage):
     """Regressionstest fürs Modell-Tiering: Kartenübersetzung muss über
@@ -32,7 +32,7 @@ async def test_translate_oracle_text_premium_uses_model_lite(mock_model_lite, mo
 
 
 @patch('routers.cards.check_and_increment_ai_usage')
-@patch('routers.cards.model_lite')
+@patch('services.ai_service.model_lite')
 @pytest.mark.asyncio
 async def test_translate_oracle_text_blocked_when_monthly_limit_reached(mock_model_lite, mock_usage):
     """Regressionstest fürs Monatslimit: ist es erreicht, wird Gemini nicht

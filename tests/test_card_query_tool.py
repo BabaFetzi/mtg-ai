@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
+import services.ai_service as ai_service
 import services.card_query_tool as tool
 
 
@@ -156,7 +157,7 @@ async def test_judge_passes_tool_to_model():
             return R()
 
     fake = FakeModel()
-    with patch.object(ai, "model_lite", fake), patch.object(ai, "JUDGE_CARD_TOOL_ENABLED", True):
+    with patch.object(ai_service, "model_lite", fake), patch.object(ai, "JUDGE_CARD_TOOL_ENABLED", True):
         antwort = await ai._judge_modell_aufrufen("Prompt", "tester")
 
     assert antwort == "Antwort"
@@ -179,7 +180,7 @@ async def test_judge_falls_back_when_tool_call_fails():
                 text = "Antwort ohne Werkzeug"
             return R()
 
-    with patch.object(ai, "model_lite", FakeModel()), patch.object(ai, "JUDGE_CARD_TOOL_ENABLED", True):
+    with patch.object(ai_service, "model_lite", FakeModel()), patch.object(ai, "JUDGE_CARD_TOOL_ENABLED", True):
         antwort = await ai._judge_modell_aufrufen("Prompt", "tester")
 
     assert antwort == "Antwort ohne Werkzeug"
@@ -201,7 +202,7 @@ async def test_tool_can_be_disabled():
             return R()
 
     fake = FakeModel()
-    with patch.object(ai, "model_lite", fake), patch.object(ai, "JUDGE_CARD_TOOL_ENABLED", False):
+    with patch.object(ai_service, "model_lite", fake), patch.object(ai, "JUDGE_CARD_TOOL_ENABLED", False):
         await ai._judge_modell_aufrufen("Prompt", "tester")
 
     assert "tools" not in fake.kwargs
@@ -229,7 +230,7 @@ async def test_judge_model_call_does_not_block_the_event_loop():
         await asyncio.sleep(0.05)
         laeuft["parallel"] = True
 
-    with patch.object(ai, "model_lite", LangsamesModel()), \
+    with patch.object(ai_service, "model_lite", LangsamesModel()), \
          patch.object(ai, "JUDGE_CARD_TOOL_ENABLED", False):
         await asyncio.gather(ai._judge_modell_aufrufen("Prompt", "tester"), nebenher())
 

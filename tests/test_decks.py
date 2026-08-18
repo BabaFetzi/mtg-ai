@@ -107,7 +107,7 @@ async def test_deck_roast_free_paywall(mock_check_premium):
 
 @pytest.mark.asyncio
 @patch('routers.decks.check_user_premium')
-@patch('routers.decks.model_lite')
+@patch('services.ai_service.model_lite')
 async def test_deck_roast_premium_success(mock_model, mock_check_premium):
     mock_check_premium.return_value = True
     
@@ -284,7 +284,7 @@ async def test_analysis_fallback_invents_no_scores(mock_premium):
     überall score 5 und power_level 5 -- im Frontend sah das aus wie ein echtes
     Ergebnis."""
     mock_premium.return_value = True
-    with patch('routers.decks.model', None):
+    with patch('services.ai_service.model', None):
         resp = client.post(
             "/api/deck/analyse",
             json={"deck_liste": "1 Sol Ring", "format": "commander"},
@@ -301,7 +301,7 @@ async def test_analysis_fallback_invents_no_scores(mock_premium):
 @patch('routers.decks.check_user_premium')
 async def test_roast_fallback_invents_no_salt_score(mock_premium):
     mock_premium.return_value = True
-    with patch('routers.decks.model_lite', None):
+    with patch('services.ai_service.model_lite', None):
         resp = client.post(
             "/api/deck/roast",
             json={"deck_liste": "1 Sol Ring", "format": "commander"},

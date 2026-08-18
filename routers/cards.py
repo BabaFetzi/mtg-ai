@@ -33,7 +33,7 @@ from services.scryfall import (fetch_card_details_cached, scryfall_client, scryf
                                best_market_price, preis_fuer_variante)
 from services.limiter import limiter
 from services.multilingual_search import finde_karte_sprachunabhaengig
-from services.ai_service import model_lite, KI_VERFUEGBAR
+from services.ai_service import model_lite, modell_fuer, KI_VERFUEGBAR
 from services.usage_limiter import check_and_increment_ai_usage, gutschreiben
 from database import get_db_session, check_user_premium
 from schemas.models import CardSearchResult, TrendsResponse
@@ -350,7 +350,8 @@ async def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzernam
     if not oracle_text:
         return "Keine Textbeschreibung vorhanden."
 
-    if is_premium and model_lite and await check_and_increment_ai_usage(benutzername):
+    if (is_premium and modell_fuer("kartentext_uebersetzung")
+            and await check_and_increment_ai_usage(benutzername)):
         try:
             prompt = (
                 "Übersetze diesen Magic: The Gathering Kartentext möglichst akkurat "
@@ -360,7 +361,8 @@ async def _translate_oracle_text(oracle_text: str, is_premium: bool, benutzernam
             )
             # In einem Thread, sonst blockiert die Übersetzung den Event-Loop.
             response = await asyncio.to_thread(
-                model_lite.generate_content, prompt, None, "kartentext_uebersetzung", benutzername
+                modell_fuer("kartentext_uebersetzung").generate_content, prompt,
+                None, "kartentext_uebersetzung", benutzername
             )
             return response.text.strip()
         except Exception:

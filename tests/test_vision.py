@@ -6,6 +6,7 @@ import cv2
 from main import app
 from auth import create_access_token
 import routers.vision
+import services.ai_service
 
 client = TestClient(app)
 
@@ -37,15 +38,15 @@ async def test_detect_cards_from_image():
     mock_response.text = '{"cards": [{"name": "Sol Ring", "zone": "battlefield", "tapped": false, "x": 10, "y": 20}]}'
     mock_model.generate_content.return_value = mock_response
     
-    original_model = routers.vision.model_lite
-    routers.vision.model_lite = mock_model
+    original_model = services.ai_service.model_lite
+    services.ai_service.model_lite = mock_model
     try:
         res = await routers.vision.detect_cards_from_image(b"dummy")
         assert "cards" in res
         assert len(res["cards"]) == 1
         assert res["cards"][0]["name"] == "Sol Ring"
     finally:
-        routers.vision.model_lite = original_model
+        services.ai_service.model_lite = original_model
 
 @pytest.mark.asyncio
 async def test_generate_board_advice():
@@ -55,13 +56,13 @@ async def test_generate_board_advice():
     mock_response.text = "Sol Ring allows fast ramping."
     mock_model.generate_content.return_value = mock_response
     
-    original_model = routers.vision.model_lite
-    routers.vision.model_lite = mock_model
+    original_model = services.ai_service.model_lite
+    services.ai_service.model_lite = mock_model
     try:
         advice = await routers.vision.generate_board_advice([{"name": "Sol Ring"}])
         assert "ramping" in advice.lower()
     finally:
-        routers.vision.model_lite = original_model
+        services.ai_service.model_lite = original_model
 
 def test_detect_card_bounds_and_warp_untapped():
     # Create a black image
@@ -108,36 +109,36 @@ async def test_identify_single_card():
     mock_response.text = '"Sol Ring"'
     mock_model.generate_content.return_value = mock_response
     
-    original_model = routers.vision.model_lite
-    routers.vision.model_lite = mock_model
+    original_model = services.ai_service.model_lite
+    services.ai_service.model_lite = mock_model
     try:
         res = await routers.vision.identify_single_card(b"dummy_bytes")
         assert res == "Sol Ring"
     finally:
-        routers.vision.model_lite = original_model
+        services.ai_service.model_lite = original_model
 
 @pytest.mark.asyncio
 async def test_identify_single_card_error():
     mock_model = MagicMock()
     mock_model.generate_content.side_effect = Exception("API error")
     
-    original_model = routers.vision.model_lite
-    routers.vision.model_lite = mock_model
+    original_model = services.ai_service.model_lite
+    services.ai_service.model_lite = mock_model
     try:
         res = await routers.vision.identify_single_card(b"dummy_bytes")
         assert res == "Unknown Card"
     finally:
-        routers.vision.model_lite = original_model
+        services.ai_service.model_lite = original_model
 
 @pytest.mark.asyncio
 async def test_identify_single_card_no_model():
-    original_model = routers.vision.model_lite
-    routers.vision.model_lite = None
+    original_model = services.ai_service.model_lite
+    services.ai_service.model_lite = None
     try:
         res = await routers.vision.identify_single_card(b"dummy_bytes")
         assert res == "Unknown Card"
     finally:
-        routers.vision.model_lite = original_model
+        services.ai_service.model_lite = original_model
 
 def test_overlap_and_stacking_logic():
     enriched_cards = [

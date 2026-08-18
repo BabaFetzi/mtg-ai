@@ -6,6 +6,7 @@ from main import app
 from auth import create_access_token
 import main
 import routers.decks
+import services.ai_service
 
 client = TestClient(app)
 
@@ -68,8 +69,8 @@ async def test_deck_analyse_success(mock_premium, mock_gemini_response):
     mock_model.generate_content.return_value = mock_response
     
     # Temporarily set main.model to mock_model
-    original_model = routers.decks.model
-    routers.decks.model = mock_model
+    original_model = services.ai_service.model
+    services.ai_service.model = mock_model
     
     try:
         with patch('routers.decks.scryfall_cache.get', return_value=None):
@@ -93,7 +94,7 @@ async def test_deck_analyse_success(mock_premium, mock_gemini_response):
         assert "commander" in prompt_arg
         assert "Krenko, Mob Boss" in prompt_arg
     finally:
-        routers.decks.model = original_model
+        services.ai_service.model = original_model
 
 @pytest.mark.asyncio
 @patch('routers.decks.check_user_premium')
@@ -104,8 +105,8 @@ async def test_deck_analyse_fallback_on_exception(mock_premium):
     mock_model = MagicMock()
     mock_model.generate_content.side_effect = Exception("API Timeout")
     
-    original_model = routers.decks.model
-    routers.decks.model = mock_model
+    original_model = services.ai_service.model
+    services.ai_service.model = mock_model
     
     try:
         with patch('routers.decks.scryfall_cache.get', return_value=None):
@@ -124,4 +125,4 @@ async def test_deck_analyse_fallback_on_exception(mock_premium):
             assert "nicht verfügbar" in data["strategie"]
         assert data["power_level"] is None
     finally:
-        routers.decks.model = original_model
+        services.ai_service.model = original_model

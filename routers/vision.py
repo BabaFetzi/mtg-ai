@@ -16,7 +16,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from auth import decode_token
 from database import check_user_premium
-from services.ai_service import model_lite
+from services.ai_service import model_lite, modell_fuer
 from services.local_matcher import sync_deck_locally, load_and_compute_descriptors, match_card_crop
 from services.usage_limiter import check_and_increment_vision_minutes
 
@@ -39,7 +39,7 @@ gemini_quota_exhausted = False
 
 async def detect_cards_from_image(jpeg_bytes: bytes) -> Dict[str, Any]:
     global gemini_quota_exhausted
-    if not model_lite or gemini_quota_exhausted:
+    if not modell_fuer("vision_erkennung") or gemini_quota_exhausted:
         return {"cards": []}
     try:
         prompt = (
@@ -51,7 +51,7 @@ async def detect_cards_from_image(jpeg_bytes: bytes) -> Dict[str, Any]:
         # ganzen Anwendung als "unbekannt" im Protokoll und lassen sich in
         # der Kostenrechnung keinem Posten zuordnen.
         response = await asyncio.to_thread(
-            model_lite.generate_content,
+            modell_fuer("vision_erkennung").generate_content,
             [{"mime_type": "image/jpeg", "data": jpeg_bytes}, prompt],
             generation_config={"response_mime_type": "application/json"},
             feature="vision_erkennung",
@@ -77,7 +77,7 @@ async def generate_board_advice(cards: List[Dict[str, Any]]) -> str:
             "Das System läuft im Demonstrations-Modus und simuliert Karten auf deinen erkannten Spielfeld-Positionen, "
             "damit du die Echtzeit-Erfassung und 3D-Overlays testen kannst."
         )
-    if not model_lite:
+    if not modell_fuer("vision_rat"):
         return "Grana AI: No advice available."
     try:
         prompt = (
@@ -85,7 +85,7 @@ async def generate_board_advice(cards: List[Dict[str, Any]]) -> str:
             "Provide tactical advice, check for synergies, infinite combos, and suggest your next moves."
         )
         response = await asyncio.to_thread(
-            model_lite.generate_content, prompt, None, "vision_rat")
+            modell_fuer("vision_rat").generate_content, prompt, None, "vision_rat")
         return response.text
     except Exception as e:
         err_msg = str(e)
@@ -386,7 +386,7 @@ async def identify_single_card(warped_bytes: bytes) -> str:
     Sends the cropped card image to Gemini to identify the card name.
     """
     global gemini_quota_exhausted
-    if not model_lite or gemini_quota_exhausted:
+    if not modell_fuer("karte_erkennen") or gemini_quota_exhausted:
         return "Unknown Card"
     try:
         prompt = (
@@ -394,7 +394,7 @@ async def identify_single_card(warped_bytes: bytes) -> str:
             "Return ONLY the card name, nothing else."
         )
         response = await asyncio.to_thread(
-            model_lite.generate_content,
+            modell_fuer("karte_erkennen").generate_content,
             [{"mime_type": "image/jpeg", "data": warped_bytes}, prompt],
             feature="karte_erkennen",
         )
@@ -557,12 +557,15 @@ async def vision_detection_loop(session_id: str):
                     session["camera_y_scale"] = 0.70
                     
                 # 1. Run card detection using hybrid OpenCV + Gemini approach
-                from services.ai_service import KI_VERFUEGBAR, model
-                
+                # Geprüft wird das Modell, das hier auch wirklich arbeitet
+                # (karte_erkennen). Vorher stand hier `model`, also die grosse
+                # Stufe -- die an dieser Stelle gar nicht benutzt wird.
+                from services.ai_service import KI_VERFUEGBAR
+
                 cards_raw = []
                 detected_shapes = []
-                
-                if KI_VERFUEGBAR and model:
+
+                if KI_VERFUEGBAR and modell_fuer("karte_erkennen"):
                     try:
                         info_dict = {}
                         curr_y_scale = session.get("camera_y_scale", 0.70)

@@ -23,7 +23,7 @@ async def test_judge_free_paywall(mock_check_premium):
 @pytest.mark.asyncio
 @patch('routers.ai.check_user_premium')
 @patch('routers.ai.check_and_increment_ai_usage')
-@patch('routers.ai.model_lite')
+@patch('services.ai_service.model_lite')
 async def test_judge_premium_uses_model_lite(mock_model_lite, mock_usage, mock_check_premium):
     """Regressionstest fürs Modell-Tiering: Judge muss über model_lite laufen,
     nicht über das teurere model (Gemini 2.5 Flash)."""
@@ -44,7 +44,7 @@ async def test_judge_premium_uses_model_lite(mock_model_lite, mock_usage, mock_c
 @pytest.mark.asyncio
 @patch('routers.ai.check_user_premium')
 @patch('routers.ai.check_and_increment_ai_usage')
-@patch('routers.ai.model_lite')
+@patch('services.ai_service.model_lite')
 async def test_judge_blocked_when_monthly_limit_reached(mock_model_lite, mock_usage, mock_check_premium):
     """Regressionstest fürs Monatslimit: ist es erreicht, wird Gemini gar
     nicht erst aufgerufen -- das war vorher unbegrenzt möglich."""

@@ -137,9 +137,9 @@ def _merke(schluessel: str, name: str) -> None:
 
 async def _frage_modell_nach_englischen_namen(begriff: str) -> List[str]:
     """Lässt das Modell mögliche englische Kartennamen vorschlagen."""
-    from services.ai_service import model_lite
+    from services.ai_service import model_lite, modell_fuer
 
-    if model_lite is None:
+    if modell_fuer("kartenname_uebersetzung") is None:
         # Ohne diese Zeile schweigt die Stufe genau dann, wenn man am
         # dringendsten wüsste, warum nichts gefunden wurde.
         logger.warning(
@@ -163,7 +163,8 @@ async def _frage_modell_nach_englischen_namen(begriff: str) -> List[str]:
 
     try:
         antwort = await asyncio.to_thread(
-            model_lite.generate_content, prompt, None, "kartenname_uebersetzung", None
+            modell_fuer("kartenname_uebersetzung").generate_content, prompt,
+            None, "kartenname_uebersetzung", None
         )
         roh = (getattr(antwort, "text", "") or "").strip()
     except Exception:
@@ -316,9 +317,9 @@ async def _modell_waehlt_aus_echten_namen(begriff: str, auswahl: List[str]) -> O
     "Duo" und "Pair" sind sich als Zeichenfolge nicht ähnlich, als Bedeutung
     aber identisch.
     """
-    from services.ai_service import model_lite
+    from services.ai_service import model_lite, modell_fuer
 
-    if model_lite is None or not auswahl:
+    if modell_fuer("kartenname_auswahl") is None or not auswahl:
         return None
 
     liste = "\n".join(f"- {name}" for name in auswahl)
@@ -335,7 +336,8 @@ async def _modell_waehlt_aus_echten_namen(begriff: str, auswahl: List[str]) -> O
 
     try:
         antwort = await asyncio.to_thread(
-            model_lite.generate_content, prompt, None, "kartenname_auswahl", None
+            modell_fuer("kartenname_auswahl").generate_content, prompt,
+            None, "kartenname_auswahl", None
         )
         roh = (getattr(antwort, "text", "") or "").strip()
     except Exception:
@@ -381,6 +383,19 @@ async def finde_karte_sprachunabhaengig(client, begriff: str,
     """
     if not UEBERSETZUNGSSUCHE_AKTIV or not _wirkt_wie_kartenname(begriff):
         return None
+
+    # --- Dauerhaftes Gedächtnis zuerst -------------------------------------
+    # Eine einmal gegen Scryfall BESTÄTIGTE Zuordnung ist ein Fakt und
+    # verfällt nicht. Vorher lag sie nur im Kartencache mit 24 Stunden
+    # Verfallszeit -- danach wurde dieselbe Übersetzung erneut bei Gemini
+    # gekauft, jeden Tag aufs Neue. Und zwar von jedem Nutzer einzeln.
+    from services.kartennamen_gedaechtnis import merken, nachschlagen
+
+    bekannt = await nachschlagen(begriff)
+    if bekannt:
+        logger.info("Sprachunabhängige Suche: %r -> %r (aus dem Gedächtnis, "
+                    "ohne KI)", begriff, bekannt)
+        return await _exakter_treffer(client, bekannt)
 
     schluessel = _CACHE_PRAEFIX + begriff.lower().strip()
     art, gemerkt = _lies_cache(schluessel)
@@ -463,4 +478,8 @@ async def finde_karte_sprachunabhaengig(client, begriff: str,
         begriff, karte.get("name"), len(auswahl),
     )
     _merke(schluessel, karte.get("name", ""))
+    # Dauerhaft behalten. Der Name kommt aus einer Scryfall-Antwort, nicht aus
+    # dem Modell -- deshalb darf er ohne Verfallsdatum stehenbleiben. Ab jetzt
+    # kostet diese Eingabe niemanden mehr einen KI-Aufruf.
+    await merken(begriff, karte.get("name", ""))
     return karte

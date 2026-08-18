@@ -250,3 +250,24 @@ elif KI_VERFUEGBAR and not api_key:
         "%s ist nicht gesetzt -- KI-Funktionen (Judge, Scanner, Analyse) sind deaktiviert.",
         GEMINI_API_KEY_ENV,
     )
+
+
+# ======================================================================
+# Modellwahl je Funktion
+# ======================================================================
+def modell_fuer(funktion: str):
+    """Das Modell, auf dem diese Funktion laufen soll.
+
+    Die Zuordnung steht in services/ki_modelle.py -- an einer Stelle,
+    nachlesbar und je Funktion per Umgebungsvariable umstellbar. Vorher
+    entschied jede Aufrufstelle selbst, indem sie `model` oder `model_lite`
+    importierte; welche Funktion das teure Modell benutzt, liess sich dadurch
+    nur durch Quelltextlesen beantworten.
+
+    Gibt None zurück, wenn keine KI eingerichtet ist -- die Aufrufstellen
+    prüfen darauf ohnehin schon, weil die Anwendung ohne Schlüssel
+    weiterlaufen muss.
+    """
+    from services.ki_modelle import GROSS, stufe_fuer
+
+    return model if stufe_fuer(funktion) == GROSS else model_lite

@@ -475,3 +475,73 @@ async def test_unspecific_word_search_is_skipped():
 async def test_can_be_disabled():
     with patch.object(ml, "UEBERSETZUNGSSUCHE_AKTIV", False):
         assert await ml.finde_karte_sprachunabhaengig(None, benutzername=NUTZER, begriff="Blitzschlag") is None
+
+
+# ======================================================================
+# Das dauerhafte Gedaechtnis
+# ======================================================================
+# Eine einmal gegen Scryfall bestaetigte Zuordnung ist ein Fakt und verfaellt
+# nicht. Vorher lag sie nur im Kartencache mit 24 Stunden Verfallszeit --
+# danach wurde dieselbe Uebersetzung erneut bei Gemini gekauft. Jeden Tag,
+# und von jedem Nutzer einzeln.
+
+@pytest.mark.asyncio
+async def test_bestaetigte_zuordnung_wird_dauerhaft_gemerkt(
+        leeres_kartennamen_gedaechtnis):
+    async def kandidaten(begriff):
+        return ["Fearsome Goblin Pair"]
+
+    scryfall = _scryfall(exakt={"Fearsome Goblin Pair": "Fearsome Goblin Pair"})
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", kandidaten), \
+         patch.object(ml, "_modell_waehlt_aus_echten_namen", await _waehlt("Fearsome Goblin Pair")), \
+         patch.object(ml, "scryfall_request", scryfall):
+        karte = await ml.finde_karte_sprachunabhaengig(
+            None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo")
+
+    assert karte["name"] == "Fearsome Goblin Pair"
+    assert leeres_kartennamen_gedaechtnis["furchterregendes goblin-duo"]["name"] \
+        == "Fearsome Goblin Pair"
+
+
+@pytest.mark.asyncio
+async def test_ein_gemerkter_name_kostet_keinen_ki_aufruf(
+        leeres_kartennamen_gedaechtnis, cache):
+    """Der eigentliche Zweck. Der Cache ist leer, das Kontingent ungenutzt --
+    trotzdem darf das Modell nicht mehr gefragt werden."""
+    leeres_kartennamen_gedaechtnis["furchterregendes goblin-duo"] = {
+        "name": "Fearsome Goblin Pair", "quelle": "ki_bestaetigt", "treffer": 0}
+
+    gefragt = []
+
+    async def darf_nicht_passieren(begriff):
+        gefragt.append(begriff)
+        return ["irgendwas"]
+
+    scryfall = _scryfall(exakt={"Fearsome Goblin Pair": "Fearsome Goblin Pair"})
+    with patch.object(ml, "_frage_modell_nach_englischen_namen", darf_nicht_passieren), \
+         patch.object(ml, "scryfall_request", scryfall):
+        karte = await ml.finde_karte_sprachunabhaengig(
+            None, benutzername=NUTZER, begriff="Furchterregendes Goblin-Duo")
+
+    assert karte["name"] == "Fearsome Goblin Pair"
+    assert gefragt == [], "Das Gedaechtnis haette den Modellaufruf sparen muessen"
+
+
+@pytest.mark.asyncio
+async def test_das_gedaechtnis_gilt_auch_ohne_kontingent(
+        leeres_kartennamen_gedaechtnis):
+    """Ein gemerkter Name muss auch dann noch funktionieren, wenn das
+    Monatskontingent aufgebraucht ist -- es kostet ja nichts mehr."""
+    leeres_kartennamen_gedaechtnis["blitzschlag"] = {
+        "name": "Lightning Bolt", "quelle": "ki_bestaetigt", "treffer": 0}
+
+    async def kein_kontingent(benutzername):
+        return False
+
+    scryfall = _scryfall(exakt={"Lightning Bolt": "Lightning Bolt"})
+    with patch("services.usage_limiter.check_and_increment_search_ai", kein_kontingent), \
+         patch.object(ml, "scryfall_request", scryfall):
+        karte = await ml.finde_karte_sprachunabhaengig(
+            None, benutzername=NUTZER, begriff="Blitzschlag")
+
+    assert karte["name"] == "Lightning Bolt"

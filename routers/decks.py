@@ -38,7 +38,7 @@ from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
 from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist, build_deck_card_facts
-from services.ai_service import model, model_lite
+from services.ai_service import model, model_lite, modell_fuer
 from services.bestand import abgleichen, bedarf_aus_deck, bestand_aus_zeilen
 from services.manabasis import analysiere as analysiere_manabasis
 from services.limiter import limiter
@@ -519,7 +519,7 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
     if cached:
         return cached
 
-    if model and await check_and_increment_ai_usage(current_user):
+    if modell_fuer("deck_analyse") and await check_and_increment_ai_usage(current_user):
         try:
             # Echte Kartendaten beschaffen. Ohne sie musste das Modell jeden
             # Kartentext aus dem Gedächtnis rekonstruieren und hat ihn bei
@@ -550,7 +550,8 @@ async def deck_analyse(req: DeckAnalyseReq, current_user: str = Depends(get_curr
             # direkt im Endpunkt blockierte er den Event-Loop und damit ALLE
             # anderen gleichzeitigen Anfragen.
             response = await asyncio.to_thread(
-                model.generate_content, prompt, None, "deck_analyse", current_user
+                modell_fuer("deck_analyse").generate_content, prompt, None,
+                "deck_analyse", current_user
             )
             text_resp = response.text
             match = re.search(r'\{.*\}', text_resp, re.DOTALL)
@@ -605,7 +606,7 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
     if cached:
         return cached
 
-    if model_lite and await check_and_increment_ai_usage(current_user):
+    if modell_fuer("deck_roast") and await check_and_increment_ai_usage(current_user):
         try:
             fakten, nicht_gefunden = await _deck_fakten(req.deck_liste)
             prompt = (
@@ -620,7 +621,8 @@ async def deck_roast(req: DeckAnalyseReq, current_user: str = Depends(get_curren
                 + f"Deckliste:\n{req.deck_liste}"
             )
             response = await asyncio.to_thread(
-                model_lite.generate_content, prompt, None, "deck_roast", current_user
+                modell_fuer("deck_roast").generate_content, prompt, None,
+                "deck_roast", current_user
             )
             text_resp = response.text
             match = re.search(r'\{.*\}', text_resp, re.DOTALL)

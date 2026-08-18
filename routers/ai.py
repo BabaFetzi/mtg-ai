@@ -30,7 +30,7 @@ from sqlalchemy import text
 from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
-from services.ai_service import model_lite
+from services.ai_service import model_lite, modell_fuer
 from services.combos import detect_local_combos
 from services.combo_validation import validate_combos
 from services.limiter import limiter
@@ -89,7 +89,7 @@ async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str 
             "antwort": "Du hast dein monatliches KI-Anfragen-Limit erreicht. Es setzt sich zu Beginn des nächsten Monats zurück."
         }
 
-    if model_lite:
+    if modell_fuer("judge"):
         try:
             prompt = await _build_judge_prompt(req.frage)
             antwort = await _judge_modell_aufrufen(prompt, current_user)
@@ -121,12 +121,13 @@ async def _judge_modell_aufrufen(prompt: str, benutzername: str) -> str:
        -- eine bezahlte, funktionierende Funktion darf dadurch nie ausfallen.
     """
     def _mit_werkzeug():
-        return model_lite.generate_content(
+        return modell_fuer("judge").generate_content(
             prompt, feature="judge", benutzername=benutzername, tools=[karten_suchen]
         )
 
     def _ohne_werkzeug():
-        return model_lite.generate_content(prompt, feature="judge", benutzername=benutzername)
+        return modell_fuer("judge").generate_content(
+            prompt, feature="judge", benutzername=benutzername)
 
     if JUDGE_CARD_TOOL_ENABLED:
         try:
@@ -506,7 +507,8 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
                 seen_names.add(c_name.lower().strip())
 
         # 4. Fallback zu Gemini AI falls keine Combos gefunden wurden oder API fehlschlug (run_scan_combos_bg)
-        if not merged_combos and model_lite and await check_and_increment_ai_usage(benutzername):
+        if (not merged_combos and modell_fuer("combo_fallback")
+                and await check_and_increment_ai_usage(benutzername)):
             prompt = (
                 "Du bist ein präziser Magic: The Gathering Schiedsrichter und Combo-Datenbank-Experte.\n"
                 f"Analysiere diese Liste von Karten und finde NUR echte, spielentscheidende Combos (z.B. Infinite Mana, Infinite Damage, Instant Win) im Format '{format_name}'.\n\n"
@@ -520,7 +522,7 @@ async def run_scan_combos_bg(job_id: str, karten_liste: str, benutzername: str, 
             )
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt, feature="combo_fallback", benutzername=benutzername))
+                response = await loop.run_in_executor(None, lambda: modell_fuer("combo_fallback").generate_content(prompt, feature="combo_fallback", benutzername=benutzername))
                 text_resp = response.text
                 match = re.search(r'\{.*\}', text_resp, re.DOTALL)
                 if match:
@@ -645,7 +647,8 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
             logger.exception("Error calling Spellbook API in run_combos_bg")
 
         # Fallback zu Gemini AI falls Spellbook keine Ergebnisse liefert
-        if not spellbook_combos and model_lite and await check_and_increment_ai_usage(benutzername):
+        if (not spellbook_combos and modell_fuer("combo_fallback")
+                and await check_and_increment_ai_usage(benutzername)):
             prompt = (
                 "Du bist ein präziser Magic: The Gathering Schiedsrichter und Combo-Datenbank-Experte.\n"
                 f"Finde bekannte Magic The Gathering Kombinationen (Combos) für die Karte '{card_name}' im Format '{format_name}'.\n\n"
@@ -657,7 +660,7 @@ async def run_combos_bg(job_id: str, card_name: str, format_name: str, cache_key
             )
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, lambda: model_lite.generate_content(prompt, feature="combo_fallback", benutzername=benutzername))
+                response = await loop.run_in_executor(None, lambda: modell_fuer("combo_fallback").generate_content(prompt, feature="combo_fallback", benutzername=benutzername))
                 text_resp = response.text
                 match = re.search(r'\{.*\}', text_resp, re.DOTALL)
                 if match:

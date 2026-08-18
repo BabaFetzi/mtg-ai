@@ -73,6 +73,70 @@ def leerer_cache_pro_test(isolierter_cache):
     yield
 
 
+@pytest.fixture(autouse=True)
+def leeres_kartennamen_gedaechtnis():
+    """Das dauerhafte Kartennamen-Gedächtnis darf Tests nicht überdauern.
+
+    Dieselbe Überlegung wie beim Cache oben, nur schärfer: das Gedächtnis
+    liegt in der ECHTEN Anwendungsdatenbank und hat ausdrücklich KEIN
+    Verfallsdatum. Ohne diese Isolierung schrieben Tests dauerhaft in
+    mtg_app.db -- und der nächste Test bekam die Antwort des vorherigen.
+
+    Genau so ist es aufgefallen: ein Test erwartete "Fearsome Goblin Pair",
+    bekam aber "Fearsome Goblin Duo" aus einem früheren Testfall.
+
+    Ersetzt wird die Ablage, nicht die Logik -- so laufen die Prüfungen in
+    services/kartennamen_gedaechtnis.py (bestätigte Namen, doppelte Einträge,
+    leere Werte) im Test wirklich mit.
+
+    Bewusst OHNE die monkeypatch-Fixture, obwohl die kürzer wäre: monkeypatch
+    ist funktionsweit und wird beim ERSTEN Anfordern eingerichtet. Fordert eine
+    autouse-Fixture sie an, wird sie früher eingerichtet und damit später
+    abgeräumt -- nach den autouse-Fixtures einzelner Testdateien. In
+    tests/test_jwt_secret.py lädt genau so eine Fixture beim Abräumen das
+    auth-Modul neu und scheiterte dann daran, dass GRANA_ENV=production noch
+    stand. Von Hand sichern und zurücksetzen hat diese Fernwirkung nicht.
+    """
+    from services import kartennamen_gedaechtnis as gedaechtnis
+
+    ablage: dict = {}
+
+    async def _nachschlagen(begriff):
+        schluessel = gedaechtnis._schluessel(begriff)
+        if schluessel in ablage:
+            ablage[schluessel]["treffer"] += 1
+            return ablage[schluessel]["name"]
+        return None
+
+    async def _merken(begriff, karten_name, quelle=gedaechtnis.QUELLE_KI):
+        schluessel = gedaechtnis._schluessel(begriff)
+        name = (karten_name or "").strip()
+        if not schluessel or not name or schluessel == name.lower():
+            return False
+        if schluessel in ablage:
+            return False
+        ablage[schluessel] = {"name": name, "quelle": quelle, "treffer": 0}
+        return True
+
+    async def _vergessen(begriff):
+        return ablage.pop(gedaechtnis._schluessel(begriff), None) is not None
+
+    async def _stand():
+        return {"eintraege": len(ablage),
+                "ersparte_ki_anfragen": sum(e["treffer"] for e in ablage.values())}
+
+    ersatz = {"nachschlagen": _nachschlagen, "merken": _merken,
+              "vergessen": _vergessen, "stand": _stand}
+    originale = {name: getattr(gedaechtnis, name) for name in ersatz}
+    for name, funktion in ersatz.items():
+        setattr(gedaechtnis, name, funktion)
+    try:
+        yield ablage
+    finally:
+        for name, funktion in originale.items():
+            setattr(gedaechtnis, name, funktion)
+
+
 def test_conftest_kennt_alle_module_mit_eigener_cache_referenz():
     """Wächter gegen eine veraltete Liste oben.
 

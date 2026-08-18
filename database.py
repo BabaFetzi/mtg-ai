@@ -261,6 +261,43 @@ class KiNutzung(Base):
     erstellt_am = Column(DateTime, default=datetime.utcnow)
 
 
+class KartennameGedaechtnis(Base):
+    """Bestätigte Zuordnung "Eingabe in beliebiger Sprache" -> echte Karte.
+
+    Warum das in die Datenbank gehört und nicht in den Cache
+    --------------------------------------------------------
+    Bisher lag diese Zuordnung in scryfall_cache -- mit 24 Stunden
+    Verfallszeit. Danach wurde dieselbe Übersetzung erneut bei Gemini gekauft,
+    Tag für Tag, für einen Zusammenhang, der sich nie ändert:
+    "Steinstimmen-Goblins" heisst heute wie morgen "Stony-Voiced Goblins".
+
+    Warum man das hier gefahrlos dauerhaft behalten darf
+    ----------------------------------------------------
+    Weil hier nur steht, was VORHER gegen Scryfall geprüft wurde. Die
+    Sprachsuche (services/multilingual_search.py) übernimmt keinen
+    Modellvorschlag; sie lässt das Modell nur zwischen Karten wählen, die es
+    wirklich gibt. Was hier landet, ist damit ein nachgeschlagener Fakt und
+    keine Modellmeinung -- und ein Fakt verfällt nicht.
+
+    Die Tabelle gilt für ALLE Nutzer gemeinsam: Wer einen Namen einmal
+    auflöst, erspart ihn allen anderen für immer. Genau deshalb steht hier
+    auch KEIN Benutzername -- ein Kartenname ist keine persönliche Angabe,
+    und ein Konto zu löschen darf dieses Wissen nicht mitnehmen.
+    """
+    __tablename__ = 'kartenname_gedaechtnis'
+    # Kleingeschrieben und ohne Randleerzeichen -- so wird auch gesucht.
+    begriff = Column(String(255), primary_key=True)
+    # Der englische Name, wie Scryfall ihn führt.
+    karten_name = Column(String(255), nullable=False)
+    # Womit die Zuordnung bestätigt wurde -- damit ein Eintrag später
+    # nachvollziehbar (und notfalls gezielt löschbar) bleibt.
+    quelle = Column(String(30), nullable=False, default='ki_bestaetigt')
+    erstellt_am = Column(DateTime, default=datetime.utcnow)
+    # Wie oft der Eintrag eine KI-Anfrage erspart hat. Rein informativ, aber
+    # es ist die Zahl, an der man den Nutzen des Gedächtnisses abliest.
+    treffer = Column(Integer, nullable=False, default=0)
+
+
 async def init_db():
     async with engine.begin() as conn:
         # Create tables if they do not exist
