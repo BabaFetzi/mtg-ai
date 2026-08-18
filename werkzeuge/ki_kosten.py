@@ -21,17 +21,27 @@ Deck-Analyse, die tatsächliche Bildauflösung bei Live-Vision.
 
 Voraussetzungen
 ---------------
-    GEMINI_API_KEY              muss gesetzt sein (echte Aufrufe, echte Kosten)
-    GEMINI_PRICE_INPUT_PER_MTOK optional -- ohne Preise nur Tokenzahlen
-    GEMINI_PRICE_OUTPUT_PER_MTOK
+    GEMINI_API_KEY   muss gesetzt sein (es sind echte Aufrufe mit echten Kosten)
+    GEMINI_PREISE    optional -- ohne Preise nur Tokenzahlen, keine Betraege
 
-Die Preise stehen in deiner Gemini-Preisliste. Ohne sie rechnet das Werkzeug
-KEINEN Betrag aus -- ein geratener Preis wäre schlimmer als gar keiner.
+Die Preise stehen JE MODELL, weil die Anwendung zwei benutzt: das grosse fuer
+die Deck-Analyse, das kleine fuer alles andere. Zwischen ihnen liegt laut
+Preisliste Faktor 20 und mehr, ein Einheitspreis waere also grob falsch:
+
+    GEMINI_PREISE=gemini-2.5-flash:0.30/2.50,gemini-2.5-flash-lite:0.10/0.40
+
+Geschluesselt wird nach dem Modell, das TATSAECHLICH geantwortet hat -- nicht
+nach dem angefragten Alias. Taucht ein Modell ohne hinterlegten Preis auf,
+sagt das Werkzeug das und laesst es aus der Summe heraus, statt still mit
+einem falschen Wert zu rechnen.
 
 Aufruf
 ------
-    GEMINI_API_KEY=... python -m werkzeuge.ki_kosten
-    GEMINI_API_KEY=... python -m werkzeuge.ki_kosten --abo 3.90 --waehrung CHF
+    python -m werkzeuge.ki_kosten
+    python -m werkzeuge.ki_kosten --abo 3.90 --waehrung CHF --kurs 0.79
+
+--kurs rechnet die hinterlegten Preise um: Googles Liste ist in USD, die
+Abrechnung laeuft womoeglich in einer anderen Waehrung.
 
 Der Lauf kostet ein knappes Dutzend Gemini-Aufrufe, also Bruchteile eines
 Rappens. Er legt eine eigene Wegwerf-Datenbank an und rührt deine Daten nicht
@@ -220,33 +230,12 @@ async def _auswerten(macher) -> List[dict]:
 # ======================================================================
 # Rechnen
 # ======================================================================
-def _preise() -> Tuple[Optional[float], Optional[float]]:
-    def lies(name):
-        roh = os.getenv(name)
-        if not roh:
-            return None
-        try:
-            return float(roh.replace(",", "."))
-        except ValueError:
-            return None
-    return lies("GEMINI_PRICE_INPUT_PER_MTOK"), lies("GEMINI_PRICE_OUTPUT_PER_MTOK")
+def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
+             kurs: float = 1.0) -> int:
+    from services.ai_preise import kosten as modellkosten, preis_fuer, tabelle
 
-
-def _kosten(ein: Optional[int], aus: Optional[int],
-            preis_ein: Optional[float], preis_aus: Optional[float]) -> Optional[float]:
-    if preis_ein is None and preis_aus is None:
-        return None
-    summe = 0.0
-    if preis_ein is not None:
-        summe += (ein or 0) / 1_000_000 * preis_ein
-    if preis_aus is not None:
-        summe += (aus or 0) / 1_000_000 * preis_aus
-    return summe
-
-
-def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str) -> int:
-    preis_ein, preis_aus = _preise()
-    hat_preise = preis_ein is not None or preis_aus is not None
+    preistabelle = tabelle()
+    hat_preise = bool(preistabelle)
 
     erfolgreich = [z for z in zeilen if z["erfolg"] and z["gesamt_tokens"]]
     gescheitert = [z for z in zeilen if not z["erfolg"]]
@@ -254,15 +243,15 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str) -> int:
     print("=" * 78)
     print("Gemessene Aufrufe")
     print("=" * 78)
-    print(f"{'Funktion':<26} {'Modell':<24} {'Eingabe':>9} {'Ausgabe':>9}")
+    print(f"{'Funktion':<26} {'Modell':<26} {'Eingabe':>9} {'Ausgabe':>9}")
     for z in zeilen:
         if not z["erfolg"]:
-            print(f"{z['funktion']:<26} {str(z['modell'] or '')[:24]:<24} "
+            print(f"{z['funktion']:<26} {str(z['modell'] or '')[:26]:<26} "
                   f"{'-- gescheitert':>19}")
             continue
-        print(f"{z['funktion']:<26} {str(z['modell'] or '')[:24]:<24} "
-              f"{z['prompt_tokens'] or 0:>9,} {z['antwort_tokens'] or 0:>9,}"
-              .replace(",", "."))
+        print(f"{z['funktion']:<26} {str(z['modell'] or '')[:26]:<26} "
+              f"{format(z['prompt_tokens'] or 0, ',').replace(',', '.'):>9} "
+              f"{format(z['antwort_tokens'] or 0, ',').replace(',', '.'):>9}")
 
     if gescheitert:
         print()
@@ -279,77 +268,108 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str) -> int:
     for z in erfolgreich:
         je_funktion.setdefault(z["funktion"], z)
 
-    def tokens(*namen) -> Tuple[int, int]:
+    def messung(*namen) -> Tuple[int, int, str]:
+        """Tokens UND das Modell, das tatsächlich geantwortet hat."""
         for name in namen:
             z = je_funktion.get(name)
             if z:
-                return int(z["prompt_tokens"] or 0), int(z["antwort_tokens"] or 0)
-        return 0, 0
+                return (int(z["prompt_tokens"] or 0), int(z["antwort_tokens"] or 0),
+                        str(z["modell"] or ""))
+        return 0, 0, ""
 
     # Das Text-Kontingent kann der Nutzer frei verteilen. Angesetzt wird
     # deshalb der TEUERSTE gemessene Aufruf -- eine Rechnung mit dem
     # Durchschnitt würde die Obergrenze schönfärben.
     #
-    # Vision und Suche haben eigene Kontingente und stehen weiter unten; sie
-    # dürfen hier nicht mitgezählt werden, sonst stünden sie doppelt drin.
+    # "Teuerster" heisst hier: in Geld, nicht in Tokens. Die Deck-Analyse
+    # laeuft auf dem GROSSEN Modell, alles andere auf dem kleinen -- ein
+    # Aufruf mit weniger Tokens kann also mehr kosten.
     EIGENE_KONTINGENTE = {"vision_erkennung", "vision_rat", "karte_erkennen",
                           "kartenname_uebersetzung", "kartenname_auswahl"}
     text_aufrufe = [z for z in erfolgreich if z["funktion"] not in EIGENE_KONTINGENTE]
+
+    def geldwert(z) -> float:
+        k = modellkosten(z["prompt_tokens"], z["antwort_tokens"], z["modell"])
+        # Ohne Preis nach Tokens vergleichen -- besser als gar keine Reihung.
+        return k if k is not None else (
+            ((z["prompt_tokens"] or 0) + (z["antwort_tokens"] or 0)) / 1e9)
+
     if text_aufrufe:
-        schlimmster = max(text_aufrufe,
-                          key=lambda z: (z["prompt_tokens"] or 0) + (z["antwort_tokens"] or 0))
+        schlimmster = max(text_aufrufe, key=geldwert)
     else:
-        schlimmster = {"funktion": "keiner gemessen", "prompt_tokens": 0, "antwort_tokens": 0}
+        schlimmster = {"funktion": "keiner gemessen", "prompt_tokens": 0,
+                       "antwort_tokens": 0, "modell": ""}
 
     vision_intervalle = int(MONTHLY_VISION_MINUTES_LIMIT * 60
                             / VISION_WS_MIN_GEMINI_INTERVAL_SECONDS)
 
-    bild_ein, bild_aus = tokens("vision_erkennung")
-    rat_ein, rat_aus = tokens("vision_rat")
+    bild_ein, bild_aus, bild_modell = messung("vision_erkennung")
+    rat_ein, rat_aus, rat_modell = messung("vision_rat")
 
     # Eine Suche löst ZWEI verschiedene Aufrufe aus (Namen vorschlagen, dann
     # aus echten Namen wählen) -- mit unterschiedlich grossen Prompts. Beide
     # einzeln nehmen statt einen zu verdoppeln.
-    such_ein, such_aus = 0, 0
+    such_ein, such_aus, such_modell = 0, 0, ""
     for name in ("kartenname_uebersetzung", "kartenname_auswahl"):
-        e, a = tokens(name)
+        e, a, m = messung(name)
         such_ein += e
         such_aus += a
+        such_modell = such_modell or m
 
     print()
     print("=" * 78)
     print("Hochrechnung auf einen Premium-Nutzer, der alles ausschöpft")
     print("=" * 78)
     posten = [
-        (f"{MONTHLY_TEXT_LIMIT}x Text ({schlimmster['funktion']}, teuerster gemessener)",
-         MONTHLY_TEXT_LIMIT,
-         int(schlimmster["prompt_tokens"] or 0), int(schlimmster["antwort_tokens"] or 0)),
+        (f"{MONTHLY_TEXT_LIMIT}x Text ({schlimmster['funktion']}, teuerster)",
+         MONTHLY_TEXT_LIMIT, int(schlimmster["prompt_tokens"] or 0),
+         int(schlimmster["antwort_tokens"] or 0), str(schlimmster.get("modell") or "")),
         (f"{vision_intervalle}x Live-Vision Bilderkennung", vision_intervalle,
-         bild_ein, bild_aus),
+         bild_ein, bild_aus, bild_modell),
         (f"{vision_intervalle}x Live-Vision Taktikhinweis", vision_intervalle,
-         rat_ein, rat_aus),
+         rat_ein, rat_aus, rat_modell),
         (f"{MONTHLY_SEARCH_LIMIT}x Kartensuche (je 2 Aufrufe)",
-         MONTHLY_SEARCH_LIMIT, such_ein, such_aus),
+         MONTHLY_SEARCH_LIMIT, such_ein, such_aus, such_modell),
     ]
 
     gesamt_ein = gesamt_aus = 0
     gesamt_kosten = 0.0
-    print(f"{'Posten':<52} {'Eingabe':>11} {'Ausgabe':>11}"
-          + (f" {'Kosten':>10}" if hat_preise else ""))
-    for name, anzahl, ein, aus in posten:
+    ohne_preis = set()
+
+    print(f"{'Posten':<44} {'Eingabe':>10} {'Ausgabe':>10}"
+          + (f" {'Kosten':>11}" if hat_preise else ""))
+    for name, anzahl, ein, aus, modell in posten:
         s_ein, s_aus = ein * anzahl, aus * anzahl
         gesamt_ein += s_ein
         gesamt_aus += s_aus
-        zeile = f"{name:<52} {s_ein:>11,} {s_aus:>11,}".replace(",", ".")
-        k = _kosten(s_ein, s_aus, preis_ein, preis_aus)
-        if k is not None:
-            gesamt_kosten += k
-            zeile += f" {k:>9.4f}"
+        # Tausendertrennung NUR auf den Zahlen: ein globales replace(",", ".")
+        # traf auch die Kommas in der Beschriftung ("deck_analyse. teuerster").
+        zeile = (f"{name:<44} {format(s_ein, ',').replace(',', '.'):>10} "
+                 f"{format(s_aus, ',').replace(',', '.'):>10}")
+        if hat_preise:
+            k = modellkosten(s_ein, s_aus, modell)
+            if k is None:
+                if s_ein or s_aus:
+                    ohne_preis.add(modell or "(unbekannt)")
+                zeile += f" {'Preis fehlt':>11}"
+            else:
+                gesamt_kosten += k * kurs
+                zeile += f" {k * kurs:>11.4f}"
         print(zeile)
 
     print("-" * 78)
-    print(f"{'Summe':<52} {gesamt_ein:>11,} {gesamt_aus:>11,}".replace(",", ".")
-          + (f" {gesamt_kosten:>9.4f}" if hat_preise else ""))
+    print(f"{'Summe':<44} {format(gesamt_ein, ',').replace(',', '.'):>10} "
+          f"{format(gesamt_aus, ',').replace(',', '.'):>10}"
+          + (f" {gesamt_kosten:>11.4f}" if hat_preise else ""))
+
+    if ohne_preis:
+        print()
+        print("ACHTUNG: Für diese Modelle ist kein Preis hinterlegt, sie fehlen")
+        print("in der Summe -- der echte Betrag ist also HÖHER:")
+        for m in sorted(ohne_preis):
+            print(f"  {m}")
+        print("\nTrag sie in GEMINI_PREISE nach, oder nagle die Modelle über")
+        print("GEMINI_MODEL / GEMINI_MODEL_LITE auf eine bekannte Fassung fest.")
 
     print()
     if not hat_preise:
@@ -373,8 +393,14 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str) -> int:
     else:
         print("Mit --abo <Betrag> rechnet das Werkzeug die Marge gleich mit aus.")
 
-    print("\nHinweis: Bilder rechnet Gemini nach Kacheln ab. Ändert sich die")
-    print("Auflösung in MobileCamera.jsx, ändert sich auch dieser Betrag.")
+    print("\nHinweise:")
+    print("* Bilder rechnet Gemini nach Kacheln ab. Ändert sich die Auflösung")
+    print("  in MobileCamera.jsx, ändert sich auch dieser Betrag.")
+    if kurs == 1.0:
+        print("* Googles Preisliste ist in USD. Läuft dein Konto in einer anderen")
+        print("  Währung, rechne mit --kurs um (z.B. --kurs 0.79 --waehrung CHF).")
+    else:
+        print(f"* Gerechnet mit Umrechnungsfaktor {kurs} auf {waehrung}.")
     return 0
 
 
@@ -396,7 +422,7 @@ def _protokoll_beruhigen() -> None:
         logging.getLogger(name).setLevel(logging.CRITICAL)
 
 
-async def _lauf(abo: Optional[float], waehrung: str) -> int:
+async def _lauf(abo: Optional[float], waehrung: str, kurs: float) -> int:
     _protokoll_beruhigen()
     if not os.getenv("GEMINI_API_KEY"):
         print("GEMINI_API_KEY ist nicht gesetzt -- ohne echten Schlüssel gibt es")
@@ -406,16 +432,22 @@ async def _lauf(abo: Optional[float], waehrung: str) -> int:
     async with _umgebung() as macher:
         await _messe(macher)
         zeilen = await _auswerten(macher)
-    return _bericht(zeilen, abo, waehrung)
+    return _bericht(zeilen, abo, waehrung, kurs)
 
 
 def main() -> int:
     zerleger = argparse.ArgumentParser(description=__doc__)
     zerleger.add_argument("--abo", type=float, default=None,
                           help="Abo-Preis je Monat, um die Marge auszurechnen")
-    zerleger.add_argument("--waehrung", default="CHF")
+    zerleger.add_argument("--waehrung", default="CHF",
+                          help="nur die Beschriftung der Betraege")
+    zerleger.add_argument(
+        "--kurs", type=float, default=1.0,
+        help="Umrechnungsfaktor fuer die hinterlegten Preise. Googles "
+             "Preisliste ist in USD, die Abrechnung laeuft in CHF -- mit "
+             "--kurs 0.79 --waehrung CHF werden aus Dollarpreisen Franken.")
     args = zerleger.parse_args()
-    return asyncio.run(_lauf(args.abo, args.waehrung))
+    return asyncio.run(_lauf(args.abo, args.waehrung, args.kurs))
 
 
 if __name__ == "__main__":

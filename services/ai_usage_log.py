@@ -39,35 +39,22 @@ def _log_content_enabled() -> bool:
     return os.getenv("AI_LOG_CONTENT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _price_per_million(env_name: str) -> Optional[float]:
-    raw = os.getenv(env_name)
-    if not raw:
-        return None
-    try:
-        value = float(raw.replace(",", "."))
-    except (TypeError, ValueError):
-        logger.warning("Ungültiger Preiswert in %s: %r", env_name, raw)
-        return None
-    return value if value >= 0 else None
-
-
-def berechne_kosten_usd(prompt_tokens: Optional[int], antwort_tokens: Optional[int]) -> Optional[float]:
+def berechne_kosten_usd(prompt_tokens: Optional[int], antwort_tokens: Optional[int],
+                        modell: Optional[str] = None) -> Optional[float]:
     """
-    Berechnet die Kosten aus den konfigurierten Preisen je 1 Mio. Tokens.
+    Kosten dieses Aufrufs, je nach Modell.
 
-    Gibt None zurück, wenn keine Preise hinterlegt sind -- ein geratener Preis
-    wäre schlimmer als gar keiner.
+    Die Preise stehen in services/ai_preise.py -- dort und nur dort, damit
+    das Protokoll und werkzeuge/ki_kosten.py nie mit verschiedenen Zahlen
+    rechnen. Je Modell, weil zwischen dem grossen und dem kleinen Modell
+    Faktor 20 und mehr liegen kann.
+
+    Gibt None zurück, wenn für dieses Modell kein Preis hinterlegt ist -- ein
+    geratener Preis wäre schlimmer als gar keiner.
     """
-    preis_ein = _price_per_million("GEMINI_PRICE_INPUT_PER_MTOK")
-    preis_aus = _price_per_million("GEMINI_PRICE_OUTPUT_PER_MTOK")
-    if preis_ein is None and preis_aus is None:
-        return None
-    kosten = 0.0
-    if preis_ein is not None and prompt_tokens:
-        kosten += (prompt_tokens / 1_000_000) * preis_ein
-    if preis_aus is not None and antwort_tokens:
-        kosten += (antwort_tokens / 1_000_000) * preis_aus
-    return round(kosten, 6)
+    from services.ai_preise import kosten
+
+    return kosten(prompt_tokens, antwort_tokens, modell)
 
 
 _buffer: "deque[Dict[str, Any]]" = deque(maxlen=MAX_BUFFER)
@@ -99,7 +86,7 @@ def record(
         "antwort_tokens": antwort_tokens,
         "gesamt_tokens": gesamt_tokens,
         "latenz_ms": int(latenz_ms),
-        "kosten_usd": berechne_kosten_usd(prompt_tokens, antwort_tokens),
+        "kosten_usd": berechne_kosten_usd(prompt_tokens, antwort_tokens, modell),
         "frage": (frage[:8000] if (frage and _log_content_enabled()) else None),
         "antwort": (antwort[:8000] if (antwort and _log_content_enabled()) else None),
         "erstellt_am": datetime.utcnow(),

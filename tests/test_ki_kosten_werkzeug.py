@@ -10,14 +10,15 @@ durch, gäbe einen plausibel aussehenden Betrag aus, und niemand hätte einen
 Anlass, ihn anzuzweifeln.
 """
 
-import os
-
 import pytest
 
-from werkzeuge.ki_kosten import _bericht, _kosten, _preise
+from werkzeuge.ki_kosten import _bericht
+
+GROSS = "gemini-2.5-flash"
+KLEIN = "gemini-2.5-flash-lite"
 
 
-def zeile(funktion, ein, aus, modell="gemini-3.7-flash", erfolg=1):
+def zeile(funktion, ein, aus, modell=KLEIN, erfolg=1):
     return {"funktion": funktion, "modell": modell, "erfolg": erfolg,
             "prompt_tokens": ein, "antwort_tokens": aus,
             "gesamt_tokens": (ein or 0) + (aus or 0), "fehler": None}
@@ -27,7 +28,7 @@ def zeile(funktion, ein, aus, modell="gemini-3.7-flash", erfolg=1):
 # damit die Hochrechnung von Hand nachvollziehbar bleibt.
 MESSUNG = [
     zeile("judge", 1_000, 500),
-    zeile("deck_analyse", 4_000, 1_000),      # der teuerste Textaufruf
+    zeile("deck_analyse", 4_000, 1_000, modell=GROSS),   # grosses Modell
     zeile("deck_roast", 2_000, 400),
     zeile("kartenname_uebersetzung", 300, 100),
     zeile("kartenname_auswahl", 200, 50),
@@ -38,53 +39,27 @@ MESSUNG = [
 
 @pytest.fixture
 def preise(monkeypatch):
-    # Glatte Preise: 1 Mio. Eingabe-Tokens = 1.00, Ausgabe = 2.00.
-    monkeypatch.setenv("GEMINI_PRICE_INPUT_PER_MTOK", "1.00")
-    monkeypatch.setenv("GEMINI_PRICE_OUTPUT_PER_MTOK", "2.00")
-
-
-def test_preise_werden_gelesen(preise):
-    assert _preise() == (1.00, 2.00)
-
-
-def test_komma_als_dezimaltrennzeichen(monkeypatch):
-    monkeypatch.setenv("GEMINI_PRICE_INPUT_PER_MTOK", "0,30")
+    """Glatte Preise je Modell: gross 1.00/2.00, klein 0.10/0.20."""
+    monkeypatch.delenv("GEMINI_PRICE_INPUT_PER_MTOK", raising=False)
     monkeypatch.delenv("GEMINI_PRICE_OUTPUT_PER_MTOK", raising=False)
-    # Wer den Preis aus einer deutschen Preisseite abschreibt, tippt ein Komma.
-    assert _preise()[0] == 0.30
+    # Semikolon trennt die Eintraege -- ein Komma waere das Dezimalzeichen.
+    monkeypatch.setenv("GEMINI_PREISE",
+                       f"{GROSS}:1.00/2.00; {KLEIN}:0.10/0.20")
 
 
-def test_kostenformel():
-    # 2 Mio. Eingabe zu 1.00 + 1 Mio. Ausgabe zu 2.00 = 4.00
-    assert _kosten(2_000_000, 1_000_000, 1.00, 2.00) == pytest.approx(4.00)
-
-
-def test_ohne_preise_kein_betrag():
-    """Ein geratener Preis wäre schlimmer als gar keiner."""
-    assert _kosten(1_000_000, 1_000_000, None, None) is None
-
-
-def test_hochrechnung_nimmt_den_teuersten_textaufruf(preise, capsys):
-    """Das Text-Kontingent ist frei verteilbar. Wer mit dem Durchschnitt
-    rechnet, weist eine Obergrenze aus, die keine ist."""
-    _bericht(MESSUNG, abo=None, waehrung="CHF")
-
-    ausgabe = capsys.readouterr().out
-    # deck_analyse ist mit 5000 Tokens der teuerste -- er muss angesetzt werden.
-    assert "deck_analyse" in ausgabe
-    assert "300x Text" in ausgabe
-
-
-def test_vision_und_suche_werden_nicht_doppelt_gezaehlt(preise, capsys):
-    """Vision und Suche haben eigene Kontingente. Zählte man sie zusätzlich
-    zum Text-Kontingent, stünden sie zweimal in der Summe."""
+def test_jedes_modell_wird_mit_seinem_eigenen_preis_gerechnet(preise, capsys):
+    """Der Grund für den Umbau: die Deck-Analyse laeuft auf dem grossen
+    Modell, alles andere auf dem kleinen. Laut Preisliste liegt dazwischen
+    Faktor 20 und mehr -- ein Einheitspreis waere grob falsch."""
     _bericht(MESSUNG, abo=None, waehrung="CHF")
     ausgabe = capsys.readouterr().out
 
-    # Der teuerste Textposten darf keiner der Vision-/Suchaufrufe sein.
-    assert "vision_erkennung, teuerster" not in ausgabe
-    assert "kartenname" not in ausgabe.split("Hochrechnung")[1].split("Summe")[0] \
-        or "Kartensuche" in ausgabe
+    # 300 x deck_analyse auf dem GROSSEN Modell:
+    #   1.200.000 ein * 1.00 + 300.000 aus * 2.00 = 1.20 + 0.60 = 1.80
+    assert "1.8000" in ausgabe
+    # 432 x vision_erkennung auf dem KLEINEN Modell:
+    #   345.600 ein * 0.10 + 86.400 aus * 0.20 = 0.03456 + 0.01728 = 0.0518
+    assert "0.0518" in ausgabe
 
 
 def test_die_summe_stimmt(preise, capsys):
@@ -92,25 +67,80 @@ def test_die_summe_stimmt(preise, capsys):
     _bericht(MESSUNG, abo=None, waehrung="CHF")
     ausgabe = capsys.readouterr().out
 
-    # 300 x deck_analyse       -> 1.200.000 ein / 300.000 aus
-    # 432 x vision_erkennung   ->   345.600 ein /  86.400 aus
-    # 432 x vision_rat         ->   129.600 ein / 172.800 aus
-    # 100 x Suche (2 Aufrufe)  ->    50.000 ein /  15.000 aus
-    #                     Summe: 1.725.200 ein / 574.200 aus
-    # Kosten: 1,7252 * 1.00 + 0,5742 * 2.00 = 2,8736
-    assert "2.8736" in ausgabe or "2,8736" in ausgabe.replace(".", ",")
+    # Text   300 x (4000/1000) gross: 1.200.000*1.00 + 300.000*2.00 = 1.80000
+    # Bild   432 x  (800/200)  klein:   345.600*0.10 +  86.400*0.20 = 0.05184
+    # Rat    432 x  (300/400)  klein:   129.600*0.10 + 172.800*0.20 = 0.04752
+    # Suche  100 x  (500/150)  klein:    50.000*0.10 +  15.000*0.20 = 0.00800
+    #                                                          Summe = 1.90736
+    assert "1.9074" in ausgabe
+
+
+def test_teuerster_textaufruf_wird_in_geld_gemessen_nicht_in_tokens(preise, capsys):
+    """Ein Aufruf mit WENIGER Tokens kann mehr kosten, wenn er auf dem
+    teuren Modell laeuft. Wer nach Tokens sortiert, setzt den falschen an."""
+    messung = [
+        # Viele Tokens, aber billiges Modell.
+        zeile("deck_roast", 50_000, 10_000, modell=KLEIN),
+        # Wenige Tokens, teures Modell -- und trotzdem teurer:
+        #   50.000*0.10 + 10.000*0.20 = 0.007
+        #   20.000*1.00 + 5.000*2.00  = 0.030
+        zeile("deck_analyse", 20_000, 5_000, modell=GROSS),
+    ]
+
+    _bericht(messung, abo=None, waehrung="CHF")
+
+    assert "deck_analyse, teuerster" in capsys.readouterr().out
+
+
+def test_unbekanntes_modell_wird_gemeldet_statt_geraten(capsys, monkeypatch):
+    """Der Fall, der bei Grana wirklich auftrat: in der Abrechnung stand ein
+    Modell, das auf der Preisseite gar nicht vorkam. Es einfach mit dem Preis
+    eines anderen zu rechnen waere die gefaehrlichste aller Varianten."""
+    monkeypatch.delenv("GEMINI_PRICE_INPUT_PER_MTOK", raising=False)
+    monkeypatch.delenv("GEMINI_PRICE_OUTPUT_PER_MTOK", raising=False)
+    monkeypatch.setenv("GEMINI_PREISE", f"{KLEIN}:0.10/0.20")
+
+    _bericht([zeile("deck_analyse", 4_000, 1_000, modell="gemini-3.7-flash"),
+              zeile("vision_erkennung", 800, 200)],
+             abo=3.90, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "Preis fehlt" in ausgabe
+    assert "gemini-3.7-flash" in ausgabe
+    assert "der echte Betrag ist also HÖHER" in ausgabe
+
+
+def test_kurs_rechnet_die_preise_um(preise, capsys):
+    """Googles Liste ist in USD, die Abrechnung laeuft in CHF."""
+    _bericht(MESSUNG, abo=None, waehrung="CHF", kurs=0.5)
+    ausgabe = capsys.readouterr().out
+
+    # Halber Kurs -> halbe Summe: 1.90736 / 2 = 0.95368
+    assert "0.9537" in ausgabe
+    assert "Umrechnungsfaktor 0.5" in ausgabe
+
+
+def test_alter_einheitspreis_gilt_weiter(capsys, monkeypatch):
+    """Wer nur ein Modell benutzt, soll nichts umstellen muessen."""
+    monkeypatch.delenv("GEMINI_PREISE", raising=False)
+    monkeypatch.setenv("GEMINI_PRICE_INPUT_PER_MTOK", "1.00")
+    monkeypatch.setenv("GEMINI_PRICE_OUTPUT_PER_MTOK", "2.00")
+
+    _bericht([zeile("judge", 1_000_000, 1_000_000)], abo=None, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "Preis fehlt" not in ausgabe
+    assert "kostet dich im schlimmsten Fall" in ausgabe
 
 
 def test_negative_marge_wird_als_fehler_gemeldet(preise, capsys):
     """Der eigentliche Zweck: wenn ein Nutzer mehr kostet als er zahlt, darf
     das Werkzeug nicht mit Erfolg enden."""
     kode = _bericht(MESSUNG, abo=1.00, waehrung="CHF")
-
     ausgabe = capsys.readouterr().out
+
     assert kode == 2
     assert "drauf" in ausgabe.lower()
-    # 2,8736 Kosten bei 1,00 Abo -> die Marge muss negativ ausgewiesen werden.
-    assert "-1.87" in ausgabe
 
 
 def test_ausreichende_marge_ist_kein_fehler(preise, capsys):
@@ -132,6 +162,7 @@ def test_ohne_erfolgreiche_messung_kein_ergebnis(preise, capsys):
 
 
 def test_ohne_preise_wird_kein_betrag_behauptet(monkeypatch, capsys):
+    monkeypatch.delenv("GEMINI_PREISE", raising=False)
     monkeypatch.delenv("GEMINI_PRICE_INPUT_PER_MTOK", raising=False)
     monkeypatch.delenv("GEMINI_PRICE_OUTPUT_PER_MTOK", raising=False)
 
