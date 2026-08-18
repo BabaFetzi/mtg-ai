@@ -283,3 +283,82 @@ def test_null_tokens_zaehlen_nicht_als_messung(preise, capsys):
 
     assert kode == 3
     assert "Kartensuche" in capsys.readouterr().out
+
+
+# ----------------------------------------------------------------------
+# Nach einer geglueckten Wiederholung
+# ----------------------------------------------------------------------
+# gemini-3.7-flash meldet regelmaessig 503 "high demand". Das Werkzeug
+# wiederholt den Schritt deshalb. Danach liegen ZWEI Messungen vor: die billige
+# vom Ersatzmodell und die vom Hauptmodell.
+#
+# Die Namen lassen sich dabei nicht vergleichen -- der gescheiterte Aufruf
+# protokolliert den Alias ("gemini-flash-latest"), der gelungene das Modell,
+# das wirklich geantwortet hat ("gemini-3.7-flash"). Dasselbe Modell, voellig
+# verschiedene Zeichenketten.
+
+ALIAS = "gemini-flash-latest"
+
+
+def test_geglueckte_wiederholung_beendet_die_warnung(preise, capsys):
+    messung = [
+        dict(zeile("deck_analyse", None, None, modell=ALIAS, erfolg=0),
+             fehler="503 UNAVAILABLE: high demand"),
+        zeile("deck_analyse", 2_521, 1_247, modell=KLEIN),   # Ersatz
+        zeile("deck_analyse", 2_521, 1_247, modell=GROSS),   # Wiederholung geglueckt
+        zeile("judge", 866, 144),
+        zeile("deck_roast", 2_306, 396),
+        zeile("kartenname_uebersetzung", 171, 7),
+        zeile("vision_erkennung", 1_181, 318),
+        zeile("vision_rat", 245, 231),
+    ]
+
+    _bericht(messung, abo=20.00, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "ERSATZMODELL" not in ausgabe
+
+
+def test_wiederholung_wird_auch_gerechnet(preise, capsys):
+    """Nicht nur die Warnung verschwindet -- die Hochrechnung muss die TEURE
+    Messung nehmen. Der erste gelungene Aufruf ist der billige vom Ersatz;
+    wer den nimmt, hat die Wiederholung umsonst bezahlt."""
+    messung = [
+        dict(zeile("deck_analyse", None, None, modell=ALIAS, erfolg=0),
+             fehler="503"),
+        zeile("deck_analyse", 1_000, 1_000, modell=KLEIN),   # billig, zuerst
+        zeile("deck_analyse", 1_000, 1_000, modell=GROSS),   # teuer, danach
+        zeile("judge", 100, 100),
+        zeile("deck_roast", 100, 100),
+        zeile("kartenname_uebersetzung", 100, 100),
+        zeile("vision_erkennung", 100, 100),
+        zeile("vision_rat", 100, 100),
+    ]
+
+    _bericht(messung, abo=20.00, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    # 300x auf dem GROSSEN Modell: 300.000 * 1.00 + 300.000 * 2.00 = 0.90
+    # Auf dem kleinen waeren es 300.000 * 0.10 + 300.000 * 0.20 = 0.09
+    assert "0.9000" in ausgabe
+    assert "deck_analyse" in ausgabe
+
+
+def test_gescheiterte_wiederholung_warnt_weiter(preise, capsys):
+    """Bleibt das Hauptmodell ueberlastet, muss die Warnung stehenbleiben."""
+    messung = [
+        dict(zeile("deck_analyse", None, None, modell=ALIAS, erfolg=0),
+             fehler="503"),
+        zeile("deck_analyse", 2_521, 1_247, modell=KLEIN),
+        zeile("judge", 866, 144),
+        zeile("deck_roast", 2_306, 396),
+        zeile("kartenname_uebersetzung", 171, 7),
+        zeile("vision_erkennung", 1_181, 318),
+        zeile("vision_rat", 245, 231),
+    ]
+
+    _bericht(messung, abo=20.00, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "ERSATZMODELL" in ausgabe
+    assert ALIAS in ausgabe

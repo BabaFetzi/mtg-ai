@@ -191,7 +191,65 @@ def _testbild() -> bytes:
 # ======================================================================
 # Messen
 # ======================================================================
-async def _messe(macher) -> None:
+# Welcher Messschritt zu welcher protokollierten Funktion gehoert, und welche
+# Cache-Eintraege vorher weg muessen, damit die Wiederholung wirklich bei
+# Gemini landet statt im Zwischenspeicher.
+WIEDERHOLBAR = {
+    "Deck-Analyse": ("deck_analyse", "deck_analysis"),
+    "Deck-Roast":   ("deck_roast",   "deck_roast"),
+    "Judge":        ("judge",        None),
+}
+
+
+def _deck_cache_schluessel(praefix: str) -> str:
+    """Derselbe Schluessel, den routers/decks.py bildet."""
+    import hashlib
+
+    deck_hash = hashlib.sha256(
+        (TESTDECK.strip() + ":" + "commander").encode("utf-8")).hexdigest()
+    return f"{praefix}:{deck_hash}"
+
+
+async def _wiederhole_wo_ersatz(macher, schritte, versuche: int) -> None:
+    """Wiederholt Schritte, bei denen nur das Ersatzmodell geantwortet hat."""
+    from sqlalchemy import text as sql
+    from services import ai_usage_log
+    from services.cache import scryfall_cache
+
+    nach_name = dict(schritte)
+
+    for runde in range(max(0, versuche - 1)):
+        await ai_usage_log.flush()
+        async with macher() as s:
+            res = await s.execute(sql(
+                "SELECT funktion, modell, erfolg, prompt_tokens, antwort_tokens, "
+                "gesamt_tokens, fehler FROM ai_calls ORDER BY id"))
+            zeilen = [dict(r) for r in res.mappings().all()]
+
+        # Welche Funktionen sind nur ueber den Ersatz durchgekommen?
+        betroffen = set()
+        for hinweis in _ersatz_hinweise(zeilen):
+            for schritt, (funktion, _) in WIEDERHOLBAR.items():
+                if f"'{funktion}'" in hinweis:
+                    betroffen.add(schritt)
+        if not betroffen:
+            return
+
+        for schritt in sorted(betroffen):
+            _, cache_praefix = WIEDERHOLBAR[schritt]
+            if cache_praefix:
+                scryfall_cache.delete(_deck_cache_schluessel(cache_praefix))
+            print(f"  {schritt} noch einmal (Versuch {runde + 2} von "
+                  f"{versuche}, Hauptmodell war ausgefallen) ...",
+                  end=" ", flush=True)
+            try:
+                antwort = nach_name[schritt]()
+                print(f"HTTP {antwort.status_code}")
+            except Exception as fehler:
+                print(f"Fehler: {type(fehler).__name__}: {fehler}")
+
+
+async def _messe(macher, versuche: int = 3) -> None:
     """Ruft jede KI-Funktion einmal auf. Die Protokollierung zählt mit."""
     from fastapi.testclient import TestClient
     from auth import create_access_token
@@ -221,6 +279,18 @@ async def _messe(macher) -> None:
                 print(f"HTTP {antwort.status_code}")
             except Exception as fehler:
                 print(f"Fehler: {type(fehler).__name__}: {fehler}")
+
+        # --- Wo das Ersatzmodell eingesprungen ist, noch einmal versuchen ---
+        # gemini-3.7-flash antwortet regelmaessig mit 503 ("high demand"). Die
+        # Anwendung weicht dann auf das guenstige Ersatzmodell aus -- gemessen
+        # wird also der billige Aufruf, und die Hochrechnung faellt zu niedrig
+        # aus. Fuer die Planung braucht es aber den Normalfall, in dem das
+        # angefragte Modell antwortet.
+        #
+        # Deshalb wird ein solcher Schritt wiederholt. Das Ergebnis liegt danach
+        # im Cache, sonst kaeme die Wiederholung gar nicht bei Gemini an --
+        # der Eintrag wird vorher geloescht.
+        await _wiederhole_wo_ersatz(macher, schritte, versuche)
 
         # Live-Vision läuft über WebSocket: ein Bild rein, ein Ergebnis raus.
         print("  Live-Vision ...", end=" ", flush=True)
@@ -265,32 +335,46 @@ def _ersatz_hinweise(zeilen: List[dict]) -> List[str]:
     Die Anwendung wiederholt einen gescheiterten Aufruf einmal mit dem
     Ersatzmodell. Beim teuren Modell ist der Ersatz das GÜNSTIGE -- die
     Messung erwischt dann den billigen Aufruf, und die Hochrechnung fällt zu
-    niedrig aus. Erkennbar ist das daran, dass dieselbe Funktion einmal
-    gescheitert und einmal (auf einem anderen Modell) gelungen ist.
+    niedrig aus.
+
+    Woran das erkennbar ist: die Funktion ist einmal gescheitert und danach
+    auf GENAU EINEM Modell gelungen. Kommt ein zweites, anderes Modell dazu
+    (weil eine Wiederholung beim Hauptmodell durchkam), liegt eine echte
+    Messung darauf vor und es gibt nichts mehr zu warnen.
+
+    Die Namen lassen sich dafür ausdrücklich NICHT vergleichen: der
+    gescheiterte Aufruf protokolliert den Alias ("gemini-flash-latest"), der
+    gelungene das Modell, das wirklich geantwortet hat ("gemini-3.7-flash").
+    Die beiden sind dasselbe und sehen völlig verschieden aus.
     """
-    gescheitert = {}
+    angefragt = {}
     for z in zeilen:
         if not z["erfolg"]:
-            gescheitert.setdefault(z["funktion"], str(z["modell"] or ""))
+            angefragt.setdefault(z["funktion"], str(z["modell"] or ""))
+
+    gelungen_auf: Dict[str, List[str]] = {}
+    for z in zeilen:
+        if z["erfolg"]:
+            modelle = gelungen_auf.setdefault(z["funktion"], [])
+            if str(z["modell"] or "") not in modelle:
+                modelle.append(str(z["modell"] or ""))
 
     hinweise = []
-    for z in zeilen:
-        if not z["erfolg"] or z["funktion"] not in gescheitert:
-            continue
-        angefragt = gescheitert[z["funktion"]]
-        gelungen = str(z["modell"] or "")
-        if not angefragt or angefragt == gelungen:
+    for funktion, alias in angefragt.items():
+        modelle = gelungen_auf.get(funktion, [])
+        # Kein Erfolg -> das meldet die Fehlerliste, nicht diese Warnung.
+        # Zwei verschiedene Modelle -> das Hauptmodell hat doch geantwortet.
+        if len(modelle) != 1 or not alias or modelle[0] == alias:
             continue
         hinweise.append(
-            f"\nACHTUNG: '{z['funktion']}' ist nur über das ERSATZMODELL "
+            f"\nACHTUNG: '{funktion}' ist nur über das ERSATZMODELL "
             f"durchgekommen.\n"
-            f"  angefragt: {angefragt}  (ausgefallen)\n"
-            f"  gerechnet: {gelungen}  (das Ersatzmodell, meist das günstigere)\n"
+            f"  angefragt: {alias}  (ausgefallen)\n"
+            f"  gerechnet: {modelle[0]}  (das Ersatzmodell, meist das günstigere)\n"
             f"Im Normalbetrieb antwortet das angefragte Modell -- dann ist der\n"
             f"echte Betrag HÖHER als hier ausgewiesen. Lass den Lauf später\n"
             f"noch einmal laufen, bis kein Ersatz mehr einspringt."
         )
-        gescheitert.pop(z["funktion"])
     return hinweise
 
 
@@ -320,6 +404,20 @@ def _fehlende_messungen(zeilen: List[dict]) -> List[str]:
                 if z["erfolg"] and (z["prompt_tokens"] or z["antwort_tokens"])}
     return [bezeichnung for bezeichnung, namen in ERWARTETE_MESSUNGEN
             if not any(n in gemessen for n in namen)]
+
+
+def _geldwert(z) -> float:
+    """Was ein Aufruf gekostet hat -- zum Vergleichen zweier Messungen.
+
+    In GELD, nicht in Tokens: ein Aufruf mit weniger Tokens auf dem teuren
+    Modell kostet mehr als einer mit mehr Tokens auf dem guenstigen.
+    """
+    from services.ai_preise import kosten as modellkosten
+
+    k = modellkosten(z["prompt_tokens"], z["antwort_tokens"], z["modell"])
+    # Ohne Preis nach Tokens vergleichen -- besser als gar keine Reihung.
+    return k if k is not None else (
+        ((z["prompt_tokens"] or 0) + (z["antwort_tokens"] or 0)) / 1e9)
 
 
 def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
@@ -356,9 +454,15 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
         return 1
 
     # --- Hochrechnung ---
+    # Je Funktion der TEUERSTE gelungene Aufruf, nicht der erste. Nach einer
+    # Wiederholung liegen zwei Messungen vor -- die billige vom Ersatzmodell
+    # und die vom Hauptmodell. Der erste Treffer waere die billige, und damit
+    # haette die Wiederholung nichts gebracht.
     je_funktion: Dict[str, dict] = {}
     for z in erfolgreich:
-        je_funktion.setdefault(z["funktion"], z)
+        vorhanden = je_funktion.get(z["funktion"])
+        if vorhanden is None or _geldwert(z) > _geldwert(vorhanden):
+            je_funktion[z["funktion"]] = z
 
     def messung(*namen) -> Tuple[int, int, str]:
         """Tokens UND das Modell, das tatsächlich geantwortet hat."""
@@ -380,14 +484,8 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
                           "kartenname_uebersetzung", "kartenname_auswahl"}
     text_aufrufe = [z for z in erfolgreich if z["funktion"] not in EIGENE_KONTINGENTE]
 
-    def geldwert(z) -> float:
-        k = modellkosten(z["prompt_tokens"], z["antwort_tokens"], z["modell"])
-        # Ohne Preis nach Tokens vergleichen -- besser als gar keine Reihung.
-        return k if k is not None else (
-            ((z["prompt_tokens"] or 0) + (z["antwort_tokens"] or 0)) / 1e9)
-
     if text_aufrufe:
-        schlimmster = max(text_aufrufe, key=geldwert)
+        schlimmster = max(text_aufrufe, key=_geldwert)
     else:
         schlimmster = {"funktion": "keiner gemessen", "prompt_tokens": 0,
                        "antwort_tokens": 0, "modell": ""}
@@ -681,7 +779,8 @@ def _protokoll_beruhigen() -> None:
         logging.getLogger(name).setLevel(logging.CRITICAL)
 
 
-async def _lauf(abo: Optional[float], waehrung: str, kurs: float) -> int:
+async def _lauf(abo: Optional[float], waehrung: str, kurs: float,
+                versuche: int = 3) -> int:
     _protokoll_beruhigen()
     if not umgebung.roh("GEMINI_API_KEY"):
         print("GEMINI_API_KEY ist nicht gesetzt -- ohne echten Schlüssel gibt es")
@@ -689,7 +788,7 @@ async def _lauf(abo: Optional[float], waehrung: str, kurs: float) -> int:
         return 1
 
     async with _umgebung() as macher:
-        await _messe(macher)
+        await _messe(macher, versuche)
         zeilen = await _auswerten(macher)
     return _bericht(zeilen, abo, waehrung, kurs)
 
@@ -713,12 +812,20 @@ def main() -> int:
         "--modelle", action="store_true",
         help="nur auflisten, welche Modelle dieser Schluessel benutzen darf, "
              "und nichts messen")
+    zerleger.add_argument(
+        "--versuche", type=int, default=3, metavar="N",
+        help="wie oft ein Schritt hoechstens wiederholt wird, wenn statt des "
+             "Hauptmodells nur das Ersatzmodell geantwortet hat (Standard 3). "
+             "gemini-3.7-flash meldet regelmaessig 503 'high demand' -- ohne "
+             "Wiederholung wuerde die Hochrechnung auf dem guenstigen "
+             "Ersatzmodell beruhen und zu niedrig ausfallen")
     args = zerleger.parse_args()
     try:
         if args.modelle:
             _protokoll_beruhigen()
             return modelle_auflisten()
-        return asyncio.run(_lauf(args.abo, args.waehrung, args.kurs))
+        return asyncio.run(_lauf(args.abo, args.waehrung, args.kurs,
+                                 args.versuche))
     finally:
         # Die Wegwerf-Cache-Datei nicht liegen lassen -- der naechste Lauf soll
         # ohnehin eine eigene bekommen, und im Temp-Ordner sammeln sie sich sonst an.
