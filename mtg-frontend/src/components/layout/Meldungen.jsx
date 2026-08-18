@@ -17,6 +17,97 @@ const MeldungContext = createContext(null);
 
 const ANZEIGEDAUER = { erfolg: 3500, info: 4000, fehler: 7000 };
 
+// ----------------------------------------------------------------------
+// Gestaltung: bewusst inline, nicht über CSS-Klassen
+// ----------------------------------------------------------------------
+// Vorher standen hier Klassennamen (.rueckfrage-hintergrund, .meldungs-liste
+// und weitere). Die gab es in keiner Stilvorlage -- im ausgelieferten Paket
+// waren es null Treffer. Ergebnis: Die Rückfrage erschien als schmuckloses
+// <div> ganz am Ende der Seite, ohne Überlagerung und ohne feste Position.
+// Auf einer langen Seite steht sie damit weit unterhalb des Bildschirms.
+//
+// Für den Nutzer sah das so aus, als täte der Knopf nichts. Betroffen war
+// nicht nur eine Stelle, sondern jede Rückfrage der Anwendung -- darunter
+// "Konto endgültig löschen" und "Premium-Abo kündigen". Wer kündigen wollte,
+// klickte ins Leere.
+//
+// Die übrige Anwendung gestaltet sich über style={{...}} direkt am Element.
+// Genau das wird hier jetzt auch gemacht: Es kann nicht mehr auseinanderfallen,
+// weil es keine zweite Datei mehr gibt, die dazu passen müsste. Und es lässt
+// sich prüfen -- die Tests laufen mit css:false, eine ausgelagerte Stilvorlage
+// wäre dort unsichtbar, ein Inline-Wert steht im DOM.
+const FARBEN = {
+  erfolg: { rand: '#1a7f37', punkt: '#1a7f37' },
+  fehler: { rand: '#c62828', punkt: '#c62828' },
+  info:   { rand: '#555e6b', punkt: '#555e6b' },
+};
+
+// Über allem: Die Rückfrage blockiert die Bedienung und muss deshalb auch
+// über Kartenvorschauen (z-index 1000) und sonstigen Überlagerungen liegen.
+const Z_RUECKFRAGE = 12000;
+const Z_MELDUNGEN = 11000;
+
+const STIL = {
+  hintergrund: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0, 0, 0, 0.55)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '20px',
+    zIndex: Z_RUECKFRAGE,
+  },
+  dialog: {
+    background: 'var(--bg-card, #fff)',
+    color: 'var(--text-main, #111)',
+    borderRadius: '14px',
+    padding: '26px',
+    width: 'min(30rem, 100%)',
+    boxShadow: '0 24px 60px rgba(0, 0, 0, 0.35)',
+    textAlign: 'left',
+  },
+  titel: { margin: '0 0 10px', fontSize: '1.15rem', fontWeight: 700 },
+  text: { margin: '0 0 22px', color: 'var(--text-muted, #555)', lineHeight: 1.55 },
+  knopfreihe: { display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' },
+  liste: {
+    position: 'fixed',
+    top: '16px',
+    right: '16px',
+    left: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    zIndex: Z_MELDUNGEN,
+    // Die Leiste selbst darf nichts abfangen -- nur die Meldungen darin.
+    pointerEvents: 'none',
+    maxWidth: 'min(26rem, calc(100vw - 32px))',
+  },
+};
+
+function knopfStil(art) {
+  const gemeinsam = {
+    padding: '10px 18px',
+    borderRadius: '9px',
+    fontSize: '0.95rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    border: '1px solid transparent',
+  };
+  if (art === 'gefahr') {
+    return { ...gemeinsam, background: '#c62828', color: '#fff' };
+  }
+  if (art === 'abbrechen') {
+    return {
+      ...gemeinsam,
+      background: 'transparent',
+      color: 'var(--text-muted, #555)',
+      borderColor: 'var(--border-color, #ccc)',
+    };
+  }
+  return { ...gemeinsam, background: 'var(--text-main, #111)', color: 'var(--bg-card, #fff)' };
+}
+
 let zaehler = 0;
 
 export function MeldungProvider({ children }) {
@@ -101,25 +192,54 @@ function MeldungsListe({ meldungen, entfernen }) {
   if (meldungen.length === 0) return null;
   return (
     <div
-      className="meldungs-liste"
+      style={STIL.liste}
       // role="status" statt "alert": Screenreader unterbrechen den Nutzer nicht
       // mitten im Satz, lesen die Meldung aber vor.
       role="status"
       aria-live="polite"
     >
-      {meldungen.map((m) => (
-        <div key={m.id} className={`meldung meldung-${m.art}`}>
-          <span className="meldung-text">{m.text}</span>
-          <button
-            type="button"
-            className="meldung-schliessen"
-            onClick={() => entfernen(m.id)}
-            aria-label="Meldung schliessen"
+      {meldungen.map((m) => {
+        const farbe = FARBEN[m.art] || FARBEN.info;
+        return (
+          <div
+            key={m.id}
+            data-art={m.art}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+              background: 'var(--bg-card, #fff)',
+              color: 'var(--text-main, #111)',
+              borderRadius: '10px',
+              borderLeft: `4px solid ${farbe.rand}`,
+              padding: '12px 14px',
+              boxShadow: '0 10px 28px rgba(0, 0, 0, 0.22)',
+              textAlign: 'left',
+              // Die Leiste ist durchlässig, die Meldung selbst nicht --
+              // sonst liesse sich das Kreuz nicht anklicken.
+              pointerEvents: 'auto',
+            }}
           >
-            ×
-          </button>
-        </div>
-      ))}
+            <span style={{ flex: 1, fontSize: '0.92rem', lineHeight: 1.45 }}>{m.text}</span>
+            <button
+              type="button"
+              onClick={() => entfernen(m.id)}
+              aria-label="Meldung schliessen"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted, #666)',
+                cursor: 'pointer',
+                fontSize: '1.1rem',
+                lineHeight: 1,
+                padding: '2px 4px',
+              }}
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -130,24 +250,24 @@ function Rueckfrage({ frage, antworten }) {
   useEffect(() => { knopf.current?.focus(); }, []);
 
   return (
-    <div className="rueckfrage-hintergrund" onClick={() => antworten(false)}>
+    <div style={STIL.hintergrund} onClick={() => antworten(false)} data-testid="rueckfrage-hintergrund">
       <div
-        className="rueckfrage"
+        style={STIL.dialog}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="rueckfrage-titel"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 id="rueckfrage-titel" className="rueckfrage-titel">{frage.titel}</h3>
-        {frage.text && <p className="rueckfrage-text">{frage.text}</p>}
-        <div className="rueckfrage-knoepfe">
-          <button type="button" className="secondary-btn" onClick={() => antworten(false)}>
+        <h3 id="rueckfrage-titel" style={STIL.titel}>{frage.titel}</h3>
+        {frage.text && <p style={STIL.text}>{frage.text}</p>}
+        <div style={STIL.knopfreihe}>
+          <button type="button" style={knopfStil('abbrechen')} onClick={() => antworten(false)}>
             {frage.abbrechenText}
           </button>
           <button
             type="button"
             ref={knopf}
-            className={frage.gefaehrlich ? 'gefahr-btn' : 'primary-btn'}
+            style={knopfStil(frage.gefaehrlich ? 'gefahr' : 'bestaetigen')}
             onClick={() => antworten(true)}
           >
             {frage.bestaetigenText}
