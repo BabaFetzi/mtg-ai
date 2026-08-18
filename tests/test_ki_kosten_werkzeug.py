@@ -362,3 +362,53 @@ def test_gescheiterte_wiederholung_warnt_weiter(preise, capsys):
 
     assert "ERSATZMODELL" in ausgabe
     assert ALIAS in ausgabe
+
+
+def test_dauerhaft_ausgefallenes_hauptmodell_raet_zum_festlegen(preise, capsys):
+    """Drei Fehlversuche hintereinander sind kein "gerade viel los" mehr.
+
+    Warten hilft dann nicht. Und schlimmer als die Kostenfrage: im laufenden
+    Betrieb zahlt JEDER Aufruf erst einen vergeblichen Versuch, bevor das
+    Ersatzmodell antwortet -- das kostet die Nutzer Wartezeit bei jeder
+    einzelnen Deck-Analyse.
+    """
+    messung = [
+        dict(zeile("deck_analyse", None, None, modell=ALIAS, erfolg=0), fehler="503"),
+        dict(zeile("deck_analyse", None, None, modell=ALIAS, erfolg=0), fehler="503"),
+        dict(zeile("deck_analyse", None, None, modell=ALIAS, erfolg=0), fehler="503"),
+        zeile("deck_analyse", 2_521, 1_237, modell=KLEIN),
+        zeile("judge", 866, 205),
+        zeile("deck_roast", 2_306, 420),
+        zeile("kartenname_uebersetzung", 171, 7),
+        zeile("vision_erkennung", 1_181, 312),
+        zeile("vision_rat", 239, 230),
+    ]
+
+    _bericht(messung, abo=3.90, waehrung="CHF", kurs=0.79)
+    ausgabe = capsys.readouterr().out
+
+    assert "3x ausgefallen" in ausgabe
+    assert "kein vorübergehender Engpass" in ausgabe
+    assert "Wartezeit" in ausgabe
+    assert f"GEMINI_MODEL={KLEIN}" in ausgabe
+
+
+def test_ein_einzelner_ausfall_raet_zum_abwarten(preise, capsys):
+    """Einmal 503 ist wirklich nur Auslastung -- da waere "festnageln" der
+    falsche Rat."""
+    messung = [
+        dict(zeile("deck_analyse", None, None, modell=ALIAS, erfolg=0), fehler="503"),
+        zeile("deck_analyse", 2_521, 1_237, modell=KLEIN),
+        zeile("judge", 866, 205),
+        zeile("deck_roast", 2_306, 420),
+        zeile("kartenname_uebersetzung", 171, 7),
+        zeile("vision_erkennung", 1_181, 312),
+        zeile("vision_rat", 239, 230),
+    ]
+
+    _bericht(messung, abo=3.90, waehrung="CHF", kurs=0.79)
+    ausgabe = capsys.readouterr().out
+
+    assert "1x ausgefallen" in ausgabe
+    assert "noch einmal laufen" in ausgabe
+    assert "GEMINI_MODEL=" not in ausgabe

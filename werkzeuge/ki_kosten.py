@@ -348,9 +348,11 @@ def _ersatz_hinweise(zeilen: List[dict]) -> List[str]:
     Die beiden sind dasselbe und sehen völlig verschieden aus.
     """
     angefragt = {}
+    versuche: Dict[str, int] = {}
     for z in zeilen:
         if not z["erfolg"]:
             angefragt.setdefault(z["funktion"], str(z["modell"] or ""))
+            versuche[z["funktion"]] = versuche.get(z["funktion"], 0) + 1
 
     gelungen_auf: Dict[str, List[str]] = {}
     for z in zeilen:
@@ -366,15 +368,37 @@ def _ersatz_hinweise(zeilen: List[dict]) -> List[str]:
         # Zwei verschiedene Modelle -> das Hauptmodell hat doch geantwortet.
         if len(modelle) != 1 or not alias or modelle[0] == alias:
             continue
-        hinweise.append(
-            f"\nACHTUNG: '{funktion}' ist nur über das ERSATZMODELL "
-            f"durchgekommen.\n"
-            f"  angefragt: {alias}  (ausgefallen)\n"
-            f"  gerechnet: {modelle[0]}  (das Ersatzmodell, meist das günstigere)\n"
-            f"Im Normalbetrieb antwortet das angefragte Modell -- dann ist der\n"
-            f"echte Betrag HÖHER als hier ausgewiesen. Lass den Lauf später\n"
-            f"noch einmal laufen, bis kein Ersatz mehr einspringt."
-        )
+
+        text = (f"\nACHTUNG: '{funktion}' ist nur über das ERSATZMODELL "
+                f"durchgekommen.\n"
+                f"  angefragt: {alias}  ({versuche[funktion]}x ausgefallen)\n"
+                f"  gerechnet: {modelle[0]}  (das Ersatzmodell)\n")
+
+        if versuche[funktion] >= 3:
+            # Mehrfach hintereinander gescheitert heisst nicht "gerade viel
+            # los", sondern "fuer diese Anfrage nicht zu haben". Das ist eine
+            # andere Lage und braucht eine andere Empfehlung: warten hilft
+            # nicht, festlegen schon.
+            text += (
+                f"Nach {versuche[funktion]} Versuchen ist das kein "
+                f"vorübergehender Engpass mehr.\n"
+                f"Das angefragte Modell ist für diese Anfrage praktisch nicht "
+                f"zu haben --\n"
+                f"im laufenden Betrieb zahlt damit JEDER Aufruf erst einen "
+                f"vergeblichen\n"
+                f"Versuch, bevor das Ersatzmodell antwortet. Das kostet deine "
+                f"Nutzer Wartezeit.\n"
+                f"Besser festlegen, was wirklich benutzt werden soll:\n"
+                f"  GEMINI_MODEL={modelle[0]}\n"
+                f"Dann ist die Rechnung {versuche[funktion]} Zeilen weiter "
+                f"oben auch die echte.")
+        else:
+            text += (
+                "Im Normalbetrieb antwortet das angefragte Modell -- dann ist "
+                "der\nechte Betrag HÖHER als hier ausgewiesen. Lass den Lauf "
+                "später\nnoch einmal laufen, bis kein Ersatz mehr einspringt.")
+
+        hinweise.append(text)
     return hinweise
 
 
