@@ -28,6 +28,8 @@ import threading
 from collections import defaultdict
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Von Wizards veröffentlichte Textfassung. Erscheint eine neue Edition, kann die
@@ -38,8 +40,8 @@ RULES_URL = os.getenv(
     "https://media.wizards.com/2024/downloads/MagicCompRules%2020240206.txt",
 )
 RULES_FILE = os.getenv("MTG_RULES_FILE", "")
-RULES_CACHE_PATH = os.getenv("MTG_RULES_CACHE_PATH", "mtg_comprehensive_rules.txt")
-RULES_ENABLED = os.getenv("MTG_RULES_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+RULES_CACHE_PATH = umgebung.text("MTG_RULES_CACHE_PATH", "mtg_comprehensive_rules.txt")
+RULES_ENABLED = umgebung.schalter("MTG_RULES_ENABLED", True)
 
 # Eine Regelzeile beginnt mit ihrer Nummer: "104.2a Ein Spieler gewinnt ..."
 _RULE_LINE = re.compile(r"^(\d{3}\.\d+[a-z]?)\.?\s+(\S.*)$")

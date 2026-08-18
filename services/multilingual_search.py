@@ -56,14 +56,14 @@ from typing import Iterable, List, Optional, Tuple
 from services.cache import scryfall_cache
 from services.scryfall import scryfall_request
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Abschaltbar, falls die Übersetzungsstufe einmal mehr kosten als nützen sollte.
-UEBERSETZUNGSSUCHE_AKTIV = os.getenv("MULTILANG_SEARCH_ENABLED", "true").strip().lower() not in {
-    "0", "false", "no", "off"
-}
+UEBERSETZUNGSSUCHE_AKTIV = umgebung.schalter("MULTILANG_SEARCH_ENABLED", True)
 
-MAX_KANDIDATEN = int(os.getenv("MULTILANG_MAX_CANDIDATES", "5"))
+MAX_KANDIDATEN = umgebung.ganzzahl("MULTILANG_MAX_CANDIDATES", 5)
 
 # Wieviele Vorschläge die teureren Stufen (Fuzzy, Wortsuche) durchlaufen.
 MAX_FUZZY = 3
@@ -82,7 +82,7 @@ FUZZY_SCHWELLE = 0.88
 # normale Cache-Dauer (24 h), würde ein einziger fehlgeschlagener Versuch --
 # z.B. während der Server ohne GEMINI_API_KEY lief -- die Karte einen ganzen
 # Tag lang unauffindbar machen, ohne dass es irgendwo sichtbar wäre.
-NEGATIV_CACHE_SEKUNDEN = int(os.getenv("MULTILANG_NEGATIVE_CACHE_SECONDS", "900"))
+NEGATIV_CACHE_SEKUNDEN = umgebung.ganzzahl("MULTILANG_NEGATIVE_CACHE_SECONDS", 900)
 
 # Cache-Version im Schlüssel: erlaubt es, alte Zuordnungen bei einer
 # Verbesserung des Verfahrens gezielt ungültig zu machen. v4 = Einträge tragen

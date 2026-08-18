@@ -38,6 +38,8 @@ from services.usage_limiter import check_and_increment_ai_usage, gutschreiben
 from database import get_db_session, check_user_premium
 from schemas.models import CardSearchResult, TrendsResponse
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # ======================================================================
@@ -443,7 +445,7 @@ async def _fallback_lang_search(client, search_term, original_resp):
 
 
 # Zeitfenster, das als "brandneu" gilt (für die Vorschlagssuche).
-NEUE_SETS_TAGE = int(os.getenv("NEUE_SETS_TAGE", "60"))
+NEUE_SETS_TAGE = umgebung.ganzzahl("NEUE_SETS_TAGE", 60)
 
 # Wörter, die als Suchbaustein nichts taugen (zu häufig / kein Eigenname).
 _UNSPEZIFISCH = {

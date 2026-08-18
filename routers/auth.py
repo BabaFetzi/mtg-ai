@@ -45,19 +45,20 @@ from auth import (
     ist_gesperrt,
 )
 from schemas.models import LoginData, RegisterData, UpdateRoleReq
+from services import umgebung
 
 # ======================================================================
 # OAuth Konfiguration aus Umgebungsvariablen
 # ======================================================================
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8001/api/auth/google/callback")
+GOOGLE_CLIENT_ID = umgebung.text("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = umgebung.text("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = umgebung.text("GOOGLE_REDIRECT_URI", "http://localhost:8001/api/auth/google/callback")
 
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
-DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
-DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8001/api/auth/discord/callback")
+DISCORD_CLIENT_ID = umgebung.text("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = umgebung.text("DISCORD_CLIENT_SECRET")
+DISCORD_REDIRECT_URI = umgebung.text("DISCORD_REDIRECT_URI", "http://localhost:8001/api/auth/discord/callback")
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5175")
+FRONTEND_URL = umgebung.text("FRONTEND_URL", "http://localhost:5175")
 
 # ======================================================================
 # Router-Instanz
@@ -502,7 +503,7 @@ async def discord_callback(code: str):
 # 2. In der Datenbank steht nur der HASH des Tokens. Wer sie liest, kann daraus
 #    kein gültiges Token bauen -- dieselbe Überlegung wie beim Passwort.
 
-RESET_GUELTIG_MINUTEN = int(os.getenv("PASSWORT_RESET_MINUTEN", "60"))
+RESET_GUELTIG_MINUTEN = umgebung.ganzzahl("PASSWORT_RESET_MINUTEN", 60)
 MIN_PASSWORT_LAENGE = 8
 
 # Immer dieselbe Antwort, egal ob es das Konto gibt.

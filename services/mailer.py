@@ -21,18 +21,24 @@ import ssl
 from email.message import EmailMessage
 from typing import Optional
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
-SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "").strip()
+# umgebung.* statt os.getenv: eine leere Zeile "SMTP_PORT=" in der .env ergab
+# mit os.getenv den leeren Text -- und int("") bricht schon beim IMPORT ab. Die
+# gesamte Anwendung startete dann wegen einer nicht ausgefüllten Mail-Zeile
+# nicht mehr.
+SMTP_HOST = umgebung.text("SMTP_HOST")
+SMTP_PORT = umgebung.ganzzahl("SMTP_PORT", 587)
+SMTP_USER = umgebung.text("SMTP_USER")
 SMTP_PASSWORT = os.getenv("SMTP_PASSWORD", "")
-SMTP_ABSENDER = os.getenv("SMTP_FROM", "").strip()
+SMTP_ABSENDER = umgebung.text("SMTP_FROM")
 # STARTTLS (Port 587) ist der Normalfall; implizites TLS (Port 465) über
 # SMTP_TLS_MODUS=ssl.
-SMTP_TLS_MODUS = os.getenv("SMTP_TLS_MODE", "starttls").strip().lower()
+SMTP_TLS_MODUS = umgebung.text("SMTP_TLS_MODE", "starttls").lower()
 
-SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT_SECONDS", "10"))
+SMTP_TIMEOUT = umgebung.ganzzahl("SMTP_TIMEOUT_SECONDS", 10)
 
 
 class MailVersandFehler(RuntimeError):
@@ -45,7 +51,7 @@ def mailversand_konfiguriert() -> bool:
 
 def _ist_produktion() -> bool:
     # Erst zur Laufzeit lesen, damit Tests die Umgebung umstellen können.
-    return os.getenv("GRANA_ENV", "development").strip().lower() in {
+    return umgebung.text("GRANA_ENV", "development").lower() in {
         "production", "prod", "produktion"
     }
 

@@ -36,6 +36,8 @@ from typing import List, Tuple
 # Import aus dem Projektverzeichnis erlauben, auch wenn direkt aufgerufen.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from services import umgebung  # noqa: E402
+
 from services.scryfall import _fetch_uncached, _is_stale  # noqa: E402
 
 # Pro Runde an Scryfall. Der Sammel-Endpunkt nimmt 75 Namen; die Bibliothek
@@ -44,7 +46,7 @@ BUENDEL = 60
 
 
 def cache_datei() -> str:
-    return os.getenv("CACHE_DB_PATH", "scryfall_cache.db")
+    return umgebung.text("CACHE_DB_PATH", "scryfall_cache.db")
 
 
 def veraltete_namen(pfad: str) -> Tuple[List[str], int]:

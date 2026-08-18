@@ -40,6 +40,8 @@ from services.rules_corpus import suche_regeln
 from services.synergies import detect_synergies
 from services.usage_limiter import check_and_increment_ai_usage, gutschreiben
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # ======================================================================
@@ -102,7 +104,7 @@ async def judge_endpoint(req: JudgeRequest, request: Request, current_user: str 
 
 # Das Modell darf die Kartendatenbank selbst abfragen. Über einen Schalter
 # abstellbar, falls das Werkzeug einmal mehr kostet als es nützt.
-JUDGE_CARD_TOOL_ENABLED = os.getenv("JUDGE_CARD_TOOL_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+JUDGE_CARD_TOOL_ENABLED = umgebung.schalter("JUDGE_CARD_TOOL_ENABLED", True)
 
 
 async def _judge_modell_aufrufen(prompt: str, benutzername: str) -> str:

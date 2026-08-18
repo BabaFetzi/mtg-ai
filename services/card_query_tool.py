@@ -26,16 +26,18 @@ import httpx
 from services.cache import scryfall_cache
 from services.scryfall import SCRYFALL_HEADERS
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Höchstzahl zurückgegebener Karten: genug Kontext für eine Antwort, ohne den
 # Prompt (und damit die Kosten) aufzublähen.
-MAX_ERGEBNISSE = int(os.getenv("CARD_TOOL_MAX_RESULTS", "10"))
-CARD_TOOL_TIMEOUT = float(os.getenv("CARD_TOOL_TIMEOUT", "8"))
+MAX_ERGEBNISSE = umgebung.ganzzahl("CARD_TOOL_MAX_RESULTS", 10)
+CARD_TOOL_TIMEOUT = umgebung.zahl("CARD_TOOL_TIMEOUT", 8.0)
 
 # Einfache synchrone Drossel. Der asynchrone Scryfall-Limiter greift hier nicht,
 # weil dieser Aufruf aus einem Worker-Thread des SDK kommt.
-_MIN_INTERVAL = float(os.getenv("CARD_TOOL_MIN_INTERVAL", "0.15"))
+_MIN_INTERVAL = umgebung.zahl("CARD_TOOL_MIN_INTERVAL", 0.15)
 _lock = threading.Lock()
 _next_slot = 0.0
 

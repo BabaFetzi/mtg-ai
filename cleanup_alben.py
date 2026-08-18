@@ -20,6 +20,8 @@ import shutil
 import sqlite3
 from datetime import datetime
 
+from services import umgebung
+
 # ----------------------------------------------------------------------------
 # Einstellungen -- hier bei Bedarf anpassen
 # ----------------------------------------------------------------------------
@@ -30,7 +32,7 @@ KEEP = {"Test"}
 KEEP_WISHLIST = True
 
 # Pfad zur lokalen SQLite-Datenbank (Standard des Projekts).
-DB_PATH = os.getenv("SQLITE_PATH", "mtg_app.db")
+DB_PATH = umgebung.text("SQLITE_PATH", "mtg_app.db")
 
 TABLE = "sammlung_alben"
 

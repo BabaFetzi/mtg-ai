@@ -68,6 +68,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.usage_limiter import (  # noqa: E402
     MONTHLY_SEARCH_LIMIT, MONTHLY_TEXT_LIMIT, MONTHLY_VISION_MINUTES_LIMIT,
 )
+from services import umgebung  # noqa: E402
 from routers.vision import VISION_WS_MIN_GEMINI_INTERVAL_SECONDS  # noqa: E402
 
 TESTNUTZER = "kostenmessung"
@@ -435,7 +436,7 @@ def modelle_auflisten() -> int:
     from google import genai
 
     try:
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        client = genai.Client(api_key=umgebung.roh("GEMINI_API_KEY"))
         modelle = list(client.models.list())
     except Exception as fehler:
         print(f"Modelliste nicht abrufbar: {fehler}")
@@ -454,22 +455,51 @@ def modelle_auflisten() -> int:
         print("Der Schlüssel darf kein einziges Modell für generateContent nutzen.")
         return 1
 
-    print(f"{len(brauchbar)} Modelle stehen diesem Schlüssel zur Verfügung.\n")
-    print("Für Grana kommen diese in Frage (Flash-Familie, ohne Vorschau/Spezialmodelle):")
-    passend = [n for n in brauchbar
-               if "flash" in n
-               and not any(x in n for x in ("preview", "tts", "audio", "image",
-                                            "live", "thinking", "exp"))]
-    for name in sorted(passend):
-        print(f"  {name}")
+    passend = sorted(n for n in brauchbar
+                     if "flash" in n
+                     and not any(x in n for x in ("preview", "tts", "audio", "image",
+                                                  "live", "thinking", "exp")))
 
-    print("\nAlle übrigen:")
-    for name in sorted(set(brauchbar) - set(passend)):
-        print(f"  {name}")
+    print(f"{len(brauchbar)} Modelle sind gelistet, davon {len(passend)} aus der "
+          f"Flash-Familie.\n")
+    print("Aufgelistet heisst NICHT benutzbar: Google fuehrt aeltere Fassungen")
+    print("weiter auf, beantwortet sie fuer neuere Schluessel aber mit")
+    print('"404 no longer available to new users". Deshalb wird jede jetzt')
+    print("einmal wirklich angefragt.\n")
 
-    print("\nTrag eine dieser Fassungen in GEMINI_MODEL / GEMINI_MODEL_LITE ein,")
-    print("und den passenden Preis in GEMINI_PREISE. Nur wenn beides zusammenpasst,")
-    print("kann die Kostenrechnung stimmen.")
+    from services.ai_preise import preis_fuer
+
+    print(f"{'Modell':<26} {'Antwortet':<12} {'Preis hinterlegt'}")
+    print("-" * 70)
+    funktioniert = []
+    for name in passend:
+        try:
+            client.models.generate_content(model=name, contents="ok")
+            zustand, geht = "ja", True
+        except Exception as fehler:
+            text = str(fehler)
+            if "no longer available" in text:
+                zustand, geht = "nein (alt)", False
+            elif "404" in text or "NOT_FOUND" in text:
+                zustand, geht = "nein (404)", False
+            else:
+                zustand, geht = "nein", False
+
+        ein, aus = preis_fuer(name)
+        preis = f"{ein}/{aus}" if ein is not None and aus is not None else "--"
+        print(f"{name:<26} {zustand:<12} {preis}")
+        if geht:
+            funktioniert.append(name)
+
+    if not funktioniert:
+        print("\nKein einziges Modell hat geantwortet -- stimmt der Schluessel?")
+        return 1
+
+    print(f"\nBenutzbar: {', '.join(funktioniert)}")
+    print("\nNimm fuer GEMINI_MODEL_LITE das guenstigste, das antwortet, und fuer")
+    print("GEMINI_MODEL eines der groesseren. Den Preis dazu holst du unter")
+    print("ai.google.dev/gemini-api/docs/pricing und traegst ihn in GEMINI_PREISE")
+    print("ein -- steht dort '--', fehlt er noch.")
     return 0
 
 
@@ -493,7 +523,7 @@ def _protokoll_beruhigen() -> None:
 
 async def _lauf(abo: Optional[float], waehrung: str, kurs: float) -> int:
     _protokoll_beruhigen()
-    if not os.getenv("GEMINI_API_KEY"):
+    if not umgebung.roh("GEMINI_API_KEY"):
         print("GEMINI_API_KEY ist nicht gesetzt -- ohne echten Schlüssel gibt es")
         print("keine echten Tokenzahlen, und geschätzte wären wertlos.")
         return 1

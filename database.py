@@ -7,7 +7,15 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///mtg_app.db")
+from services import umgebung
+
+# umgebung.text statt os.getenv: .env.example listet DATABASE_URL mit dem
+# Hinweis "leer lassen für lokale SQLite" auf -- und genau dann liefert
+# os.getenv "" statt des Standards, weil der Standard nur bei einer gar nicht
+# vorhandenen Variable greift. create_async_engine("") bricht ab, die
+# Anwendung startet nicht. Wer die Beispieldatei kopiert, hat also gar keine
+# Datenbank.
+DATABASE_URL = umgebung.text("DATABASE_URL", "sqlite+aiosqlite:///mtg_app.db")
 
 # Use aiosqlite for SQLite or asyncpg for PostgreSQL
 # If it's a sqlite connection, we may need to disable check_same_thread

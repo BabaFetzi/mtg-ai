@@ -18,6 +18,8 @@ import httpx
 
 from services.cache import scryfall_cache
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # ======================================================================
@@ -36,10 +38,10 @@ SCRYFALL_HEADERS = {
 # Scryfalls Rate-Limit gilt PRO SERVER (IP), nicht pro Nutzer: bei 1000 Nutzern
 # teilen sich alle dasselbe Budget von ~10 Anfragen/Sekunde. Deshalb wird der
 # Zugriff hier GLOBAL gedrosselt statt mit lokalen Pausen pro Aufruf.
-SCRYFALL_MAX_CONCURRENCY = int(os.getenv("SCRYFALL_MAX_CONCURRENCY", "4"))
-SCRYFALL_MIN_INTERVAL = float(os.getenv("SCRYFALL_MIN_INTERVAL", "0.12"))  # ~8 req/s
-SCRYFALL_COOLDOWN_SECONDS = float(os.getenv("SCRYFALL_COOLDOWN_SECONDS", "5"))
-SCRYFALL_TIMEOUT = float(os.getenv("SCRYFALL_TIMEOUT", "8"))
+SCRYFALL_MAX_CONCURRENCY = umgebung.ganzzahl("SCRYFALL_MAX_CONCURRENCY", 4)
+SCRYFALL_MIN_INTERVAL = umgebung.zahl("SCRYFALL_MIN_INTERVAL", 0.12)  # ~8 req/s
+SCRYFALL_COOLDOWN_SECONDS = umgebung.zahl("SCRYFALL_COOLDOWN_SECONDS", 5.0)
+SCRYFALL_TIMEOUT = umgebung.zahl("SCRYFALL_TIMEOUT", 8.0)
 
 
 class _ScryfallLimiter:
@@ -495,18 +497,18 @@ def _cache_card_info(card_info: Dict[str, Any], *extra_keys: str) -> None:
 # Nutzer gleichzeitig dieselbe noch nicht gecachte Karte an, geht genau EINE
 # Anfrage an Scryfall -- alle anderen warten auf dasselbe Ergebnis.
 _inflight: Dict[str, "asyncio.Future"] = {}
-_INFLIGHT_TIMEOUT = float(os.getenv("SCRYFALL_INFLIGHT_TIMEOUT", "25"))
+_INFLIGHT_TIMEOUT = umgebung.zahl("SCRYFALL_INFLIGHT_TIMEOUT", 25.0)
 
 # Veraltete Cache-Einträge, die im Hintergrund aufgefrischt werden.
 _refresh_queued: Set[str] = set()
-MAX_BACKGROUND_REFRESH = int(os.getenv("SCRYFALL_MAX_BACKGROUND_REFRESH", "25"))
+MAX_BACKGROUND_REFRESH = umgebung.ganzzahl("SCRYFALL_MAX_BACKGROUND_REFRESH", 25)
 
 # Obergrenze für Einzelabfragen (Fuzzy/Sprachsuche) pro Aufruf. Sie erlauben
 # eine BEGRENZTE Degradation: fällt der Sammel-Endpunkt aus (5xx/Timeout),
 # bekommen Nutzer wenigstens einen Teil der Daten -- ohne dass daraus wieder
 # hunderte Anfragen werden. Bei echter Drosselung (429) greift die Grenze gar
 # nicht erst, dort werden Fallbacks komplett übersprungen.
-MAX_FALLBACK_LOOKUPS = int(os.getenv("SCRYFALL_MAX_FALLBACK_LOOKUPS", "10"))
+MAX_FALLBACK_LOOKUPS = umgebung.ganzzahl("SCRYFALL_MAX_FALLBACK_LOOKUPS", 10)
 
 
 def _is_stale(entry: Optional[dict]) -> bool:

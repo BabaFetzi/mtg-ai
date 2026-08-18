@@ -40,6 +40,8 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from services import umgebung  # noqa: E402
+
 STANDARD_ZIEL = "sicherungen"
 # So viele Sicherungen bleiben liegen. Bei einem täglichen Lauf sind das zwei
 # Wochen -- lange genug, um einen Fehler zu bemerken, der erst später auffällt.
@@ -47,7 +49,7 @@ BEHALTEN = 14
 
 
 def datenbank_url() -> str:
-    return os.getenv("DATABASE_URL", "sqlite+aiosqlite:///mtg_app.db")
+    return umgebung.text("DATABASE_URL", "sqlite+aiosqlite:///mtg_app.db")
 
 
 def ist_sqlite(url: str) -> bool:

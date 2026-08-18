@@ -27,6 +27,8 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Felder, die niemals in einem Fehlerbericht landen dürfen -- auch nicht
@@ -80,7 +82,7 @@ def einrichten() -> bool:
 
     Gibt zurück, ob die Überwachung aktiv ist.
     """
-    dsn = (os.getenv("SENTRY_DSN") or "").strip()
+    dsn = umgebung.text("SENTRY_DSN")
     if not dsn:
         logger.info("SENTRY_DSN nicht gesetzt -- Fehler werden nur ins Log geschrieben.")
         return False
@@ -94,23 +96,23 @@ def einrichten() -> bool:
             "Fehler nur ins Log geschrieben.")
         return False
 
-    umgebung = os.getenv("GRANA_ENV", "development")
+    betriebsart = umgebung.text("GRANA_ENV", "development")
     try:
         sentry_sdk.init(
             dsn=dsn,
-            environment=umgebung,
+            environment=betriebsart,
             # Anteil der Anfragen, für die Laufzeiten gemessen werden. 0 heisst:
             # nur Fehler. Messungen kosten Geld und Rechenzeit; wer sie will,
             # stellt sie bewusst ein.
-            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0")),
+            traces_sample_rate=umgebung.zahl("SENTRY_TRACES_SAMPLE_RATE", 0.0),
             # Keine personenbezogenen Daten (IP-Adressen, Kopfzeilen, Rumpf).
             send_default_pii=False,
             before_send=vor_dem_senden,
-            release=os.getenv("GRANA_VERSION") or None,
+            release=umgebung.roh("GRANA_VERSION"),
         )
     except Exception:
         logger.warning("Sentry liess sich nicht einrichten", exc_info=True)
         return False
 
-    logger.info("Fehlermeldung aktiv (Umgebung: %s)", umgebung)
+    logger.info("Fehlermeldung aktiv (Umgebung: %s)", betriebsart)
     return True

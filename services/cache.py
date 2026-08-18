@@ -15,15 +15,17 @@ import sqlite3
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Prozessinterner Speicher-Cache VOR Redis/SQLite. Kartendaten werden beim
 # Rendern einer Sammlung hunderte Male gelesen; ohne diese Ebene kostet jeder
 # einzelne Treffer einen Netzwerk- bzw. Datei-Zugriff.
-MEM_CACHE_MAX_ENTRIES = int(os.getenv("CACHE_MEMORY_MAX_ENTRIES", "5000"))
+MEM_CACHE_MAX_ENTRIES = umgebung.ganzzahl("CACHE_MEMORY_MAX_ENTRIES", 5000)
 # Bewusst kürzer als die Gesamt-TTL: laufen mehrere Worker-Prozesse, sollen
 # Aktualisierungen (z.B. neue Preise) trotzdem zeitnah durchschlagen.
-MEM_CACHE_TTL_SECONDS = int(os.getenv("CACHE_MEMORY_TTL_SECONDS", "300"))
+MEM_CACHE_TTL_SECONDS = umgebung.ganzzahl("CACHE_MEMORY_TTL_SECONDS", 300)
 
 # SQLite erlaubt nur begrenzt viele Parameter pro Query.
 _SQLITE_MAX_VARIABLES = 500
@@ -50,13 +52,18 @@ class HybridCache:
         # sammlung_alben -- SQLite sperrt beim Schreiben die ganze Datei, wodurch
         # Login und Sammlung minutenlang blockierten. Getrennte Dateien = keine
         # Sperr-Konkurrenz zwischen Cache und Nutzerdaten.
-        self.db_path = db_path or os.getenv("CACHE_DB_PATH", "scryfall_cache.db")
-        # Erst zur Instanziierung ausgewertet (nicht als Default-Parameter-
-        # Wert bei Modul-Import) -- REDIS_URL wie an den anderen Stellen im
-        # Projekt (services/limiter.py, services/usage_limiter.py) aus der
-        # Umgebung gelesen, damit es sowohl lokal als auch containerisiert
-        # korrekt funktioniert, statt fest auf localhost verdrahtet zu sein.
-        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379")
+        self.db_path = db_path or umgebung.text("CACHE_DB_PATH", "scryfall_cache.db")
+        # Erst zur Instanziierung ausgewertet (nicht als Default-Parameter-Wert
+        # bei Modul-Import), damit es lokal wie containerisiert stimmt.
+        #
+        # REDIS_URL wird hier genauso gelesen wie in services/limiter.py: nicht
+        # gesetzt ODER leer heisst "kein Redis". Vorher stand hier ein fester
+        # Standard auf localhost -- dadurch benutzte der Kartencache bei einem
+        # zufällig laufenden lokalen Redis eine andere Ablage als Drosselung
+        # und Nutzungslimits, ohne dass das irgendwo konfiguriert war. Ein
+        # leerer Wert lief ausserdem in redis.from_url("") und wurde nur vom
+        # Auffangblock unten gerettet, mit einer irreführenden Meldung.
+        self.redis_url = redis_url or umgebung.roh("REDIS_URL")
         self.ttl = ttl_seconds
         self.redis_client = None
         self.use_redis = False
@@ -71,6 +78,13 @@ class HybridCache:
         self._local = threading.local()
 
         # --- Redis-Verbindung versuchen ---
+        if not self.redis_url:
+            logger.info("REDIS_URL nicht gesetzt -- der Kartencache liegt in "
+                        "SQLite (%s).", self.db_path)
+            self.use_redis = False
+            self._init_sqlite_cache()
+            return
+
         try:
             import redis
             self.redis_client = redis.from_url(self.redis_url, socket_timeout=1)

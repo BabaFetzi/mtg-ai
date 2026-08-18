@@ -24,14 +24,16 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Obergrenze des Puffers: lieber alte Telemetrie verwerfen als Speicher volllaufen
 # lassen, falls die Datenbank längere Zeit nicht erreichbar ist.
-MAX_BUFFER = int(os.getenv("AI_LOG_MAX_BUFFER", "2000"))
+MAX_BUFFER = umgebung.ganzzahl("AI_LOG_MAX_BUFFER", 2000)
 
 # Aufbewahrungsdauer; das Aufräumen erledigt die Wartungsaufgabe in main.py.
-AI_LOG_RETENTION_DAYS = int(os.getenv("AI_LOG_RETENTION_DAYS", "30"))
+AI_LOG_RETENTION_DAYS = umgebung.ganzzahl("AI_LOG_RETENTION_DAYS", 30)
 
 
 def _log_content_enabled() -> bool:

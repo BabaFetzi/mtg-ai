@@ -24,13 +24,15 @@ import os
 import time
 from datetime import datetime, timedelta
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
-FRISCHE_SEKUNDEN = float(os.getenv("GESPERRT_FRISCHE_SEKUNDEN", "30"))
+FRISCHE_SEKUNDEN = umgebung.zahl("GESPERRT_FRISCHE_SEKUNDEN", 30.0)
 
 # Wie lange ein Sperrvermerk gebraucht wird: solange irgendein Token gelten
 # kann. Danach ist er gegenstandslos.
-GUELTIG_TAGE = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+GUELTIG_TAGE = umgebung.ganzzahl("REFRESH_TOKEN_EXPIRE_DAYS", 30)
 
 _gesperrt: set = set()
 _stand: float = 0.0

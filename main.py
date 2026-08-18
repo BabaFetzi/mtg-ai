@@ -30,7 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from database import init_db
-from services import ai_usage_log
+from services import ai_usage_log, umgebung
 from services.limiter import limiter
 from routers import cards, auth, collection, decks, ai, payments, vision, konto
 
@@ -38,12 +38,29 @@ from routers import cards, auth, collection, decks, ai, payments, vision, konto
 # Logging: zentral hier konfiguriert (Entrypoint). Jedes Modul nutzt
 # `logging.getLogger(__name__)`; Level ist über LOG_LEVEL steuerbar
 # (z.B. "DEBUG" in der Entwicklung, Default "INFO").
+#
+# Ein leeres oder falsch geschriebenes LOG_LEVEL darf den Start nicht
+# verhindern: basicConfig(level="") wirft ValueError, und die Anwendung wäre
+# wegen einer Protokoll-Einstellung komplett weg. Deshalb wird der Wert
+# geprüft, bevor er benutzt wird -- und ein unbekannter laut gemeldet.
 # ======================================================================
+_LOG_STUFEN = {"CRITICAL", "FATAL", "ERROR", "WARNING", "WARN", "INFO", "DEBUG", "NOTSET"}
+_LOG_LEVEL = umgebung.text("LOG_LEVEL", "INFO").upper()
+if _LOG_LEVEL not in _LOG_STUFEN:
+    _LOG_LEVEL, _LOG_LEVEL_FALSCH = "INFO", _LOG_LEVEL
+else:
+    _LOG_LEVEL_FALSCH = None
+
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    level=_LOG_LEVEL,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+if _LOG_LEVEL_FALSCH:
+    logger.error("LOG_LEVEL=%r ist keine bekannte Stufe -- benutzt wird INFO. "
+                 "Erlaubt sind DEBUG, INFO, WARNING, ERROR, CRITICAL.",
+                 _LOG_LEVEL_FALSCH)
 
 # ======================================================================
 # CORS: erlaubte Origins
@@ -65,10 +82,10 @@ def get_allowed_origins() -> list[str]:
 # ======================================================================
 # Lifespan Events (Datenbank-Initialisierung beim Startup)
 # ======================================================================
-MAINTENANCE_INTERVAL_SECONDS = int(os.getenv("MAINTENANCE_INTERVAL_SECONDS", "1800"))
+MAINTENANCE_INTERVAL_SECONDS = umgebung.ganzzahl("MAINTENANCE_INTERVAL_SECONDS", 1800)
 # Takt, in dem das gepufferte KI-Protokoll in die Datenbank geschrieben wird.
-AI_LOG_FLUSH_SECONDS = int(os.getenv("AI_LOG_FLUSH_SECONDS", "30"))
-JOB_RETENTION_HOURS = int(os.getenv("JOB_RETENTION_HOURS", "24"))
+AI_LOG_FLUSH_SECONDS = umgebung.ganzzahl("AI_LOG_FLUSH_SECONDS", 30)
+JOB_RETENTION_HOURS = umgebung.ganzzahl("JOB_RETENTION_HOURS", 24)
 
 
 async def _run_maintenance() -> None:

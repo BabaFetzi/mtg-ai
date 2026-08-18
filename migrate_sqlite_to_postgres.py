@@ -33,10 +33,12 @@ from database import Base, User, Collection, Deck
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+from services import umgebung
+
 logger = logging.getLogger("migrate_sqlite_to_postgres")
 
-SQLITE_PATH = os.getenv("SQLITE_PATH", "mtg_app.db")
-POSTGRES_URL = os.getenv("DATABASE_URL")
+SQLITE_PATH = umgebung.text("SQLITE_PATH", "mtg_app.db")
+POSTGRES_URL = umgebung.roh("DATABASE_URL")
 
 
 def _parse_dt(value) -> Optional[datetime]:

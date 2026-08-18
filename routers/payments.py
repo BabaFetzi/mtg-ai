@@ -29,6 +29,8 @@ from database import get_db_session
 from services.cache import scryfall_cache
 from schemas.models import CheckoutReq, VerifySessionReq
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # ======================================================================
@@ -58,7 +60,7 @@ def get_stripe_val(obj, key, default=None):
 # daraus je Aufruf ein echter Stripe-Aufruf: im Log eines einzigen Besuchs über
 # ein Dutzend. Bei mehreren tausend Nutzern wäre das ein Vielfaches der
 # Stripe-Ratengrenze -- und jeder Aufruf verzögert den Seitenaufbau.
-PREIS_CACHE_SEKUNDEN = int(os.getenv("PREMIUM_PRICE_CACHE_SECONDS", "600"))
+PREIS_CACHE_SEKUNDEN = umgebung.ganzzahl("PREMIUM_PRICE_CACHE_SECONDS", 600)
 
 # ======================================================================
 # Welche Abo-Zustände Premium bedeuten
@@ -107,7 +109,7 @@ def _fallback_price():
     (PREMIUM_PRICE_DISPLAY z.B. '3.90', PREMIUM_CURRENCY z.B. 'CHF'/'EUR'). So zeigt
     die Preisseite einen Preis statt 'nicht verfügbar', ohne dass ein Preis im Code
     hartcodiert wird."""
-    raw = os.getenv("PREMIUM_PRICE_DISPLAY")
+    raw = umgebung.roh("PREMIUM_PRICE_DISPLAY")
     if not raw:
         return None
     try:
@@ -117,8 +119,8 @@ def _fallback_price():
     return {
         "konfiguriert": True,
         "betrag": betrag,
-        "waehrung": os.getenv("PREMIUM_CURRENCY", "CHF").upper(),
-        "intervall": os.getenv("PREMIUM_INTERVAL", "month"),
+        "waehrung": umgebung.text("PREMIUM_CURRENCY", "CHF").upper(),
+        "intervall": umgebung.text("PREMIUM_INTERVAL", "month"),
         "quelle": "fallback",
     }
 
@@ -145,8 +147,8 @@ async def get_checkout_price():
     # Konfiguration ZUERST prüfen, dann erst den Zwischenspeicher: Fehlt der
     # Schlüssel oder die Preis-ID, darf kein zuvor gemerkter Preis mehr
     # ausgeliefert werden.
-    stripe_key = os.getenv("STRIPE_SECRET_KEY")
-    price_id = os.getenv("STRIPE_PRICE_ID")
+    stripe_key = umgebung.roh("STRIPE_SECRET_KEY")
+    price_id = umgebung.roh("STRIPE_PRICE_ID")
     if not stripe_key or not price_id:
         return _fallback_price() or {"konfiguriert": False}
 
@@ -184,8 +186,8 @@ async def get_checkout_price():
     summary="Stripe Checkout Session erstellen",
 )
 async def create_checkout_session(req: CheckoutReq, current_user: str = Depends(get_current_user)):
-    stripe_key = os.getenv("STRIPE_SECRET_KEY")
-    price_id = os.getenv("STRIPE_PRICE_ID")
+    stripe_key = umgebung.roh("STRIPE_SECRET_KEY")
+    price_id = umgebung.roh("STRIPE_PRICE_ID")
     if not stripe_key or not price_id:
         # Fallback simulated checkout url (Simuliert den Upgrade-Flow für lokale Entwicklung,
         # nur wenn Stripe wirklich nicht konfiguriert ist -- kein Dummy-Preis-Versuch mehr)
@@ -232,7 +234,7 @@ async def verify_checkout_session(req: VerifySessionReq, current_user: str = Dep
     die Rolle gesetzt. So kann niemand mit einer fremden/unbezahlten Session
     Premium erschleichen. Das ist idempotent zum Webhook (setzt denselben Zustand).
     """
-    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    stripe_key = umgebung.roh("STRIPE_SECRET_KEY")
     if not stripe_key:
         return {"erfolg": False, "error": "Stripe ist auf diesem Server nicht konfiguriert."}
 
@@ -284,7 +286,7 @@ async def cancel_subscription(current_user: str = Depends(get_current_user)):
     - Hat der Nutzer KEIN Stripe-Abo (z.B. per Admin/Dev-Upgrade Premium),
       gibt es eine ehrliche Fehlermeldung statt einer Schein-Kündigung.
     """
-    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    stripe_key = umgebung.roh("STRIPE_SECRET_KEY")
     if not stripe_key:
         return {"erfolg": False, "error": "Stripe ist auf diesem Server nicht konfiguriert."}
 
@@ -345,8 +347,8 @@ async def handle_stripe_webhook_logic(request: Request):
     """
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
-    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
-    stripe_key = os.getenv("STRIPE_SECRET_KEY")
+    webhook_secret = umgebung.roh("STRIPE_WEBHOOK_SECRET")
+    stripe_key = umgebung.roh("STRIPE_SECRET_KEY")
 
     if stripe_key:
         stripe.api_key = stripe_key

@@ -18,11 +18,13 @@ import os
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 
 def _resolve_storage_uri():
-    redis_url = os.getenv("REDIS_URL")
+    redis_url = umgebung.roh("REDIS_URL")
     if not redis_url:
         return None
     try:
@@ -59,7 +61,11 @@ def _weiterleitungs_ip(request) -> str:
     Ohne dieses Vertrauen könnte jeder die Kopfzeile selbst setzen und damit
     das Limit umgehen. Standard ist deshalb aus.
     """
-    if os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() not in ("1", "true", "yes"):
+    # umgebung.schalter statt eines eigenen Vergleichs: es meldet einen
+    # unverstandenen Wert ("ture") ins Protokoll, statt ihn still als "aus" zu
+    # lesen. Der Standard bleibt aus -- ein versehentlich vertrauter Proxy
+    # waere eine Luecke in der Drosselung.
+    if not umgebung.schalter("TRUST_PROXY_HEADERS", False):
         return ""
     kette = request.headers.get("x-forwarded-for", "")
     # Der erste Eintrag ist der ursprüngliche Absender.

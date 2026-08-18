@@ -23,6 +23,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Name der Umgebungsvariable mit dem Gemini-API-Key (zentral, damit Judge und
@@ -207,19 +209,28 @@ def _protokolliere(**kwargs):
 # hingegen immer auf das aktuelle Modell und brechen darum nicht weg.
 # Ein bestimmtes Modell lässt sich per GEMINI_MODEL / GEMINI_MODEL_LITE in der
 # .env erzwingen (z.B. gemini-2.0-flash oder gemini-3-flash-preview).
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
-MODEL_LITE_NAME = os.getenv("GEMINI_MODEL_LITE", "gemini-flash-lite-latest")
+#
+# umgebung.text statt os.getenv: eine LEERE Zeile "GEMINI_MODEL=" in der .env
+# muss den Standard ergeben, nicht "". os.getenv liefert den Standard nur bei
+# einer gar nicht vorhandenen Variable -- mit einem leeren Modellnamen
+# scheiterte jeder KI-Aufruf mit "model is required", noch bevor überhaupt eine
+# Anfrage an Google ging.
+MODEL_NAME = umgebung.text("GEMINI_MODEL", "gemini-flash-latest")
+MODEL_LITE_NAME = umgebung.text("GEMINI_MODEL_LITE", "gemini-flash-lite-latest")
 
 # Ersatzmodelle: Fällt das Hauptmodell aus (abgeschaltetes Modell, Überlastung,
 # regionale Störung), wird EINMAL mit diesem Modell wiederholt. Standardmäßig
 # stützt sich das teure Modell auf das günstige und umgekehrt -- so bleibt die
 # Funktion verfügbar, statt für den Nutzer komplett auszufallen.
-MODEL_FALLBACK_NAME = os.getenv("GEMINI_MODEL_FALLBACK", MODEL_LITE_NAME)
-MODEL_LITE_FALLBACK_NAME = os.getenv("GEMINI_MODEL_LITE_FALLBACK", MODEL_NAME)
+MODEL_FALLBACK_NAME = umgebung.text("GEMINI_MODEL_FALLBACK", MODEL_LITE_NAME)
+MODEL_LITE_FALLBACK_NAME = umgebung.text("GEMINI_MODEL_LITE_FALLBACK", MODEL_NAME)
 
 model = None
 model_lite = None
-api_key = os.getenv(GEMINI_API_KEY_ENV)
+# roh() statt getenv: schneidet Randleerzeichen ab. Ein beim Kopieren
+# mitgenommenes Leerzeichen im Schlüssel führt sonst zu "API key not valid" --
+# einem Fehler, den man an der richtig aussehenden .env-Zeile nicht sieht.
+api_key = umgebung.roh(GEMINI_API_KEY_ENV)
 
 if KI_VERFUEGBAR and api_key:
     try:

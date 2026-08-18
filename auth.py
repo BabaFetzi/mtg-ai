@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from services import umgebung
+
 logger = logging.getLogger(__name__)
 
 # Mindestlänge für den Token-Schlüssel. HS256 arbeitet mit einem 256-Bit-
@@ -25,7 +27,12 @@ MIN_SECRET_LAENGE = 32
 # im laufenden Betrieb fehl, weil Worker A ein Token nicht prüfen konnte, das
 # Worker B ausgestellt hatte. Eine Warnung, die man überlesen kann, ist hier
 # keine Absicherung.
-GRANA_ENV = os.getenv("GRANA_ENV", "development").strip().lower()
+#
+# umgebung.text statt os.getenv: bei "GRANA_ENV=" (leer, wie in einer kopierten
+# .env.example) liefert os.getenv "" statt des Standards. Hier wäre das
+# besonders unangenehm -- die Anwendung liefe dann im Entwicklungsmodus, und
+# genau die Pflichtprüfung unten bliebe still aus.
+GRANA_ENV = umgebung.text("GRANA_ENV", "development").lower()
 IST_PRODUKTION = GRANA_ENV in {"production", "prod", "produktion"}
 
 _SCHLUESSEL_HINWEIS = (
