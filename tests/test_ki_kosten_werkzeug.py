@@ -126,7 +126,9 @@ def test_alter_einheitspreis_gilt_weiter(capsys, monkeypatch):
     monkeypatch.setenv("GEMINI_PRICE_INPUT_PER_MTOK", "1.00")
     monkeypatch.setenv("GEMINI_PRICE_OUTPUT_PER_MTOK", "2.00")
 
-    _bericht([zeile("judge", 1_000_000, 1_000_000)], abo=None, waehrung="CHF")
+    # Vollstaendige Messung: hier geht es um den Preis, nicht um die
+    # Vollstaendigkeitspruefung -- die haette sonst schon vorher abgebrochen.
+    _bericht(MESSUNG, abo=None, waehrung="CHF")
     ausgabe = capsys.readouterr().out
 
     assert "Preis fehlt" not in ausgabe
@@ -222,3 +224,62 @@ def test_gescheitert_auf_demselben_modell_ist_kein_ersatz(preise, capsys):
     _bericht(messung, abo=20.00, waehrung="CHF")
 
     assert "ERSATZMODELL" not in capsys.readouterr().out
+
+
+# ----------------------------------------------------------------------
+# Eine fehlende Messung ist kein Nullposten
+# ----------------------------------------------------------------------
+# Aufgetreten im zweiten echten Lauf: Deck-Analyse, Deck-Roast und Kartensuche
+# kamen aus dem Cache (dieselben Testdaten wie beim ersten Lauf), also wurde
+# Gemini gar nicht gefragt und es standen nur noch 3 statt 9 Aufrufe im
+# Protokoll. Alle Endpunkte meldeten trotzdem HTTP 200.
+#
+# Der Bericht setzte daraufhin fuer den teuersten Textaufruf den Judge an
+# (866 Tokens auf dem guenstigen Modell statt 2.521 auf dem teuren), rechnete
+# die Kartensuche mit 0 und meldete "0.72 CHF, Marge 81 Prozent" -- mit
+# Rueckgabewert 0, also als sauberes Ergebnis.
+
+def test_fehlende_messung_verhindert_ein_ergebnis(preise, capsys):
+    nur_teilweise = [
+        zeile("judge", 866, 174),
+        zeile("vision_erkennung", 1_181, 318),
+        zeile("vision_rat", 245, 164),
+        # deck_analyse, deck_roast und die Kartensuche fehlen -- aus dem Cache.
+    ]
+
+    kode = _bericht(nur_teilweise, abo=3.90, waehrung="CHF", kurs=0.79)
+    ausgabe = capsys.readouterr().out
+
+    assert kode == 3, "eine unvollstaendige Messung darf kein Erfolg sein"
+    assert "KEIN ERGEBNIS" in ausgabe
+    assert "Deck-Analyse" in ausgabe
+    assert "Deck-Roast" in ausgabe
+    assert "Kartensuche" in ausgabe
+    # Und vor allem: keine Marge, die nach einem Ergebnis aussieht.
+    assert "Marge" not in ausgabe
+
+
+def test_vollstaendige_messung_liefert_weiterhin_ein_ergebnis(preise, capsys):
+    """Die Gegenprobe -- MESSUNG deckt alle erwarteten Funktionen ab."""
+    kode = _bericht(MESSUNG, abo=20.00, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert kode == 0
+    assert "KEIN ERGEBNIS" not in ausgabe
+    assert "Marge" in ausgabe
+
+
+def test_null_tokens_zaehlen_nicht_als_messung(preise, capsys):
+    """Die Kartensuche stand mit 0 Eingabe / 0 Ausgabe in der Tabelle und ging
+    trotzdem als gemessen durch -- ein Aufruf ohne Tokens ist keine Messung."""
+    messung = [dict(z) for z in MESSUNG]
+    for z in messung:
+        if z["funktion"] == "kartenname_uebersetzung":
+            z["prompt_tokens"] = z["antwort_tokens"] = 0
+        if z["funktion"] == "kartenname_auswahl":
+            z["prompt_tokens"] = z["antwort_tokens"] = 0
+
+    kode = _bericht(messung, abo=20.00, waehrung="CHF")
+
+    assert kode == 3
+    assert "Kartensuche" in capsys.readouterr().out

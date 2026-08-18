@@ -63,6 +63,31 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ----------------------------------------------------------------------
+# Eigener, leerer Zwischenspeicher -- MUSS vor den App-Importen stehen
+# ----------------------------------------------------------------------
+# Deck-Analyse und Deck-Roast legen ihr Ergebnis unter deck_analysis:<hash>
+# bzw. deck_roast:<hash> im Kartencache ab (routers/decks.py), die Kartensuche
+# ebenso. Der Cache liegt in einer DATEI, die zwischen zwei Laeufen liegen
+# bleibt -- und das Testdeck ist immer dasselbe.
+#
+# Folge: der zweite Lauf beantwortete Deck-Analyse, Deck-Roast und Suche aus
+# dem Cache, ohne Gemini auch nur anzufassen. HTTP 200 fuer alles, aber statt
+# 9 nur noch 3 protokollierte Aufrufe -- und die Hochrechnung setzte fuer den
+# teuersten Textaufruf den Judge an statt der Deck-Analyse. Das Ergebnis sah
+# mit 0.72 CHF hervorragend aus und war das Gegenteil einer Messung.
+#
+# Ein Messwerkzeug darf nicht davon abhaengen, was zufaellig im Cache liegt.
+# Deshalb bekommt jeder Lauf eine eigene, leere Cache-Datei (unten wieder
+# geloescht) und benutzt ausdruecklich kein Redis -- sonst laege dasselbe
+# Ergebnis dort.
+import tempfile  # noqa: E402
+
+_CACHE_DATEI = os.path.join(tempfile.gettempdir(),
+                            f"grana_kostenmessung_{os.getpid()}.db")
+os.environ["CACHE_DB_PATH"] = _CACHE_DATEI
+os.environ["REDIS_URL"] = ""
+
 # Monatsgrenzen aus dem Produktivcode -- nicht hier noch einmal hinschreiben,
 # sonst rechnet das Werkzeug irgendwann etwas anderes als die Anwendung tut.
 from services.usage_limiter import (  # noqa: E402
@@ -269,6 +294,34 @@ def _ersatz_hinweise(zeilen: List[dict]) -> List[str]:
     return hinweise
 
 
+# Was ein vollstaendiger Lauf gemessen haben MUSS. Fehlt eine dieser
+# Funktionen, ist die Hochrechnung unbrauchbar -- und zwar nach unten:
+# der fehlende Posten geht mit null Kosten in die Summe ein.
+#
+# Das ist wirklich passiert. Deck-Analyse und Deck-Roast kamen aus dem Cache,
+# also fehlten sie im Protokoll; fuer den teuersten Textaufruf setzte das
+# Werkzeug daraufhin den Judge an (866 Tokens statt 2.521, dazu auf dem
+# guenstigen Modell) und meldete 0.72 CHF bei 81 Prozent Marge. Eine Zahl,
+# der man nichts ansieht.
+ERWARTETE_MESSUNGEN = [
+    ("Judge",                     ("judge",)),
+    ("Deck-Analyse",              ("deck_analyse",)),
+    ("Deck-Roast",                ("deck_roast",)),
+    ("Live-Vision Bilderkennung", ("vision_erkennung", "karte_erkennen")),
+    ("Live-Vision Taktikhinweis", ("vision_rat",)),
+    ("Kartensuche",               ("kartenname_uebersetzung", "kartenname_auswahl",
+                                   "kartentext_uebersetzung")),
+]
+
+
+def _fehlende_messungen(zeilen: List[dict]) -> List[str]:
+    """Erwartete Funktionen, für die kein erfolgreicher Aufruf vorliegt."""
+    gemessen = {z["funktion"] for z in zeilen
+                if z["erfolg"] and (z["prompt_tokens"] or z["antwort_tokens"])}
+    return [bezeichnung for bezeichnung, namen in ERWARTETE_MESSUNGEN
+            if not any(n in gemessen for n in namen)]
+
+
 def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
              kurs: float = 1.0) -> int:
     from services.ai_preise import kosten as modellkosten, preis_fuer, tabelle
@@ -412,6 +465,17 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
     for zeile_ersatz in _ersatz_hinweise(zeilen):
         print(zeile_ersatz)
 
+    # --- Ist ueberhaupt jede Funktion gemessen worden? ---
+    fehlend = _fehlende_messungen(zeilen)
+    if fehlend:
+        print()
+        print("ACHTUNG: Für diese Funktionen liegt keine Messung vor:")
+        for f in fehlend:
+            print(f"  {f}")
+        print("Sie gehen mit NULL in die Summe ein -- der echte Betrag ist also")
+        print("höher. Häufigste Ursache: das Ergebnis kam aus dem Cache, statt")
+        print("Gemini wirklich zu fragen.")
+
     if ohne_preis:
         print()
         print("ACHTUNG: Für diese Modelle ist kein Preis hinterlegt, sie fehlen")
@@ -441,6 +505,16 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
         print(f"Die {gesamt_kosten:.2f} {waehrung} oben sind eine Untergrenze, "
               f"nicht die Antwort.")
         print("Trag die fehlenden Preise nach und lass den Lauf erneut laufen.")
+        return 3
+
+    if fehlend:
+        # Dasselbe Prinzip wie beim fehlenden Preis, nur eine Stufe frueher:
+        # eine fehlende MESSUNG geht mit null Kosten in die Summe ein und
+        # verschiebt ausserdem, welcher Aufruf als "teuerster" gilt.
+        print("KEIN ERGEBNIS: nicht jede KI-Funktion wurde gemessen.")
+        print(f"Die {gesamt_kosten:.2f} {waehrung} oben sind eine Untergrenze, "
+              f"nicht die Antwort.")
+        print("Es fehlen: " + ", ".join(fehlend))
         return 3
 
     print(f"Ein Premium-Nutzer kostet dich im schlimmsten Fall "
@@ -640,10 +714,19 @@ def main() -> int:
         help="nur auflisten, welche Modelle dieser Schluessel benutzen darf, "
              "und nichts messen")
     args = zerleger.parse_args()
-    if args.modelle:
-        _protokoll_beruhigen()
-        return modelle_auflisten()
-    return asyncio.run(_lauf(args.abo, args.waehrung, args.kurs))
+    try:
+        if args.modelle:
+            _protokoll_beruhigen()
+            return modelle_auflisten()
+        return asyncio.run(_lauf(args.abo, args.waehrung, args.kurs))
+    finally:
+        # Die Wegwerf-Cache-Datei nicht liegen lassen -- der naechste Lauf soll
+        # ohnehin eine eigene bekommen, und im Temp-Ordner sammeln sie sich sonst an.
+        for endung in ("", "-wal", "-shm"):
+            try:
+                os.remove(_CACHE_DATEI + endung)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
