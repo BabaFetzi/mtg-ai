@@ -45,6 +45,13 @@
 #  richtig.
 # ============================================================================
 
+param(
+    # Startet nichts, sondern zeigt nur, wie python, npm und stripe auf DIESEM
+    # Rechner aufgeloest werden. Gedacht fuer den Fall, dass ein Start
+    # scheitert: die Ausgabe sagt in einem Schritt, woran es liegt.
+    [switch]$Diagnose
+)
+
 $ErrorActionPreference = 'Stop'
 
 # PowerShell ab 7.3 behandelt JEDE Ausgabe eines externen Programms auf der
@@ -81,6 +88,78 @@ function Vorhanden([string]$Befehl) {
     $null -ne (Get-Command $Befehl -ErrorAction SilentlyContinue)
 }
 
+function StarteProgramm([string]$Befehl, [string[]]$Argumente, [string]$Verzeichnis) {
+    <#
+        Startet ein Programm -- auch dann, wenn es gar keine .exe ist.
+
+        Der Grund: Mit -NoNewWindow benutzt Start-Process CreateProcess, und
+        das kann NUR echte ausfuehrbare Dateien starten. Die Stripe-CLI und npm
+        liegen auf Windows aber haeufig als .cmd-Zwischenstueck vor (Scoop,
+        Chocolatey, npm selbst). Der Versuch endet dann mit
+
+            %1 ist keine zulaessige Win32-Anwendung.
+
+        -- einer Meldung, die aussieht, als waere das Programm kaputt, obwohl
+        es voellig in Ordnung ist. Dieselbe Datei laesst sich naemlich ueber
+        den Aufrufoperator (&) problemlos ausfuehren, weil PowerShell dort die
+        Kommandozeile dazwischenschaltet.
+
+        Genau das wird hier von Hand gemacht: .cmd und .bat laufen ueber
+        cmd.exe, .ps1 ueber PowerShell, alles andere direkt.
+    #>
+    $gefunden = Get-Command $Befehl -ErrorAction SilentlyContinue
+    if (-not $gefunden) {
+        throw "Das Programm '$Befehl' wurde nicht gefunden."
+    }
+
+    $pfad = $gefunden.Source
+    if (-not $pfad) { $pfad = $Befehl }
+    $endung = [System.IO.Path]::GetExtension($pfad).ToLowerInvariant()
+
+    $rest = $Argumente -join ' '
+
+    try {
+        switch ($endung) {
+            { @('.cmd', '.bat') -contains $_ } {
+                # Die Anfuehrungszeichen-Regeln von cmd.exe sind heikel, und
+                # npm liegt oft unter "C:\Program Files\nodejs\" -- also MIT
+                # Leerzeichen. Verlaesslich ist genau eine Form:
+                #
+                #     cmd /s /c ""C:\Pfad mit Leerzeichen\npm.cmd" run dev"
+                #
+                # Mit /s nimmt cmd alles zwischen dem ERSTEN und dem LETZTEN
+                # Anfuehrungszeichen woertlich. Uebergeben wird das als EINE
+                # Zeichenkette, weil PowerShell bei einem Array selbst noch
+                # einmal Anfuehrungszeichen setzt und die Form damit zerstoert.
+                return Start-Process -FilePath $env:ComSpec `
+                    -ArgumentList "/s /c `"`"$pfad`" $rest`"" `
+                    -WorkingDirectory $Verzeichnis -PassThru -NoNewWindow
+            }
+            '.ps1' {
+                return Start-Process -FilePath 'powershell.exe' `
+                    -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$pfad`" $rest" `
+                    -WorkingDirectory $Verzeichnis -PassThru -NoNewWindow
+            }
+            default {
+                # Echte Programme kann Start-Process direkt starten. Hier ist
+                # das Array richtig: es setzt Anfuehrungszeichen genau dort,
+                # wo ein einzelnes Argument Leerzeichen enthaelt.
+                if ($Argumente -and $Argumente.Count -gt 0) {
+                    return Start-Process -FilePath $pfad -ArgumentList $Argumente `
+                        -WorkingDirectory $Verzeichnis -PassThru -NoNewWindow
+                }
+                return Start-Process -FilePath $pfad `
+                    -WorkingDirectory $Verzeichnis -PassThru -NoNewWindow
+            }
+        }
+    } catch {
+        # Mit dem aufgeloesten Pfad in der Meldung ist ein solcher Fehler beim
+        # naechsten Mal in einem Schritt zu klaeren statt in dreien.
+        throw ("'{0}' liess sich nicht starten. Aufgeloest zu: {1} (Endung '{2}'). Ursache: {3}" `
+               -f $Befehl, $pfad, $endung, $_.Exception.Message)
+    }
+}
+
 function PortBelegt([int]$Port) {
     # Get-NetTCPConnection gibt es nicht ueberall (PowerShell 5 auf aelteren
     # Systemen, PowerShell Core auf macOS). Faellt es aus, wird der Port als
@@ -90,6 +169,24 @@ function PortBelegt([int]$Port) {
     } catch {
         $false
     }
+}
+
+if ($Diagnose) {
+    Titel 'Diagnose -- wie werden die Programme aufgeloest?'
+    foreach ($b in @('python', 'npm', 'stripe')) {
+        $g = Get-Command $b -ErrorAction SilentlyContinue
+        if ($g) {
+            Schreib ("{0,-8} {1,-12} {2}" -f $b, $g.CommandType, $g.Source) Green
+        } else {
+            Schreib ("{0,-8} NICHT GEFUNDEN" -f $b) Yellow
+        }
+    }
+    Schreib ''
+    Schreib ("PowerShell {0} auf {1}" -f $PSVersionTable.PSVersion, [System.Environment]::OSVersion.VersionString) DarkGray
+    $venv = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+    Schreib ("venv       {0}" -f $(if (Test-Path $venv) { 'vorhanden' } else { 'fehlt' })) DarkGray
+    Schreib (".env       {0}" -f $(if (Test-Path '.env') { 'vorhanden' } else { 'fehlt' })) DarkGray
+    exit 0
 }
 
 Titel 'Grana - lokaler Start'
@@ -200,23 +297,32 @@ try {
     if ($LokalerWebhookSchluessel) {
         $env:STRIPE_WEBHOOK_SECRET = $LokalerWebhookSchluessel
     }
-    $Prozesse += Start-Process -FilePath $VenvPython `
-        -ArgumentList '-m', 'uvicorn', 'main:app', '--port', "$BackendPort", '--reload' `
-        -WorkingDirectory $PSScriptRoot -PassThru -NoNewWindow
+    $Prozesse += StarteProgramm $VenvPython `
+        @('-m', 'uvicorn', 'main:app', '--port', "$BackendPort", '--reload') `
+        $PSScriptRoot
     Schreib "  Backend    http://localhost:$BackendPort" Green
 
     # --- Frontend ---
-    $Prozesse += Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'dev' `
-        -WorkingDirectory (Join-Path $PSScriptRoot 'mtg-frontend') -PassThru -NoNewWindow
+    $Prozesse += StarteProgramm 'npm' @('run', 'dev') `
+        (Join-Path $PSScriptRoot 'mtg-frontend')
     Schreib "  Frontend   http://localhost:$FrontendPort" Green
 
     # --- Stripe ---
+    # In einem eigenen try: Stripe ist die einzige der drei Komponenten, ohne
+    # die man weiterarbeiten kann. Scheitert der Start hier, sollen Backend und
+    # Frontend WEITERLAUFEN -- vorher riss ein Stripe-Fehler beides mit sich,
+    # und man stand ohne alles da, obwohl nur die Bezahlung betroffen war.
     if ($LokalerWebhookSchluessel) {
         $Ziel = "localhost:$BackendPort$WebhookPfad"
-        $Prozesse += Start-Process -FilePath 'stripe' `
-            -ArgumentList 'listen', '--forward-to', $Ziel `
-            -WorkingDirectory $PSScriptRoot -PassThru -NoNewWindow
-        Schreib "  Stripe     leitet Webhooks an $Ziel" Green
+        try {
+            $Prozesse += StarteProgramm 'stripe' `
+                @('listen', '--forward-to', $Ziel) $PSScriptRoot
+            Schreib "  Stripe     leitet Webhooks an $Ziel" Green
+        } catch {
+            Schreib "  Stripe     LIESS SICH NICHT STARTEN: $($_.Exception.Message)" Yellow
+            Schreib '             Backend und Frontend laufen weiter. Nicht gehen' Yellow
+            Schreib '             wird die Premium-Freischaltung nach einem Testkauf.' Yellow
+        }
     }
 
     Titel "Bereit -- oeffne http://localhost:$FrontendPort"
