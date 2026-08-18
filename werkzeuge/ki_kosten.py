@@ -194,9 +194,17 @@ async def _messe(macher) -> None:
         except Exception as fehler:
             print(f"Fehler: {type(fehler).__name__}: {fehler}")
 
+    # Das Protokoll wird gepuffert und von einer Hintergrundaufgabe
+    # weggeschrieben. Hier einmal ausdruecklich leeren, sonst fehlen die
+    # zuletzt gemessenen Aufrufe in der Auswertung.
+    from sqlalchemy import text
     from services import ai_usage_log
-    geschrieben = await ai_usage_log.flush()
-    print(f"\n{geschrieben} Aufrufe protokolliert.\n")
+    await ai_usage_log.flush()
+
+    async with macher() as s:
+        vorhanden = (await s.execute(
+            text("SELECT COUNT(*) FROM ai_calls"))).scalar() or 0
+    print(f"\n{vorhanden} Aufrufe protokolliert.\n")
 
 
 async def _auswerten(macher) -> List[dict]:
@@ -370,7 +378,26 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str) -> int:
     return 0
 
 
+def _protokoll_beruhigen() -> None:
+    """Fremdbibliotheken leise stellen.
+
+    Ohne das verschwindet die eigentliche Tabelle zwischen hunderten Zeilen
+    HTTP-Protokoll -- und wer das Werkzeug zum ersten Mal benutzt, sieht vor
+    lauter Technik das Ergebnis nicht. Warnungen der Anwendung selbst bleiben
+    sichtbar: sie sagen, WARUM ein Aufruf gescheitert ist.
+    """
+    import logging
+
+    for name in ("httpx", "httpcore", "google_genai", "google_genai.models",
+                 "urllib3", "main", "services.cache", "services.rules_corpus",
+                 "services.fehlermeldung", "services.ai_service",
+                 "services.multilingual_search", "routers.ai", "routers.decks",
+                 "routers.cards", "routers.vision"):
+        logging.getLogger(name).setLevel(logging.CRITICAL)
+
+
 async def _lauf(abo: Optional[float], waehrung: str) -> int:
+    _protokoll_beruhigen()
     if not os.getenv("GEMINI_API_KEY"):
         print("GEMINI_API_KEY ist nicht gesetzt -- ohne echten Schlüssel gibt es")
         print("keine echten Tokenzahlen, und geschätzte wären wertlos.")
