@@ -114,3 +114,45 @@ def test_preisaenderung_wirkt_ohne_neustart(monkeypatch):
 
     monkeypatch.setenv("GEMINI_PREISE", "m:2.00/2.00")
     assert preis_fuer("m") == (2.00, 2.00)
+
+
+# ----------------------------------------------------------------------
+# Die Dokumentation muss stimmen
+# ----------------------------------------------------------------------
+# Das Trennzeichen wurde von Komma auf Semikolon geaendert, weil das Komma das
+# deutsche Dezimalzeichen ist. In werkzeuge/ki_kosten.py blieb danach das alte
+# Beispiel mit Komma stehen -- und genau das zeigt "--help" an. Wer sich danach
+# richtet, tippt es falsch, die Preise werden still nicht erkannt, und die
+# Kostenrechnung weist 0.00 aus.
+#
+# Deshalb wird hier jedes dokumentierte Beispiel wirklich durch den Parser
+# geschickt, statt es nur hinzuschreiben.
+
+def _beispiele_aus(pfad):
+    import re
+
+    zeilen = open(pfad, encoding="utf-8").read().splitlines()
+    return [z.split("GEMINI_PREISE=", 1)[1].strip()
+            for z in zeilen if "GEMINI_PREISE=" in z and not z.strip().startswith("#")]
+
+
+@pytest.mark.parametrize("pfad", [
+    "werkzeuge/ki_kosten.py",
+    "services/ai_preise.py",
+    ".env.example",
+])
+def test_die_dokumentierten_beispiele_lassen_sich_lesen(pfad, monkeypatch):
+    beispiele = _beispiele_aus(pfad)
+    assert beispiele, f"In {pfad} steht kein GEMINI_PREISE-Beispiel mehr"
+
+    for beispiel in beispiele:
+        monkeypatch.setenv("GEMINI_PREISE", beispiel)
+        erkannt = tabelle()
+
+        # Ein Komma als Trennzeichen ergaebe genau EINEN kaputten Eintrag.
+        assert len(erkannt) >= 2, (
+            f"{pfad}: das Beispiel {beispiel!r} ergibt nur {len(erkannt)} "
+            f"Eintrag/Eintraege -- vermutlich Komma statt Semikolon")
+        for modell, (ein, aus) in erkannt.items():
+            assert ein is not None and aus is not None, (
+                f"{pfad}: {modell!r} hat keinen vollstaendigen Preis")

@@ -28,7 +28,10 @@ Die Preise stehen JE MODELL, weil die Anwendung zwei benutzt: das grosse fuer
 die Deck-Analyse, das kleine fuer alles andere. Zwischen ihnen liegt laut
 Preisliste Faktor 20 und mehr, ein Einheitspreis waere also grob falsch:
 
-    GEMINI_PREISE=gemini-2.5-flash:0.30/2.50,gemini-2.5-flash-lite:0.10/0.40
+    GEMINI_PREISE=gemini-2.5-flash:0.30/2.50; gemini-2.5-flash-lite:0.10/0.40
+
+Getrennt wird mit SEMIKOLON, nicht mit Komma -- das Komma ist das
+deutsche Dezimalzeichen und wuerde "0,30" zerreissen.
 
 Geschluesselt wird nach dem Modell, das TATSAECHLICH geantwortet hat -- nicht
 nach dem angefragten Alias. Taucht ein Modell ohne hinterlegten Preis auf,
@@ -436,7 +439,11 @@ async def _lauf(abo: Optional[float], waehrung: str, kurs: float) -> int:
 
 
 def main() -> int:
-    zerleger = argparse.ArgumentParser(description=__doc__)
+    zerleger = argparse.ArgumentParser(
+        description=__doc__,
+        # Ohne das walzt argparse den Docstring zu einem Textblock --
+        # Tabellen und Beispiele werden dabei unlesbar.
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     zerleger.add_argument("--abo", type=float, default=None,
                           help="Abo-Preis je Monat, um die Marge auszurechnen")
     zerleger.add_argument("--waehrung", default="CHF",
