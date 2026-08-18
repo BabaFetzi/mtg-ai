@@ -234,6 +234,41 @@ async def _auswerten(macher) -> List[dict]:
 # ======================================================================
 # Rechnen
 # ======================================================================
+def _ersatz_hinweise(zeilen: List[dict]) -> List[str]:
+    """Meldet Funktionen, die nur über das Ersatzmodell durchgekommen sind.
+
+    Die Anwendung wiederholt einen gescheiterten Aufruf einmal mit dem
+    Ersatzmodell. Beim teuren Modell ist der Ersatz das GÜNSTIGE -- die
+    Messung erwischt dann den billigen Aufruf, und die Hochrechnung fällt zu
+    niedrig aus. Erkennbar ist das daran, dass dieselbe Funktion einmal
+    gescheitert und einmal (auf einem anderen Modell) gelungen ist.
+    """
+    gescheitert = {}
+    for z in zeilen:
+        if not z["erfolg"]:
+            gescheitert.setdefault(z["funktion"], str(z["modell"] or ""))
+
+    hinweise = []
+    for z in zeilen:
+        if not z["erfolg"] or z["funktion"] not in gescheitert:
+            continue
+        angefragt = gescheitert[z["funktion"]]
+        gelungen = str(z["modell"] or "")
+        if not angefragt or angefragt == gelungen:
+            continue
+        hinweise.append(
+            f"\nACHTUNG: '{z['funktion']}' ist nur über das ERSATZMODELL "
+            f"durchgekommen.\n"
+            f"  angefragt: {angefragt}  (ausgefallen)\n"
+            f"  gerechnet: {gelungen}  (das Ersatzmodell, meist das günstigere)\n"
+            f"Im Normalbetrieb antwortet das angefragte Modell -- dann ist der\n"
+            f"echte Betrag HÖHER als hier ausgewiesen. Lass den Lauf später\n"
+            f"noch einmal laufen, bis kein Ersatz mehr einspringt."
+        )
+        gescheitert.pop(z["funktion"])
+    return hinweise
+
+
 def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
              kurs: float = 1.0) -> int:
     from services.ai_preise import kosten as modellkosten, preis_fuer, tabelle
@@ -366,6 +401,17 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
           f"{format(gesamt_aus, ',').replace(',', '.'):>10}"
           + (f" {gesamt_kosten:>11.4f}" if hat_preise else ""))
 
+    # --- Ist hier ein Ersatzmodell eingesprungen? ---
+    # Faellt das Hauptmodell aus (503 "high demand"), wiederholt die Anwendung
+    # den Aufruf mit dem Ersatzmodell -- und das ist beim teuren Modell das
+    # GUENSTIGE. Gemessen wird dann der billige Aufruf, und die Hochrechnung
+    # faellt zu niedrig aus, ohne dass man es der Zahl ansieht.
+    #
+    # Das ist genau die Richtung, in die man sich hier nicht irren darf: die
+    # Zahl saehe beruhigend aus und waere falsch.
+    for zeile_ersatz in _ersatz_hinweise(zeilen):
+        print(zeile_ersatz)
+
     if ohne_preis:
         print()
         print("ACHTUNG: Für diese Modelle ist kein Preis hinterlegt, sie fehlen")
@@ -460,6 +506,14 @@ def modelle_auflisten() -> int:
                      and not any(x in n for x in ("preview", "tts", "audio", "image",
                                                   "live", "thinking", "exp")))
 
+    # Die beiden Aliase, die die Anwendung standardmaessig benutzt, muessen in
+    # jedem Fall dabei sein -- sie sind die einzigen Namen, hinter denen sich
+    # die Abrechnung versteckt, und genau sie stehen nicht immer in der Liste.
+    from services.ai_service import MODEL_LITE_NAME, MODEL_NAME
+    for alias in (MODEL_NAME, MODEL_LITE_NAME):
+        if alias and alias not in passend:
+            passend.append(alias)
+
     print(f"{len(brauchbar)} Modelle sind gelistet, davon {len(passend)} aus der "
           f"Flash-Familie.\n")
     print("Aufgelistet heisst NICHT benutzbar: Google fuehrt aeltere Fassungen")
@@ -469,12 +523,21 @@ def modelle_auflisten() -> int:
 
     from services.ai_preise import preis_fuer
 
-    print(f"{'Modell':<26} {'Antwortet':<12} {'Preis hinterlegt'}")
-    print("-" * 70)
+    # "Rechnet ab als" ist die wichtigste Spalte. Ein Alias wie
+    # "gemini-flash-latest" ist nur ein Zeiger; abgerechnet und in ai_calls.modell
+    # protokolliert wird das Modell, das wirklich geantwortet hat. Ohne diese
+    # Spalte fragt man den Preis fuer einen Namen ab, den es in keiner
+    # Preisliste gibt -- und bekommt "Preis fehlt", ohne den Grund zu sehen.
+    print(f"{'Modell':<26} {'Antwortet':<12} {'Rechnet ab als':<26} Preis")
+    print("-" * 78)
     funktioniert = []
+    aufgeloest = {}
+    ohne_preis = []
     for name in passend:
+        echt = ""
         try:
-            client.models.generate_content(model=name, contents="ok")
+            antwort = client.models.generate_content(model=name, contents="ok")
+            echt = getattr(antwort, "model_version", None) or name
             zustand, geht = "ja", True
         except Exception as fehler:
             text = str(fehler)
@@ -482,24 +545,47 @@ def modelle_auflisten() -> int:
                 zustand, geht = "nein (alt)", False
             elif "404" in text or "NOT_FOUND" in text:
                 zustand, geht = "nein (404)", False
+            elif "503" in text or "UNAVAILABLE" in text:
+                # Kein Urteil ueber das Modell: es ist gerade nur ueberlastet.
+                zustand, geht = "gerade voll", False
             else:
                 zustand, geht = "nein", False
 
-        ein, aus = preis_fuer(name)
-        preis = f"{ein}/{aus}" if ein is not None and aus is not None else "--"
-        print(f"{name:<26} {zustand:<12} {preis}")
+        # Der Preis gehoert zum ABRECHNENDEN Modell, nicht zum angefragten.
+        ein, aus = preis_fuer(echt or name)
+        preis = f"{ein}/{aus}" if ein is not None and aus is not None else "-- fehlt"
+        print(f"{name:<26} {zustand:<12} {echt or '--':<26} {preis}")
         if geht:
             funktioniert.append(name)
+            aufgeloest[name] = echt
+            if (ein is None or aus is None) and echt not in ohne_preis:
+                ohne_preis.append(echt)
 
     if not funktioniert:
         print("\nKein einziges Modell hat geantwortet -- stimmt der Schluessel?")
         return 1
 
-    print(f"\nBenutzbar: {', '.join(funktioniert)}")
+    # Was die Anwendung TATSAECHLICH benutzt -- das ist die Zeile, wegen der
+    # man dieses Werkzeug aufruft.
+    print("\nWas Grana gerade benutzt:")
+    for zweck, alias in (("Deck-Analyse    (GEMINI_MODEL)     ", MODEL_NAME),
+                         ("alles andere    (GEMINI_MODEL_LITE)", MODEL_LITE_NAME)):
+        ziel = aufgeloest.get(alias)
+        if ziel:
+            print(f"  {zweck} {alias}  ->  {ziel}")
+        else:
+            print(f"  {zweck} {alias}  ->  hat nicht geantwortet, "
+                  f"Preis darum unbekannt")
+
+    if ohne_preis:
+        print("\nFuer diese Modelle fehlt der Preis in GEMINI_PREISE:")
+        for m in ohne_preis:
+            print(f"  {m}")
+        print("Nachsehen unter ai.google.dev/gemini-api/docs/pricing.")
+
     print("\nNimm fuer GEMINI_MODEL_LITE das guenstigste, das antwortet, und fuer")
-    print("GEMINI_MODEL eines der groesseren. Den Preis dazu holst du unter")
-    print("ai.google.dev/gemini-api/docs/pricing und traegst ihn in GEMINI_PREISE")
-    print("ein -- steht dort '--', fehlt er noch.")
+    print("GEMINI_MODEL eines der groesseren. Trag den Preis des Modells ein,")
+    print("das in der Spalte 'Rechnet ab als' steht -- nicht den des Alias.")
     return 0
 
 

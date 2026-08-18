@@ -172,3 +172,53 @@ def test_ohne_preise_wird_kein_betrag_behauptet(monkeypatch, capsys):
     assert kode == 0
     assert "Keine Preise hinterlegt" in ausgabe
     assert "kostet dich im schlimmsten Fall" not in ausgabe
+
+
+# ----------------------------------------------------------------------
+# Wenn das Ersatzmodell einspringt
+# ----------------------------------------------------------------------
+# Aufgetreten in einem echten Lauf: die Deck-Analyse bekam auf dem grossen
+# Modell HTTP 503 ("high demand"), die Anwendung wiederholte den Aufruf
+# automatisch auf dem kleinen -- und der Bericht rechnete danach die gesamten
+# 300 Textaufrufe mit dem GUENSTIGEN Preis.
+#
+# Die Zahl sah beruhigend aus und war zu niedrig. Genau die Richtung, in die
+# man sich bei einem Abo-Geschaeft nicht irren darf.
+
+def test_ersatzmodell_wird_gemeldet(preise, capsys):
+    messung = [
+        # So sieht es im Protokoll aus: ein Fehlschlag auf dem grossen Modell...
+        dict(zeile("deck_analyse", None, None, modell=GROSS, erfolg=0),
+             fehler="503 UNAVAILABLE: This model is currently experiencing high demand"),
+        # ...und direkt danach der geglueckte Versuch auf dem kleinen.
+        zeile("deck_analyse", 2_521, 958, modell=KLEIN),
+        zeile("vision_erkennung", 800, 200),
+    ]
+
+    _bericht(messung, abo=3.90, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "ERSATZMODELL" in ausgabe
+    assert GROSS in ausgabe                      # was angefragt war
+    assert "HÖHER" in ausgabe                    # in welche Richtung es abweicht
+
+
+def test_ohne_ersatz_kein_hinweis(preise, capsys):
+    """Die Gegenprobe -- eine saubere Messung darf nicht gewarnt werden."""
+    _bericht(MESSUNG, abo=20.00, waehrung="CHF")
+
+    assert "ERSATZMODELL" not in capsys.readouterr().out
+
+
+def test_gescheitert_auf_demselben_modell_ist_kein_ersatz(preise, capsys):
+    """Ein Fehlversuch und ein geglueckter Versuch auf DEMSELBEN Modell heisst
+    nur, dass es beim zweiten Mal geklappt hat -- gerechnet wird richtig."""
+    messung = [
+        dict(zeile("deck_analyse", None, None, modell=GROSS, erfolg=0),
+             fehler="503 UNAVAILABLE"),
+        zeile("deck_analyse", 2_521, 958, modell=GROSS),
+    ]
+
+    _bericht(messung, abo=20.00, waehrung="CHF")
+
+    assert "ERSATZMODELL" not in capsys.readouterr().out
