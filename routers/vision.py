@@ -16,6 +16,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from auth import decode_token
 from database import check_user_premium
+from services import bildvergleich
 from services.ai_service import model_lite, modell_fuer
 from services.local_matcher import sync_deck_locally, load_and_compute_descriptors, match_card_crop
 from services.usage_limiter import check_and_increment_vision_minutes
@@ -440,6 +441,8 @@ async def ws_vision_endpoint(websocket: WebSocket, token: str = ""):
     last_gemini_time = 0.0
     last_cards: List[Dict[str, Any]] = []
     last_advice = ""
+    # Signatur des Bildes, mit dem zuletzt WIRKLICH gefragt wurde.
+    letzte_signatur = None
     try:
         while True:
             data = await websocket.receive_bytes()
@@ -459,8 +462,22 @@ async def ws_vision_endpoint(websocket: WebSocket, token: str = ""):
 
             now = time.time()
             if now - last_gemini_time >= VISION_WS_MIN_GEMINI_INTERVAL_SECONDS:
-                if await check_and_increment_vision_minutes(benutzername, VISION_WS_MIN_GEMINI_INTERVAL_SECONDS / 60):
+                # Hat sich seit der letzten Frage überhaupt etwas getan?
+                #
+                # Wer die Kamera eine Minute auf dasselbe Spielfeld hält, zahlte
+                # bisher fünf identische Anfragen. Gleiches Bild heisst gleiche
+                # Antwort -- es wird also nichts geraten, es wird nur nicht
+                # zweimal dasselbe gefragt. Das Kontingent bleibt dabei
+                # unangetastet: Wo kein Aufruf stattfindet, entstehen keine
+                # Kosten, und dann darf auch nichts abgebucht werden.
+                signatur = await asyncio.to_thread(bildvergleich.signatur, data) \
+                    if bildvergleich.AKTIV else None
+                if signatur is not None and bildvergleich.unveraendert(letzte_signatur, signatur):
                     last_gemini_time = now
+                    logger.debug("Vision: Bild unverändert -- kein Gemini-Aufruf.")
+                elif await check_and_increment_vision_minutes(benutzername, VISION_WS_MIN_GEMINI_INTERVAL_SECONDS / 60):
+                    last_gemini_time = now
+                    letzte_signatur = signatur
                     detection = await detect_cards_from_image(data)
                     last_cards = detection.get("cards", [])
                     last_advice = await generate_board_advice(last_cards)

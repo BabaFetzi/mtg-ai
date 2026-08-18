@@ -444,6 +444,65 @@ def _geldwert(z) -> float:
         ((z["prompt_tokens"] or 0) + (z["antwort_tokens"] or 0)) / 1e9)
 
 
+def _stufen_uebersicht(posten, kurs: float, waehrung: str) -> None:
+    """Was jeder Posten kostet, und auf welcher Modellstufe er läuft.
+
+    Der Zweck: eine Modellwahl soll eine begründete Entscheidung sein, keine
+    Gewohnheit. Dafür muss nebeneinanderstehen, was eine Funktion KOSTET und
+    welche Stufe sie BENUTZT -- sonst diskutiert man über die falsche.
+
+    Die Zuordnung kommt aus services/ki_modelle.py, also aus derselben Quelle,
+    aus der sich die Anwendung im Betrieb bedient. Sie hier noch einmal
+    hinzuschreiben hiesse, dass beide irgendwann auseinanderlaufen.
+    """
+    from services.ai_preise import kosten as modellkosten
+    from services.ki_modelle import stufe_fuer
+
+    # Posten -> die Funktion, deren Stufe dahintersteckt.
+    zuordnung = {
+        "Text": None,          # steht im Namen des Postens (teuerster Aufruf)
+        "Bilderkennung": "vision_erkennung",
+        "Taktikhinweis": "vision_rat",
+        "Kartensuche": "kartenname_uebersetzung",
+    }
+
+    zeilen = []
+    for name, anzahl, ein, aus, modell in posten:
+        if not (ein or aus):
+            continue
+        funktion = next((f for schlagwort, f in zuordnung.items()
+                         if schlagwort in name and f), None)
+        if funktion is None:
+            # Beim Textposten steht die Funktion in der Beschriftung:
+            # "300x Text (deck_analyse, teuerster)".
+            funktion = name.split("(")[-1].split(",")[0].strip() if "(" in name else ""
+        k = modellkosten(ein * anzahl, aus * anzahl, modell)
+        zeilen.append((funktion or "?", stufe_fuer(funktion) if funktion else "?",
+                       modell or "?", (k or 0.0) * kurs))
+
+    if not zeilen:
+        return
+
+    summe = sum(z[3] for z in zeilen) or 1.0
+    print()
+    print("=" * 78)
+    print("Je Funktion: was kostet sie, und worauf läuft sie?")
+    print("=" * 78)
+    print(f"{'Funktion':<24} {'Stufe':<7} {'Modell':<24} {'Anteil':>7} {waehrung:>9}")
+    for funktion, stufe, modell, betrag in sorted(zeilen, key=lambda z: -z[3]):
+        print(f"{funktion:<24} {stufe:<7} {modell[:24]:<24} "
+              f"{betrag / summe * 100:>6.1f}% {betrag:>9.4f}")
+
+    teuerste = max(zeilen, key=lambda z: z[3])
+    print()
+    print(f"Der grösste Posten ist '{teuerste[0]}' mit "
+          f"{teuerste[3] / summe * 100:.0f} Prozent.")
+    print("Umstellen und danach neu messen -- ohne Codeänderung:")
+    print(f"  GEMINI_STUFE_{teuerste[0].upper()}=klein")
+    print("Ob das kleinere Modell für diese Funktion gut genug antwortet, ist")
+    print("eine inhaltliche Frage und keine, die dieses Werkzeug beantworten kann.")
+
+
 def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
              kurs: float = 1.0) -> int:
     from services.ai_preise import kosten as modellkosten, preis_fuer, tabelle
@@ -652,6 +711,8 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
             print("\nHinweis: Weniger als die Hälfte bleibt übrig -- vor Stripe-Gebühren.")
     else:
         print("Mit --abo <Betrag> rechnet das Werkzeug die Marge gleich mit aus.")
+
+    _stufen_uebersicht(posten, kurs, waehrung)
 
     print("\nHinweise:")
     print("* Bilder rechnet Gemini nach Kacheln ab. Ändert sich die Auflösung")

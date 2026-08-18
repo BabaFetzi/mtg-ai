@@ -412,3 +412,56 @@ def test_ein_einzelner_ausfall_raet_zum_abwarten(preise, capsys):
     assert "1x ausgefallen" in ausgabe
     assert "noch einmal laufen" in ausgabe
     assert "GEMINI_MODEL=" not in ausgabe
+
+
+# ----------------------------------------------------------------------
+# Je Funktion: was kostet sie, und worauf laeuft sie?
+# ----------------------------------------------------------------------
+# Eine Modellwahl soll eine begruendete Entscheidung sein, keine Gewohnheit.
+# Dafuer muss nebeneinanderstehen, was eine Funktion KOSTET und welche Stufe
+# sie BENUTZT -- sonst diskutiert man ueber die falsche.
+
+def test_die_uebersicht_nennt_kosten_und_stufe_je_funktion(preise, capsys):
+    _bericht(MESSUNG, abo=3.90, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "Je Funktion" in ausgabe
+    # Die teure Funktion mit ihrer Stufe.
+    assert "deck_analyse" in ausgabe
+    assert "gross" in ausgabe
+    # Und die guenstigen.
+    assert "vision_erkennung" in ausgabe
+
+
+def test_die_uebersicht_weist_den_groessten_posten_aus(preise, capsys):
+    """Die Zahl, an der eine Entscheidung haengt: wo lohnt sich Nachdenken?"""
+    _bericht(MESSUNG, abo=3.90, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "Der grösste Posten ist 'deck_analyse'" in ausgabe
+    # Und wie man ihn umstellt, ohne Code anzufassen.
+    assert "GEMINI_STUFE_DECK_ANALYSE=klein" in ausgabe
+
+
+def test_die_stufe_kommt_aus_der_echten_zuordnung(preise, capsys, monkeypatch):
+    """Nicht noch einmal hingeschrieben, sondern aus services/ki_modelle.py --
+    sonst laufen Werkzeug und Anwendung irgendwann auseinander."""
+    monkeypatch.setenv("GEMINI_STUFE_DECK_ANALYSE", "klein")
+
+    _bericht(MESSUNG, abo=3.90, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    # Nur die Zeile aus der Stufen-Uebersicht ansehen: "deck_analyse" steht
+    # auch in der Tabelle der gemessenen Aufrufe, und die kennt keine Stufe.
+    uebersicht = ausgabe.split("Je Funktion")[-1]
+    zeile = [z for z in uebersicht.splitlines() if z.startswith("deck_analyse")]
+    assert zeile and "klein" in zeile[0], zeile
+
+
+def test_die_uebersicht_masst_sich_kein_urteil_zur_qualitaet_an(preise, capsys):
+    """Ob ein kleineres Modell gut genug antwortet, kann das Werkzeug nicht
+    wissen -- und darf es deshalb auch nicht behaupten."""
+    _bericht(MESSUNG, abo=3.90, waehrung="CHF")
+    ausgabe = capsys.readouterr().out
+
+    assert "inhaltliche Frage" in ausgabe
