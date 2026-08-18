@@ -371,8 +371,12 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
         print("in der Summe -- der echte Betrag ist also HÖHER:")
         for m in sorted(ohne_preis):
             print(f"  {m}")
-        print("\nTrag sie in GEMINI_PREISE nach, oder nagle die Modelle über")
-        print("GEMINI_MODEL / GEMINI_MODEL_LITE auf eine bekannte Fassung fest.")
+        print("\nDie Preise stehen unter ai.google.dev/gemini-api/docs/pricing.")
+        print("Ergänze GEMINI_PREISE um diese Zeile (Werte eintragen):")
+        vorlage = "; ".join(f"{m}:EINGABE/AUSGABE" for m in sorted(ohne_preis))
+        vorhandene = "; ".join(f"{m}:{e}/{a}" for m, (e, a) in sorted(preistabelle.items())
+                               if m != "*" and e is not None and a is not None)
+        print(f"\n  GEMINI_PREISE={'; '.join(x for x in (vorhandene, vorlage) if x)}")
 
     print()
     if not hat_preise:
@@ -381,6 +385,16 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
         print("(Preis je 1 Mio. Tokens aus deiner Gemini-Preisliste) und lass den")
         print("Lauf erneut durchlaufen. Einen Preis zu raten wäre schlimmer als keiner.")
         return 0
+
+    if ohne_preis:
+        # Kein Urteil auf einer unvollstaendigen Summe. Eine Marge auszuweisen,
+        # bei der ein Posten fehlt, waere die gefaehrlichste Ausgabe von allen:
+        # sie sieht aus wie ein Ergebnis.
+        print(f"KEIN ERGEBNIS: mindestens ein Posten fehlt in der Summe.")
+        print(f"Die {gesamt_kosten:.2f} {waehrung} oben sind eine Untergrenze, "
+              f"nicht die Antwort.")
+        print("Trag die fehlenden Preise nach und lass den Lauf erneut laufen.")
+        return 3
 
     print(f"Ein Premium-Nutzer kostet dich im schlimmsten Fall "
           f"{gesamt_kosten:.2f} {waehrung} im Monat.")
@@ -404,6 +418,58 @@ def _bericht(zeilen: List[dict], abo: Optional[float], waehrung: str,
         print("  Währung, rechne mit --kurs um (z.B. --kurs 0.79 --waehrung CHF).")
     else:
         print(f"* Gerechnet mit Umrechnungsfaktor {kurs} auf {waehrung}.")
+    return 0
+
+
+def modelle_auflisten() -> int:
+    """Zeigt, welche Modelle DIESER Schlüssel wirklich benutzen darf.
+
+    Der Grund für diese Funktion: Google schaltet fest versionierte Modelle
+    für neue Schlüssel ab. "gemini-2.5-flash" existiert, steht in der
+    Preisliste -- und antwortet trotzdem mit
+    "404 no longer available to new users". Welche Fassung ein bestimmter
+    Schlüssel benutzen darf, weiss nur die API selbst.
+
+    Raten hilft hier nicht. Fragen schon.
+    """
+    from google import genai
+
+    try:
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        modelle = list(client.models.list())
+    except Exception as fehler:
+        print(f"Modelliste nicht abrufbar: {fehler}")
+        return 1
+
+    brauchbar = []
+    for m in modelle:
+        aktionen = getattr(m, "supported_actions", None) or []
+        if aktionen and "generateContent" not in aktionen:
+            continue
+        name = (getattr(m, "name", "") or "").replace("models/", "")
+        if name:
+            brauchbar.append(name)
+
+    if not brauchbar:
+        print("Der Schlüssel darf kein einziges Modell für generateContent nutzen.")
+        return 1
+
+    print(f"{len(brauchbar)} Modelle stehen diesem Schlüssel zur Verfügung.\n")
+    print("Für Grana kommen diese in Frage (Flash-Familie, ohne Vorschau/Spezialmodelle):")
+    passend = [n for n in brauchbar
+               if "flash" in n
+               and not any(x in n for x in ("preview", "tts", "audio", "image",
+                                            "live", "thinking", "exp"))]
+    for name in sorted(passend):
+        print(f"  {name}")
+
+    print("\nAlle übrigen:")
+    for name in sorted(set(brauchbar) - set(passend)):
+        print(f"  {name}")
+
+    print("\nTrag eine dieser Fassungen in GEMINI_MODEL / GEMINI_MODEL_LITE ein,")
+    print("und den passenden Preis in GEMINI_PREISE. Nur wenn beides zusammenpasst,")
+    print("kann die Kostenrechnung stimmen.")
     return 0
 
 
@@ -453,7 +519,14 @@ def main() -> int:
         help="Umrechnungsfaktor fuer die hinterlegten Preise. Googles "
              "Preisliste ist in USD, die Abrechnung laeuft in CHF -- mit "
              "--kurs 0.79 --waehrung CHF werden aus Dollarpreisen Franken.")
+    zerleger.add_argument(
+        "--modelle", action="store_true",
+        help="nur auflisten, welche Modelle dieser Schluessel benutzen darf, "
+             "und nichts messen")
     args = zerleger.parse_args()
+    if args.modelle:
+        _protokoll_beruhigen()
+        return modelle_auflisten()
     return asyncio.run(_lauf(args.abo, args.waehrung, args.kurs))
 
 
