@@ -65,7 +65,6 @@ const FORMATE_MIT_COMMANDER = new Set(['commander', 'brawl', 'oathbreaker', 'due
 // mindestens 60 -- dieselbe Logik wie im Statistik-Streifen über der
 // Deckliste, hier auch für die Deck-Bibliothek-Karten wiederverwendet.
 function getCardCountStatus(totalCards, format) {
-  const { melde, bestaetige } = useMeldung();
   const target = format === 'commander' ? 100 : 60;
   const legal = format === 'commander' ? totalCards === target : totalCards >= target;
   const label = format === 'commander' ? `${totalCards} / ${target}` : `${totalCards} / ${target}+`;
@@ -158,6 +157,17 @@ export function deckAenderung(bisher, neu) {
 }
 
 function DecksView({ currentUser, userRole, onShowPremiumModal }) {
+  // Muss HIER stehen, in der Komponente. Vorher stand dieselbe Zeile in der
+  // Hilfsfunktion getCardCountStatus() -- einer gewöhnlichen Funktion, keiner
+  // Komponente. Damit gab es in DecksView weder `melde` noch `bestaetige`,
+  // und jeder Klick auf "Fehlende Karten in die Sammlung übernehmen" endete
+  // sofort mit "bestaetige is not defined": keine Rückfrage, kein
+  // API-Aufruf, keine Meldung -- für den Nutzer tat der Knopf schlicht nichts.
+  //
+  // Betroffen war auch das Löschen eines Decks und jede Rückmeldung dieser
+  // Ansicht.
+  const { melde, bestaetige } = useMeldung();
+
   const location = useLocation();
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
