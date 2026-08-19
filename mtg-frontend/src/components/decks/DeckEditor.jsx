@@ -2,9 +2,12 @@ import { useState, useEffect } from 'react';
 import Icons from '../../utils/Icons';
 import { getFallbackCardImage } from '../../utils/scryfallHelpers';
 import { useMeldung } from '../layout/Meldungen';
+import AuflagenWahl from './AuflagenWahl';
 
 function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
   const { melde, bestaetige } = useMeldung();
+  // Karte, für die gerade eine Auflage gewählt wird (null = kein Dialog offen).
+  const [auflagenKarte, setAuflagenKarte] = useState(null);
   const [activeView, setActiveView] = useState("visual"); // "visual" | "text"
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -94,42 +97,63 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
     }
   };
 
-  // 2. Add card to deck list (Updates the deck in db & UI)
-  const addCard = async (cardName) => {
+  // Ein Aufruf für alle drei Änderungen am Deck (hinzufügen, entfernen,
+  // Auflage wechseln). Vorher stand derselbe Ablauf zweimal da -- und der
+  // Fehlerfall wurde in beiden Fassungen nur auf die Konsole geschrieben, wo
+  // ihn kein Nutzer sieht.
+  const aendereDeck = async (pfad, nutzlast, fehlertext) => {
     try {
-      const res = await fetch(`/api/deck/add-card`, {
+      const res = await fetch(pfad, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deck_id: selectedDeck.id, card_name: cardName })
+        body: JSON.stringify({ deck_id: selectedDeck.id, ...nutzlast })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data && data.erfolg) {
         ladeDecks();
         setTextList(data.deck_liste);
         parseDecklist(data.deck_liste);
+        return true;
       }
-    } catch (err) {
-      console.error("Error adding card:", err);
+      melde.fehler(data?.error || fehlertext);
+    } catch {
+      melde.fehler(fehlertext);
     }
+    return false;
   };
 
+  // 2. Add card to deck list (Updates the deck in db & UI)
+  //
+  // `auflage` ist optional. Ohne sie wird die vorhandene Zeile hochgezählt,
+  // gleich aus welchem Set -- mit ihr genau diese Auflage.
+  const addCard = (cardName, auflage) =>
+    aendereDeck("/api/deck/add-card",
+      { card_name: cardName, set: auflage?.set || null,
+        sammlernummer: auflage?.sammlernummer || null },
+      "Die Karte konnte nicht hinzugefügt werden.");
+
   // 3. Remove card from deck list
-  const removeCard = async (cardName) => {
-    try {
-      const res = await fetch(`/api/deck/remove-card`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deck_id: selectedDeck.id, card_name: cardName })
-      });
-      const data = await res.json();
-      if (data && data.erfolg) {
-        ladeDecks();
-        setTextList(data.deck_liste);
-        parseDecklist(data.deck_liste);
-      }
-    } catch (err) {
-      console.error("Error removing card:", err);
+  const removeCard = (cardName, auflage) =>
+    aendereDeck("/api/deck/remove-card",
+      { card_name: cardName, set: auflage?.set || null,
+        sammlernummer: auflage?.sammlernummer || null },
+      "Die Karte konnte nicht entfernt werden.");
+
+  // 3b. Auflage einer Karte im Deck festlegen oder wieder aufheben.
+  const setzeAuflage = async (karte, auflage) => {
+    const erfolg = await aendereDeck("/api/deck/auflage", {
+      card_name: karte.name,
+      alt_set: karte.set || null,
+      alt_sammlernummer: karte.sammlernummer || null,
+      set: auflage?.set || null,
+      sammlernummer: auflage?.sammlernummer || null,
+    }, "Die Auflage konnte nicht geändert werden.");
+    if (erfolg) {
+      melde.erfolg(auflage
+        ? `${karte.name}: Auflage ${(auflage.set || '').toUpperCase()} übernommen.`
+        : `${karte.name}: Festlegung der Auflage aufgehoben.`);
     }
+    setAuflagenKarte(null);
   };
 
   // 4. Drag and Drop handlers
@@ -225,6 +249,15 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
               <code style={{ background: 'var(--bg-card)', padding: '4px 8px', borderRadius: '4px', display: 'inline-block', whiteSpace: 'pre' }}>
                 {"1x Sol Ring\n4x Lightning Bolt\n1x Krenko, Mob Boss"}
               </code>
+              <br /><br />
+              Willst du eine <strong>bestimmte Auflage</strong> festhalten, schreibe Set-Kürzel
+              und Sammlernummer dahinter — dieselbe Schreibweise wie bei Moxfield, Arena und MTGO:<br />
+              <code style={{ background: 'var(--bg-card)', padding: '4px 8px', borderRadius: '4px', display: 'inline-block', whiteSpace: 'pre', marginTop: '5px' }}>
+                {"4x Lightning Bolt (2XM) 123"}
+              </code>
+              <br />
+              Bequemer geht es im D&amp;D-Editor: dort steht unter jeder Karte ein Knopf mit
+              der Auflage, der alle Versionen zeigt und die aus deiner Sammlung markiert.
             </p>
           </div>
         </div>
@@ -393,7 +426,10 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '20px' }}>
                 {deckCards.map((card, idx) => (
                   <div
-                    key={card.name || idx}
+                    // Dieselbe Karte kann in zwei Auflagen im Deck stehen --
+                    // der Name allein wäre dann kein eindeutiger Schlüssel und
+                    // React würde die beiden Kacheln vermischen.
+                    key={`${card.name}|${card.set || ''}|${card.sammlernummer || ''}|${idx}`}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
@@ -410,7 +446,7 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                       gap: '4px'
                     }}>
                       <button
-                        onClick={() => removeCard(card.name)}
+                        onClick={() => removeCard(card.name, card)}
                         style={{
                           background: 'var(--danger-color)',
                           color: 'white',
@@ -441,7 +477,7 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                         {card.count || 1}
                       </span>
                       <button
-                        onClick={() => addCard(card.name)}
+                        onClick={() => addCard(card.name, card)}
                         style={{
                           background: '#30D158',
                           color: 'white',
@@ -490,12 +526,54 @@ function DeckEditor({ selectedDeck, currentUser, ladeDecks }) {
                     }} title={card.name}>
                       {card.name}
                     </span>
+
+                    {/* Auflage: sichtbar und in einem Klick änderbar. Steht sie
+                        nicht fest, sagt der Knopf genau das -- sonst sähe der
+                        Standarddruck aus wie eine Wahl des Nutzers. */}
+                    <button
+                      type="button"
+                      onClick={() => setAuflagenKarte(card)}
+                      title={card.auflage_gewuenscht && !card.auflage_gefunden
+                        ? 'Diese Auflage liess sich nicht abrufen -- angezeigt wird der Standarddruck.'
+                        : 'Auflage wählen'}
+                      style={{
+                        marginTop: '5px',
+                        padding: '3px 9px',
+                        fontSize: '0.7rem',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        width: 'auto',
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        background: 'var(--bg-main)',
+                        color: card.auflage_gewuenscht && !card.auflage_gefunden
+                          ? '#FF9F0A' : 'var(--text-muted)',
+                        border: `1px solid ${card.set ? 'var(--accent-color)' : 'var(--border-color)'}`,
+                      }}
+                    >
+                      {card.set
+                        ? `${(card.set || '').toUpperCase()}${card.sammlernummer ? ` · ${card.sammlernummer}` : ''}`
+                        : 'Auflage wählen'}
+                      {card.auflage_gewuenscht && !card.auflage_gefunden ? ' ⚠' : ''}
+                    </button>
                   </div>
                 ))}
               </div>
             )}
           </div>
         </div>
+      )}
+
+      {auflagenKarte && (
+        <AuflagenWahl
+          key={`${auflagenKarte.name}|${auflagenKarte.set || ''}`}
+          kartenName={auflagenKarte.name}
+          aktuell={auflagenKarte}
+          onWaehlen={(auflage) => setzeAuflage(auflagenKarte, auflage)}
+          onSchliessen={() => setAuflagenKarte(null)}
+        />
       )}
     </div>
   );

@@ -31,6 +31,8 @@ from auth import get_current_user, get_current_user_optional
 from services.cache import scryfall_cache
 from services.scryfall import (fetch_card_details_cached, scryfall_client, scryfall_request,
                                best_market_price, preis_fuer_variante)
+from services.auflagen import besitz_schluessel, besitz_zu_auflage
+from services.bestand import schluessel
 from services.limiter import limiter
 from services.multilingual_search import finde_karte_sprachunabhaengig
 from services.ai_service import model_lite, modell_fuer, KI_VERFUEGBAR
@@ -171,6 +173,90 @@ async def suche_karte(
         _cache_individual_card(data, bild)
 
         return result
+
+
+# ======================================================================
+# GET /api/karten/auflagen/{karten_name} – Alle Auflagen + eigener Besitz
+# ======================================================================
+@router.get(
+    "/karten/auflagen/{karten_name}",
+    summary="Auflagen einer Karte, markiert mit dem eigenen Besitz",
+    description="Für die Auswahl im Deckbau: welche Versionen einer Karte es "
+                "gibt und welche davon in der eigenen Sammlung liegen.",
+)
+@limiter.limit("120/minute")
+async def karten_auflagen(karten_name: str, request: Request,
+                          current_user: str = Depends(get_current_user)):
+    """Welche Versionen einer Karte gibt es -- und welche davon besitze ich?
+
+    Getrennt von /api/suche/{name}, obwohl beide Auflagen liefern: dort hängt
+    eine KI-Übersetzung mit am Aufruf. Für die reine Auswahl der Auflage wäre
+    das bei jedem Öffnen ein bezahlter Modellaufruf ohne Gegenwert.
+
+    Der Besitz wird NIE mitgecacht -- er gehört zu einem Nutzer, die Auflagen
+    gehören allen.
+    """
+    name = (karten_name or "").strip()
+    if not name:
+        return {"name": "", "auflagen": []}
+
+    cache_key = f"auflagen:v1:{name.lower()}"
+    auflagen = scryfall_cache.get(cache_key)
+    kanonisch = scryfall_cache.get(f"{cache_key}:name")
+
+    if auflagen is None:
+        async with scryfall_client() as client:
+            url = f"https://api.scryfall.com/cards/named?exact={urllib.parse.quote(name)}"
+            resp = await scryfall_request(client, "GET", url)
+            if resp.status_code != 200:
+                url = f"https://api.scryfall.com/cards/named?fuzzy={urllib.parse.quote(name)}"
+                resp = await scryfall_request(client, "GET", url)
+            if resp.status_code != 200:
+                # Ehrlich leer statt einer erfundenen Auflage. Die Oberfläche
+                # sagt dann "keine Auflagen abrufbar" -- der Nutzer behält seine
+                # bisherige Auswahl.
+                return {"name": name, "auflagen": [], "nicht_gefunden": True}
+            daten = resp.json()
+            auflagen = await _fetch_prints(client, daten, _get_card_image(daten))
+            kanonisch = daten.get("name") or name
+        scryfall_cache.set(cache_key, auflagen)
+        scryfall_cache.set(f"{cache_key}:name", kanonisch)
+
+    besitz = await _besitz_je_auflage(current_user, kanonisch or name)
+    return {
+        "name": kanonisch or name,
+        "auflagen": [
+            {**auflage,
+             "besitzt": besitz_zu_auflage(besitz, auflage.get("set"),
+                                          auflage.get("sammlernummer"))}
+            for auflage in auflagen
+        ],
+    }
+
+
+async def _besitz_je_auflage(benutzer: str, karten_name: str) -> dict:
+    """Wie viele Exemplare welcher Auflage liegen in der Sammlung dieses Nutzers?
+
+    Verglichen wird über die Vorderseite: doppelseitige Karten stehen in der
+    Sammlung mal als "Ashling, Rekindled" und mal als "Ashling, Rekindled //
+    Ashling, Rimebound". Ohne diese Angleichung erschiene keine Auflage als
+    besessen, obwohl die Karte im Regal liegt.
+    """
+    if not benutzer or not karten_name:
+        return {}
+    vorderseite = schluessel(karten_name)
+    async with get_db_session() as session:
+        res = await session.execute(
+            text(
+                "SELECT edition, sammlernummer, COUNT(*) AS anzahl "
+                "FROM sammlung_alben "
+                "WHERE benutzername = :user AND karten_name != '__PLACEHOLDER__' "
+                "  AND (LOWER(karten_name) = :name OR LOWER(karten_name) LIKE :vorne) "
+                "GROUP BY edition, sammlernummer"
+            ),
+            {"user": benutzer, "name": vorderseite, "vorne": f"{vorderseite} //%"},
+        )
+        return besitz_schluessel([dict(z) for z in res.mappings().all()])
 
 
 # ======================================================================

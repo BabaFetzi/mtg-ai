@@ -173,3 +173,72 @@ async def test_leere_liste_stuerzt_nicht_ab(db):
 def test_ohne_anmeldung_kein_zugriff():
     antwort = client.post("/api/deck/abgleich", json={"deck_liste": "1 Sol Ring"})
     assert antwort.status_code in (401, 403)
+
+
+# ======================================================================
+# Der fehlende Wert rechnet mit der Auflage
+# ----------------------------------------------------------------------
+# Sonst stünden auf der Analyseseite zwei verschieden gerechnete Beträge:
+# der Deckwert mit der gewählten Auflage, der Fehlbetrag mit dem Standarddruck.
+# Bei einem Alpha-Bolt ist das der Unterschied zwischen 3,44 € und 818 €.
+# ======================================================================
+from services.bestand import abgleichen as _abgleichen, bedarf_aus_deck as _bedarf
+
+_NAMEN = {"lightning bolt": {"name": "Lightning Bolt", "image": "bild-standard",
+                             "price": "1.72", "prices": {"eur": "1.72"}}}
+_DRUCKE = {
+    "lea/161": {"name": "Lightning Bolt", "image": "bild-lea", "price": "409.41"},
+    "msc/806": {"name": "Lightning Bolt", "image": "bild-msc", "price": "1.72"},
+}
+
+
+def _zeile(anzahl, set_code=None, nummer=None):
+    return {"count": anzahl, "name": "Lightning Bolt", "sideboard": False,
+            "set": set_code, "sammlernummer": nummer}
+
+
+def test_fehlbetrag_nutzt_den_preis_der_gewaehlten_auflage():
+    ergebnis = _abgleichen(_bedarf([_zeile(4, "lea", "161")], _NAMEN, _DRUCKE),
+                           {"lightning bolt": 2})
+    assert ergebnis["fehlend"] == 2
+    assert ergebnis["fehlender_wert"] == "818.82"
+
+
+def test_ohne_auflage_bleibt_der_standarddruck():
+    ergebnis = _abgleichen(_bedarf([_zeile(4)], _NAMEN, {}), {"lightning bolt": 2})
+    assert ergebnis["fehlender_wert"] == "3.44"
+
+
+def test_nicht_aufloesbare_auflage_faellt_auf_den_standarddruck_zurueck():
+    ergebnis = _abgleichen(_bedarf([_zeile(4, "zzz", "999")], _NAMEN, _DRUCKE),
+                           {"lightning bolt": 2})
+    assert ergebnis["fehlender_wert"] == "3.44"
+
+
+def test_zwei_auflagen_derselben_karte_werden_einzeln_bepreist():
+    """Vier Bolts, davon zwei aus Alpha -- und zwei liegen schon im Regal.
+
+    Ein einziger Preis je Kartenname könnte hier nur noch schätzen. Gezählt
+    wird deshalb je Zeile: die vorhandenen decken die vorderen Zeilen ab, der
+    Rest kostet, was SEINE Zeile kostet.
+    """
+    bedarf = _bedarf([_zeile(2, "msc", "806"), _zeile(2, "lea", "161")], _NAMEN, _DRUCKE)
+    ergebnis = _abgleichen(bedarf, {"lightning bolt": 2})
+
+    assert ergebnis["benoetigt"] == 4
+    assert ergebnis["fehlend"] == 2
+    # Die beiden vorhandenen decken die MSC-Zeile; es fehlen die zwei aus Alpha.
+    assert ergebnis["fehlender_wert"] == "818.82"
+
+
+def test_bild_stammt_von_der_auflage():
+    bedarf = _bedarf([_zeile(4, "lea", "161")], _NAMEN, _DRUCKE)
+    assert bedarf["lightning bolt"]["bild"] == "bild-lea"
+
+
+def test_posten_verlassen_die_antwort_nicht():
+    """'posten' ist Zwischenrechnung, kein Teil der Schnittstelle."""
+    karten = _abgleichen(_bedarf([_zeile(4, "lea", "161")], _NAMEN, _DRUCKE),
+                         {})["karten"]
+    assert "posten" not in karten[0]
+    assert "info" not in karten[0]

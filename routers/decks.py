@@ -28,16 +28,19 @@ import hashlib
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from auth import get_current_user
 from database import get_db_session, check_user_premium
 from services.cache import scryfall_cache
-from services.scryfall import fetch_card_details_cached, clean_card_name, parse_decklist, build_deck_card_facts
+from services.scryfall import (fetch_card_details_cached, clean_card_name, parse_decklist,
+                               build_deck_card_facts, drucke_fuer_deck, druck_zu_eintrag)
+from services.deckliste import auflage_setzen, karte_entfernen, karte_hinzufuegen
 from services.ai_service import model, model_lite, modell_fuer
 from services.bestand import abgleichen, bedarf_aus_deck, bestand_aus_zeilen
 from services.manabasis import analysiere as analysiere_manabasis
@@ -64,13 +67,40 @@ logger = logging.getLogger(__name__)
 # ======================================================================
 # Lokale Request-Modelle für Add/Remove (zur API-Kompatibilität)
 # ======================================================================
-class DeckAddCardReq(BaseModel):
-    deck_id: int
-    card_name: str
+class AuflageFelder(BaseModel):
+    """Welche Auflage gemeint ist -- optional.
 
-class DeckRemoveCardReq(BaseModel):
+    Fehlt sie, verhalten sich die Endpunkte wie bisher: sie greifen die erste
+    Zeile mit diesem Kartennamen, gleich aus welchem Set. Steht sie dabei, ist
+    genau diese Auflage gemeint.
+
+    Die Längen sind eng gefasst, weil beides direkt in die Deckliste des Nutzers
+    geschrieben wird: Set-Codes haben bei Scryfall höchstens sechs Zeichen,
+    Sammlernummern höchstens zwölf.
+    """
+    set: Optional[str] = Field(default=None, max_length=6)
+    sammlernummer: Optional[str] = Field(default=None, max_length=12)
+
+
+class DeckAddCardReq(AuflageFelder):
     deck_id: int
-    card_name: str
+    card_name: str = Field(max_length=200)
+
+class DeckRemoveCardReq(AuflageFelder):
+    deck_id: int
+    card_name: str = Field(max_length=200)
+
+class DeckAuflageReq(AuflageFelder):
+    """Auflage einer Karte im Deck wechseln.
+
+    'set'/'sammlernummer' sind die NEUE Auflage (leer = wieder ohne Festlegung),
+    'alt_set'/'alt_sammlernummer' benennen die Zeile, die gemeint ist -- nötig,
+    wenn dieselbe Karte in mehreren Auflagen im Deck steht.
+    """
+    deck_id: int
+    card_name: str = Field(max_length=200)
+    alt_set: Optional[str] = Field(default=None, max_length=6)
+    alt_sammlernummer: Optional[str] = Field(default=None, max_length=12)
 
 # ======================================================================
 # Router-Instanz
@@ -273,22 +303,41 @@ async def deck_visualize(req: DeckAnalyseReq, request: Request, current_user: st
     
     unique_names = list(set([p["name"] for p in parsed]))
     scryfall_data = await fetch_card_details_cached(unique_names)
-                    
+    # Die in der Deckliste genannten Auflagen ("(2XM) 123") auflösen. Ohne das
+    # zeigte die Ansicht immer den Standarddruck -- also ein anderes Bild und
+    # einen anderen Preis als die Karte, die tatsächlich im Deck steckt.
+    drucke = await drucke_fuer_deck(parsed)
+
     karten = []
     for p in parsed:
         name_lower = p["name"].lower().strip()
+        druck = druck_zu_eintrag(p, drucke)
+        # 'auflage_gewuenscht' sagt, dass eine Auflage in der Liste STEHT --
+        # 'auflage_gefunden', ob sie sich auflösen liess. Beides getrennt zu
+        # melden ist der Unterschied zwischen "keine Auflage gewählt" und
+        # "gewählte Auflage nicht auffindbar"; die Oberfläche darf das nicht
+        # verwechseln und dem Nutzer den Standarddruck als seine Wahl zeigen.
+        auflage = {
+            "set": (druck or {}).get("set") or p.get("set"),
+            "set_name": (druck or {}).get("set_name", ""),
+            "sammlernummer": (druck or {}).get("sammlernummer") or p.get("sammlernummer"),
+            "auflage_gewuenscht": bool(p.get("set")),
+            "auflage_gefunden": druck is not None,
+        }
         if name_lower in scryfall_data:
+            basis = scryfall_data[name_lower]
             karten.append({
                 "count": p["count"],
-                "name": scryfall_data[name_lower]["name"],
-                "image": scryfall_data[name_lower]["image"],
-                "type": scryfall_data[name_lower]["type"],
-                "cmc": scryfall_data[name_lower].get("cmc", 0),
-                "price": scryfall_data[name_lower].get("price", "0.00"),
+                "name": basis["name"],
+                "image": (druck or {}).get("image") or basis["image"],
+                "type": basis["type"],
+                "cmc": basis.get("cmc", 0),
+                "price": (druck or {}).get("price") or basis.get("price", "0.00"),
                 # Der Starthand-Simulator baut seine Bibliothek aus dieser
                 # Liste. Ohne die Kennzeichnung mischte er Sideboard-Karten
                 # mit ein -- aus dem Sideboard zieht man aber nie.
                 "sideboard": bool(p.get("sideboard")),
+                **auflage,
             })
         else:
             karten.append({
@@ -299,8 +348,9 @@ async def deck_visualize(req: DeckAnalyseReq, request: Request, current_user: st
                 "cmc": 0,
                 "price": "0.00",
                 "sideboard": bool(p.get("sideboard")),
+                **auflage,
             })
-            
+
     return {"karten": karten}
 
 # ======================================================================
@@ -433,7 +483,11 @@ async def deck_abgleich(req: DeckAnalyseReq, request: Request, current_user: str
 
     bestand = await bestand_des_nutzers(current_user)
     scryfall_data = await fetch_card_details_cached(list({p["name"] for p in parsed}))
-    return abgleichen(bedarf_aus_deck(parsed, scryfall_data), bestand)
+    # Mit den Auflagen: sonst stünden auf derselben Seite zwei verschieden
+    # gerechnete Beträge -- Deckwert mit der gewählten Auflage, Fehlbetrag mit
+    # dem Standarddruck.
+    drucke = await drucke_fuer_deck(parsed)
+    return abgleichen(bedarf_aus_deck(parsed, scryfall_data, drucke), bestand)
 
 
 # ======================================================================
@@ -445,23 +499,31 @@ async def deck_abgleich(req: DeckAnalyseReq, request: Request, current_user: str
 )
 @limiter.limit("120/minute")
 async def deck_wert(req: DeckAnalyseReq, request: Request, current_user: str = Depends(get_current_user)):
+    """Gesamtwert der Deckliste.
+
+    Rechnet mit der AUFLAGE, die in der Liste steht. Das ist der eigentliche
+    Grund, warum die Auflage überhaupt gespeichert wird: derselbe Kartenname
+    kostet je nach Druck 30 Cent oder 300 Euro. Ohne Auflage in der Zeile gilt
+    weiterhin der Standarddruck.
+    """
     parsed = parse_decklist(req.deck_liste)
     unique_names = list(set([p["name"] for p in parsed]))
     total_value = 0.0
-    
+
     scryfall_data = await fetch_card_details_cached(unique_names)
+    drucke = await drucke_fuer_deck(parsed)
     for p in parsed:
         name_lower = p["name"].lower().strip()
-        c = scryfall_data.get(name_lower)
+        c = druck_zu_eintrag(p, drucke) or scryfall_data.get(name_lower)
         if not c:
             continue
         count = p["count"]
         try:
-            price = float(c.get("prices", {}).get("eur") or c.get("prices", {}).get("eur_foil") or 0.0)
+            price = float(c.get("price") or 0.0)
         except (ValueError, TypeError):
             price = 0.0
         total_value += (price * count)
-                    
+
     return {"gesamt_wert": f"{total_value:.2f}"}
 
 # ======================================================================
@@ -668,6 +730,44 @@ async def validate_deck(req: ValidateDeckReq, request: Request, current_user: st
         }
 
 # ======================================================================
+# Gemeinsame Helfer für die drei Bearbeitungs-Endpunkte
+# ----------------------------------------------------------------------
+# Laden, Besitz prüfen, speichern -- dreimal derselbe Ablauf. Stand er dreimal
+# ausgeschrieben da, reichte ein vergessener Besitzcheck, damit ein fremdes Deck
+# bearbeitbar wird.
+# ======================================================================
+class _DeckFehler(Exception):
+    """Ein Grund, den der Nutzer lesen darf (nicht gefunden, kein Zugriff)."""
+
+
+@asynccontextmanager
+async def _deck_zum_bearbeiten(deck_id: int, benutzer: str):
+    """Öffnet ein Deck des angemeldeten Nutzers zum Bearbeiten.
+
+    Liefert (session, liste). Wirft _DeckFehler, wenn es das Deck nicht gibt
+    oder es jemand anderem gehört.
+    """
+    async with get_db_session() as session:
+        res = await session.execute(
+            text("SELECT liste, benutzername FROM decks WHERE id = :id"),
+            {"id": deck_id},
+        )
+        row = res.mappings().first()
+        if not row:
+            raise _DeckFehler("Deck nicht gefunden.")
+        if row["benutzername"] != benutzer:
+            raise _DeckFehler("Kein Zugriff auf dieses Deck.")
+        yield session, (row["liste"] or "")
+
+
+async def _deck_speichern(session, deck_id: int, liste: str) -> None:
+    await session.execute(
+        text("UPDATE decks SET liste = :list, aktualisiert_am = CURRENT_TIMESTAMP WHERE id = :id"),
+        {"list": liste, "id": deck_id},
+    )
+
+
+# ======================================================================
 # POST /api/deck/add-card – Karte dem Deck hinzufügen
 # ======================================================================
 @router.post(
@@ -675,57 +775,57 @@ async def validate_deck(req: ValidateDeckReq, request: Request, current_user: st
     summary="Karte zu Deck hinzufügen",
 )
 async def add_card_to_deck(req: DeckAddCardReq, current_user: str = Depends(get_current_user)):
+    """Ein Exemplar mehr im Deck.
+
+    'set'/'sammlernummer' sind optional. Stehen sie dabei, meint der Nutzer
+    genau diese Auflage -- sie bekommt eine eigene Zeile, statt dass eine andere
+    Auflage derselben Karte stillschweigend hochgezählt wird.
+    """
     try:
-        async with get_db_session() as session:
-            res = await session.execute(
-                text("SELECT liste, benutzername FROM decks WHERE id = :id"),
-                {"id": req.deck_id}
-            )
-            row = res.mappings().first()
-            if not row:
-                return {"erfolg": False, "error": "Deck nicht gefunden."}
-            if row["benutzername"] != current_user:
-                return {"erfolg": False, "error": "Kein Zugriff auf dieses Deck."}
-
-            current_liste = row["liste"] or ""
-            lines = current_liste.split('\n')
-            updated = False
-            updated_lines = []
-
-            for line in lines:
-                line_str = line.strip()
-                if not line_str:
-                    continue
-                match = re.match(r'^(\d+)[xX]?\s+(.+)$', line_str)
-                if match:
-                    count = int(match.group(1))
-                    name = match.group(2).strip()
-                    if clean_card_name(name).lower() == clean_card_name(req.card_name).lower():
-                        count += 1
-                        updated_lines.append(f"{count}x {name}")
-                        updated = True
-                    else:
-                        updated_lines.append(line_str)
-                else:
-                    if clean_card_name(line_str).lower() == clean_card_name(req.card_name).lower():
-                        updated_lines.append(f"2x {line_str}")
-                        updated = True
-                    else:
-                        updated_lines.append(line_str)
-
-            if not updated:
-                updated_lines.append(f"1x {req.card_name}")
-
-            new_liste = '\n'.join(updated_lines)
-            await session.execute(
-                text("UPDATE decks SET liste = :list, aktualisiert_am = CURRENT_TIMESTAMP WHERE id = :id"),
-                {"list": new_liste, "id": req.deck_id}
-            )
-
-        return {"erfolg": True, "deck_liste": new_liste}
-    except Exception as e:
-        logger.exception("Fehler beim Hinzufügen der Karte zum Deck")
+        async with _deck_zum_bearbeiten(req.deck_id, current_user) as (session, liste):
+            neue_liste = karte_hinzufuegen(liste, req.card_name, req.set, req.sammlernummer)
+            await _deck_speichern(session, req.deck_id, neue_liste)
+        return {"erfolg": True, "deck_liste": neue_liste}
+    except _DeckFehler as e:
         return {"erfolg": False, "error": str(e)}
+    except Exception:
+        # Kein str(e) an den Client: die Meldung kann Dateipfade oder
+        # SQL-Fragmente enthalten. Die Einzelheiten stehen im Log.
+        logger.exception("Fehler beim Hinzufügen der Karte zum Deck")
+        return {"erfolg": False, "error": "Die Karte konnte nicht hinzugefügt werden."}
+
+
+# ======================================================================
+# POST /api/deck/auflage – Auflage einer Karte im Deck wechseln
+# ======================================================================
+@router.post(
+    "/deck/auflage",
+    summary="Auflage einer Karte im Deck festlegen",
+)
+@limiter.limit("120/minute")
+async def deck_auflage_setzen(req: DeckAuflageReq, request: Request,
+                              current_user: str = Depends(get_current_user)):
+    """Legt fest, WELCHE Version einer Karte im Deck steckt.
+
+    Die Auflage steuert Bild und Preis. Für den Abgleich mit der Sammlung zählt
+    weiterhin jede Auflage: Wer einen Bolt aus 2XM besitzt, dem fehlt keiner,
+    bloss weil im Deck der aus M10 steht.
+    """
+    try:
+        async with _deck_zum_bearbeiten(req.deck_id, current_user) as (session, liste):
+            neue_liste, gefunden = auflage_setzen(
+                liste, req.card_name, req.alt_set, req.alt_sammlernummer,
+                req.set, req.sammlernummer)
+            if not gefunden:
+                return {"erfolg": False,
+                        "error": f"'{req.card_name}' steht nicht in diesem Deck."}
+            await _deck_speichern(session, req.deck_id, neue_liste)
+        return {"erfolg": True, "deck_liste": neue_liste}
+    except _DeckFehler as e:
+        return {"erfolg": False, "error": str(e)}
+    except Exception:
+        logger.exception("Fehler beim Wechsel der Auflage")
+        return {"erfolg": False, "error": "Die Auflage konnte nicht geändert werden."}
 
 # ======================================================================
 # POST /api/deck/remove-card – Karte aus Deck entfernen
@@ -735,63 +835,21 @@ async def add_card_to_deck(req: DeckAddCardReq, current_user: str = Depends(get_
     summary="Karte aus Deck entfernen",
 )
 async def remove_card_from_deck(req: DeckRemoveCardReq, current_user: str = Depends(get_current_user)):
+    """Ein Exemplar weniger. Mit 'set'/'sammlernummer' aus genau dieser Auflage."""
     try:
-        async with get_db_session() as session:
-            res = await session.execute(
-                text("SELECT * FROM decks WHERE id = :id"),
-                {"id": req.deck_id}
-            )
-            deck = res.mappings().first()
-            if not deck:
-                return {"erfolg": False, "error": "Deck nicht gefunden."}
-            if deck["benutzername"] != current_user:
-                return {"erfolg": False, "error": "Kein Zugriff auf dieses Deck."}
-
-            deck_liste = deck["liste"] or ""
-            lines = deck_liste.strip().split('\n') if deck_liste.strip() else []
-
-            # Namen genauso normalisieren wie beim Hinzufügen (clean_card_name),
-            # sonst schlägt der Vergleich fehl, wenn der gespeicherte Name und der
-            # vom Visualizer aufgelöste Name minimal abweichen -- dann fand das
-            # "Verringern" die Karte nie (T-4.1).
-            target = clean_card_name(req.card_name).lower()
-            card_found = False
-            updated_lines = []
-            for line in lines:
-                line_stripped = line.strip()
-                if not line_stripped:
-                    updated_lines.append(line)
-                    continue
-                match = re.match(r'^(\d+)[xX]?\s+(.+)$', line_stripped)
-                if match:
-                    count = int(match.group(1))
-                    name = match.group(2).strip()
-                    if not card_found and clean_card_name(name).lower() == target:
-                        card_found = True
-                        count -= 1
-                        if count > 0:
-                            updated_lines.append(f"{count}x {name}")
-                    else:
-                        updated_lines.append(line)
-                else:
-                    if not card_found and clean_card_name(line_stripped).lower() == target:
-                        card_found = True
-                    else:
-                        updated_lines.append(line)
-
-            if not card_found:
-                return {"erfolg": False, "error": f"Karte '{req.card_name}' nicht im Deck gefunden."}
-
-            new_liste = '\n'.join(updated_lines)
-            await session.execute(
-                text("UPDATE decks SET liste = :list, aktualisiert_am = CURRENT_TIMESTAMP WHERE id = :id"),
-                {"list": new_liste, "id": req.deck_id}
-            )
-
-        return {"erfolg": True, "deck_liste": new_liste}
-    except Exception as e:
-        logger.exception("Fehler beim Entfernen der Karte aus dem Deck")
+        async with _deck_zum_bearbeiten(req.deck_id, current_user) as (session, liste):
+            neue_liste, gefunden = karte_entfernen(
+                liste, req.card_name, req.set, req.sammlernummer)
+            if not gefunden:
+                return {"erfolg": False,
+                        "error": f"Karte '{req.card_name}' nicht im Deck gefunden."}
+            await _deck_speichern(session, req.deck_id, neue_liste)
+        return {"erfolg": True, "deck_liste": neue_liste}
+    except _DeckFehler as e:
         return {"erfolg": False, "error": str(e)}
+    except Exception:
+        logger.exception("Fehler beim Entfernen der Karte aus dem Deck")
+        return {"erfolg": False, "error": "Die Karte konnte nicht entfernt werden."}
 
 
 # ======================================================================

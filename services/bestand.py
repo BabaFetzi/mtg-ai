@@ -39,28 +39,87 @@ def bestand_aus_zeilen(zeilen: Iterable[Any]) -> Dict[str, int]:
 
 
 def bedarf_aus_deck(parsed: Iterable[Dict[str, Any]],
-                    scryfall_data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+                    scryfall_data: Dict[str, Dict[str, Any]],
+                    drucke: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Dict[str, Any]]:
     """Fasst die Deckliste zu einem Bedarf je Karte zusammen.
 
     Dieselbe Karte kann mehrfach in der Liste stehen (Hauptdeck und Sideboard);
     gebraucht wird die Summe -- physisch braucht man beide Exemplare.
+
+    `drucke` sind die aufgelösten Auflagen (siehe services/scryfall.py). Steht
+    in der Deckzeile eine Auflage, gelten deren Bild und Preis. Ohne diesen
+    Schritt zeigte die Analyse zwei verschiedene Zahlen auf einer Seite: der
+    Deckwert rechnete mit der gewählten Auflage, der "fehlende Wert" mit dem
+    Standarddruck -- bei einem Alpha-Bolt ein Unterschied um das Zweihundert-
+    fache.
+
+    'posten' hält die einzelnen Zeilen mit ihrem eigenen Preis fest. Nötig,
+    sobald dieselbe Karte in zwei Auflagen im Deck steht: ein einziger Preis je
+    Kartenname könnte den Fehlbetrag dann nur noch schätzen.
     """
+    drucke = drucke or {}
     bedarf: Dict[str, Dict[str, Any]] = {}
     for p in parsed:
         info = scryfall_data.get((p["name"] or "").lower().strip())
+        druck = _druck_zu(p, drucke)
         anzeige = (info or {}).get("name") or p["name"]
         k = schluessel(anzeige)
+        preis = (druck or {}).get("price") or (info or {}).get("price") or "0.00"
         eintrag = bedarf.setdefault(k, {
             "name": anzeige,
             "benoetigt": 0,
-            "bild": (info or {}).get("image", ""),
-            "preis": (info or {}).get("price") or "0.00",
+            "bild": (druck or {}).get("image") or (info or {}).get("image", ""),
+            "preis": preis,
             "standardland": k in BASIC_LANDS,
             "gefunden": bool(info),
             "info": info,
+            "posten": [],
         })
-        eintrag["benoetigt"] += int(p["count"])
+        anzahl = int(p["count"])
+        eintrag["benoetigt"] += anzahl
+        eintrag["posten"].append({"anzahl": anzahl, "preis": preis})
     return bedarf
+
+
+def _druck_zu(eintrag: Dict[str, Any],
+              drucke: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Der aufgelöste Druck zu einer Deckzeile -- oder None.
+
+    Eigene kleine Fassung statt eines Imports aus services.scryfall: bestand.py
+    soll ohne Netzwerkmodul auskommen und in Tests eigenständig laufen.
+    """
+    s = (eintrag.get("set") or "").strip().lower()
+    if not s:
+        return None
+    n = (eintrag.get("sammlernummer") or "").strip().lower()
+    return drucke.get(f"{s}/{n}" if n else s)
+
+
+def _fehlender_wert(eintrag: Dict[str, Any], fehlt: int) -> float:
+    """Was kosten die fehlenden Exemplare einer Karte?
+
+    Die vorhandenen Exemplare werden den Zeilen der Reihe nach zugeteilt; was
+    übrig bleibt, zählt mit dem Preis SEINER Zeile. Bei nur einer Auflage ist
+    das schlicht Preis × Fehlmenge -- bei zweien wird nicht mehr geraten.
+    """
+    if fehlt <= 0:
+        return 0.0
+    posten = eintrag.get("posten") or [{"anzahl": eintrag["benoetigt"], "preis": eintrag["preis"]}]
+    # Von hinten auffüllen: die zuerst genannte Zeile gilt als die, die man
+    # schon hat. Eine andere Reihenfolge wäre genauso willkürlich; wichtig ist,
+    # dass die Summe der Mengen stimmt und die Regel nachvollziehbar ist.
+    offen = fehlt
+    wert = 0.0
+    for teil in reversed(posten):
+        if offen <= 0:
+            break
+        nehmen = min(int(teil["anzahl"]), offen)
+        offen -= nehmen
+        try:
+            wert += float(teil["preis"] or 0) * nehmen
+        except (TypeError, ValueError):
+            pass
+    return wert
 
 
 def abgleichen(bedarf: Dict[str, Dict[str, Any]],
@@ -82,11 +141,8 @@ def abgleichen(bedarf: Dict[str, Dict[str, Any]],
             standardlaender_fehlend += fehlt
         else:
             fehlend_gesamt += fehlt
-            try:
-                fehlender_wert += float(eintrag["preis"] or 0) * fehlt
-            except (TypeError, ValueError):
-                pass
-        karten.append({**{s: w for s, w in eintrag.items() if s != "info"},
+            fehlender_wert += _fehlender_wert(eintrag, fehlt)
+        karten.append({**{s: w for s, w in eintrag.items() if s not in ("info", "posten")},
                        "vorhanden": vorhanden, "fehlt": fehlt})
 
     # Fehlendes zuerst, Standardländer ans Ende, innerhalb dessen nach Menge.

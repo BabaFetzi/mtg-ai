@@ -40,7 +40,7 @@ from services.antwort import json_antwort
 from services.limiter import limiter
 from services.bestand import bedarf_aus_deck, bestand_aus_zeilen, fehlende_exemplare
 from services.scryfall import (DRUCK_CACHE_PRAEFIX, druck_nach_id, druecke_nach_ids,
-                               fetch_card_details_cached, parse_decklist,
+                               drucke_fuer_deck, fetch_card_details_cached, parse_decklist,
                                preis_fuer_variante)
 
 
@@ -1115,7 +1115,10 @@ async def sammlung_aus_deck(data: DeckUebernahmeData, request: Request, current_
         bestand = bestand_aus_zeilen(res.mappings().all())
 
     scryfall_data = await fetch_card_details_cached(list({p["name"] for p in parsed}))
-    bedarf = bedarf_aus_deck(parsed, scryfall_data)
+    # Mit den Auflagen der Deckliste: die Übernahme muss dieselbe Rechnung
+    # aufmachen wie der Abgleich daneben, sonst legt der Knopf etwas anderes an,
+    # als in der Liste steht.
+    bedarf = bedarf_aus_deck(parsed, scryfall_data, await drucke_fuer_deck(parsed))
     # Eine LEERE Auswahl ist etwas anderes als gar keine: "nichts angekreuzt"
     # muss nichts anlegen, nicht alles. Deshalb wird auf None geprüft und
     # nicht auf Wahrheitswert -- sonst würde eine leere Liste stillschweigend

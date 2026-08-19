@@ -16,6 +16,7 @@ from typing import List, Dict, Any, Optional, Set
 
 import httpx
 
+from services.auflagen import auflage_lesen, auflage_schluessel
 from services.cache import scryfall_cache
 
 from services import umgebung
@@ -288,6 +289,13 @@ def parse_decklist(deck_liste: str) -> List[Dict[str, Any]]:
     Ein 60er-Deck mit 15er-Sideboard erschien dadurch in der Deck-Bibliothek als
     "75 / 60+". Aufrufer, die den Schlüssel nicht auswerten, verhalten sich
     unverändert.
+
+    'set' und 'sammlernummer' halten die AUFLAGE fest, also welche Version einer
+    Karte im Deck steckt ("4 Lightning Bolt (2XM) 123"). Bisher entfernte
+    clean_card_name diese Angabe ersatzlos -- damit liess sich weder das richtige
+    Bild noch der richtige Preis zeigen, und beim Speichern ging die Auswahl des
+    Nutzers still verloren. 'name' bleibt unverändert der bereinigte Name, alle
+    bestehenden Aufrufer arbeiten also weiter wie zuvor.
     """
     lines = deck_liste.strip().split('\n')
     parsed = []
@@ -309,14 +317,17 @@ def parse_decklist(deck_liste: str) -> List[Dict[str, Any]]:
             im_sideboard = line.lower() == "sideboard"
             continue
         match = re.match(r'^(\d+)[xX]?\s+(.+)$', line)
-        if match:
-            parsed.append({
-                "count": int(match.group(1)),
-                "name": clean_card_name(match.group(2).strip()),
-                "sideboard": im_sideboard,
-            })
-        else:
-            parsed.append({"count": 1, "name": clean_card_name(line), "sideboard": im_sideboard})
+        rest = match.group(2).strip() if match else line
+        # Erst die Auflage abtrennen, dann den Namen bereinigen: clean_card_name
+        # würde "(2XM) 123" sonst entfernen, bevor irgendjemand es sehen kann.
+        ohne_auflage, set_code, sammlernummer = auflage_lesen(rest)
+        parsed.append({
+            "count": int(match.group(1)) if match else 1,
+            "name": clean_card_name(ohne_auflage),
+            "sideboard": im_sideboard,
+            "set": set_code,
+            "sammlernummer": sammlernummer,
+        })
     return parsed
 
 
@@ -565,6 +576,25 @@ def _schedule_background_refresh(names: List[str]) -> None:
 DRUCK_CACHE_PRAEFIX = "druck:"
 
 
+def _druck_merken(daten: Dict[str, Any], zusatz_schluessel: Optional[str] = None) -> Dict[str, Any]:
+    """Normalisiert einen Scryfall-Druck und legt ihn unter allen Schlüsseln ab,
+    unter denen er später nachgefragt wird: Kennung, "set/nummer" und -- wenn
+    angegeben -- ein gröberer Schlüssel wie "set".
+
+    Steht einmal hier, weil sonst jede der drei Abrufwege ihre eigene Fassung
+    hätte und eine davon irgendwann einen Schlüssel vergisst.
+    """
+    info = _extract_card_info(daten)
+    info["scryfall_id"] = daten.get("id")
+    info["sammlernummer"] = daten.get("collector_number")
+
+    genau = auflage_schluessel(daten.get("set"), daten.get("collector_number"))
+    for schluessel in (info["scryfall_id"], genau, zusatz_schluessel):
+        if schluessel:
+            scryfall_cache.set(f"{DRUCK_CACHE_PRAEFIX}{schluessel}", info)
+    return info
+
+
 async def druck_nach_id(scryfall_id: str) -> Optional[Dict[str, Any]]:
     """Daten genau eines Drucks (Auflage) anhand seiner Scryfall-Kennung.
 
@@ -592,10 +622,9 @@ async def druck_nach_id(scryfall_id: str) -> Optional[Dict[str, Any]]:
     if antwort.status_code != 200:
         return None
 
-    daten = antwort.json()
-    info = _extract_card_info(daten)
-    info["scryfall_id"] = daten.get("id")
-    info["sammlernummer"] = daten.get("collector_number")
+    info = _druck_merken(antwort.json())
+    # Auch unter der ANGEFRAGTEN Kennung ablegen: Scryfall leitet veraltete
+    # Kennungen still weiter, die Antwort trägt dann eine andere.
     scryfall_cache.set(schluessel, info)
     return info
 
@@ -634,12 +663,107 @@ async def druecke_nach_ids(ids: List[str]) -> Dict[str, Dict[str, Any]]:
                 logger.warning("Drucke: HTTP %s", antwort.status_code)
                 break
             for daten in antwort.json().get("data", []):
-                info = _extract_card_info(daten)
-                info["scryfall_id"] = daten.get("id")
-                info["sammlernummer"] = daten.get("collector_number")
-                scryfall_cache.set(f"{DRUCK_CACHE_PRAEFIX}{daten.get('id')}", info)
-                ergebnis[daten.get("id")] = info
+                ergebnis[daten.get("id")] = _druck_merken(daten)
     return ergebnis
+
+
+async def drucke_nach_auflage(eintraege: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Löst die in Decklisten-Einträgen genannten Auflagen auf -- gebündelt.
+
+    Die Deckliste hält die Auflage als "(2XM) 123" fest, nicht als
+    Scryfall-Kennung: so bleibt die Liste bei Moxfield, Arena und MTGO
+    einfügbar. Für Bild und Preis muss daraus ein konkreter Druck werden.
+
+    Args:
+        eintraege: Dicts mit 'set', 'sammlernummer' und 'name' -- also genau
+            das, was `parse_decklist` liefert. Einträge ohne Set-Code werden
+            übergangen. Steht eine Sammlernummer dabei, wird der Druck exakt
+            darüber bestimmt; sonst über Name + Set (beides kann Scryfall im
+            selben Sammel-Aufruf).
+
+    Returns:
+        {auflage_schluessel: druck_info}. Nicht auflösbare Auflagen fehlen
+        schlicht -- der Aufrufer zeigt dann die Standardauflage und sagt das
+        auch. Eine erfundene Zuordnung wäre schlimmer als keine: sie zeigte
+        einen falschen Preis, der aussieht wie eine Tatsache.
+    """
+    ergebnis: Dict[str, Dict[str, Any]] = {}
+    offen: List[tuple] = []          # (schluessel, identifier)
+    gesehen: Set[str] = set()
+
+    for eintrag in eintraege or []:
+        s = (eintrag.get("set") or "").strip().lower()
+        if not s:
+            continue
+        n = (eintrag.get("sammlernummer") or "").strip()
+        name = (eintrag.get("name") or "").strip()
+        schluessel = auflage_schluessel(s, n)
+        if not schluessel or schluessel in gesehen:
+            continue
+        gesehen.add(schluessel)
+
+        vorhanden = scryfall_cache.get(f"{DRUCK_CACHE_PRAEFIX}{schluessel}")
+        if vorhanden:
+            ergebnis[schluessel] = vorhanden
+            continue
+
+        if n:
+            offen.append((schluessel, {"set": s, "collector_number": n}))
+        elif name:
+            offen.append((schluessel, {"name": name, "set": s}))
+        # Ohne Nummer UND ohne Namen ist nichts zu bestimmen.
+
+    if not offen:
+        return ergebnis
+
+    async with scryfall_client() as client:
+        for start in range(0, len(offen), 75):
+            teil = offen[start:start + 75]
+            try:
+                antwort = await scryfall_request(
+                    client, "POST", "https://api.scryfall.com/cards/collection",
+                    json={"identifiers": [kennzeichen for _, kennzeichen in teil]},
+                )
+            except Exception:
+                logger.warning("Auflagen nicht abrufbar", exc_info=True)
+                break
+            if antwort.status_code != 200:
+                logger.warning("Auflagen: HTTP %s", antwort.status_code)
+                break
+
+            # Scryfall antwortet in derselben Reihenfolge wie angefragt, aber
+            # OHNE die nicht gefundenen. Deshalb wird jede Antwort über ihre
+            # eigenen Felder zugeordnet und nicht über den Listenplatz -- sonst
+            # bekäme eine Karte die Auflage einer anderen.
+            nach_schluessel = {sch: kz for sch, kz in teil}
+            for daten in antwort.json().get("data", []):
+                genau = auflage_schluessel(daten.get("set"), daten.get("collector_number"))
+                grob = auflage_schluessel(daten.get("set"), None)
+                for kandidat in (genau, grob):
+                    if kandidat and kandidat in nach_schluessel:
+                        info = _druck_merken(daten, kandidat)
+                        ergebnis[kandidat] = info
+                        break
+                else:
+                    _druck_merken(daten)
+    return ergebnis
+
+
+async def drucke_fuer_deck(parsed: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Löst alle in einer geparsten Deckliste genannten Auflagen auf.
+
+    Bequemlichkeitsschale um `drucke_nach_auflage` -- der Aufruf steht an
+    mehreren Stellen gleich (Bilder, Wert, Übernahme) und soll dort nicht
+    mehrfach ausgeschrieben werden.
+    """
+    return await drucke_nach_auflage(parsed or [])
+
+
+def druck_zu_eintrag(eintrag: Dict[str, Any],
+                     drucke: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Der aufgelöste Druck zu einem Decklisten-Eintrag -- oder None."""
+    schluessel = auflage_schluessel(eintrag.get("set"), eintrag.get("sammlernummer"))
+    return drucke.get(schluessel) if schluessel else None
 
 
 async def _fetch_uncached(uncached_names: List[str]) -> Dict[str, Dict[str, Any]]:
