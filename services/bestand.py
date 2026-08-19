@@ -106,7 +106,8 @@ def fehlende_exemplare(bedarf: Dict[str, Dict[str, Any]],
                        bestand: Dict[str, int],
                        mit_standardlaendern: bool = False,
                        grenze: Optional[int] = None,
-                       nur_namen: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+                       nur_namen: Optional[Iterable[str]] = None,
+                       mengen: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     """Welche Exemplare müssten ergänzt werden, damit das Deck vollständig ist?
 
     Bewusst nur die FEHLENDEN: wird der Knopf zweimal gedrückt, ist beim
@@ -116,13 +117,17 @@ def fehlende_exemplare(bedarf: Dict[str, Dict[str, Any]],
     Args:
         nur_namen: Wenn angegeben, werden nur diese Karten berücksichtigt --
             für die Auswahl einzelner Karten in der Oberfläche.
+        mengen: Wunschanzahl je Karte. Wer nur zwei von vier fehlenden
+            Exemplaren gekauft hat, trägt hier 2 ein.
 
-    Zur Auswahl: Übergeben werden NUR NAMEN, keine Stückzahlen. Wie viele
-    Exemplare fehlen, rechnet weiterhin diese Funktion aus dem Bedarf und dem
-    tatsächlichen Bestand. Würde man die Anzahl aus der Oberfläche übernehmen,
-    könnte eine veränderte Anfrage beliebig viele Karten in eine fremde
-    Sammlung schreiben -- und die Zahl neben dem Namen stimmte nicht mehr mit
-    dem überein, was angelegt wird.
+    Die Wunschanzahl wird nach OBEN gedeckelt: mehr als fehlt, wird nie
+    angelegt. Weniger schon.
+
+    Das ist die Eigenschaft, an der alles hängt. Ohne den Deckel könnte eine
+    veränderte Anfrage beliebig viele Karten in eine Sammlung schreiben, und
+    zweimal Drücken würde den Bestand verdoppeln. Mit dem Deckel bleibt beides
+    unmöglich, und trotzdem lässt sich eine Teilmenge übernehmen -- beim
+    nächsten Mal steht dann der Rest zur Auswahl.
     """
     posten: List[Dict[str, Any]] = []
     uebersprungene_laender = 0
@@ -132,6 +137,7 @@ def fehlende_exemplare(bedarf: Dict[str, Dict[str, Any]],
     # womöglich nur die Vorderseite. Ein Vergleich Zeichen für Zeichen würde
     # genau die Karten übergehen, die man angekreuzt hat.
     auswahl = None if nur_namen is None else {schluessel(n) for n in nur_namen if n}
+    gewuenscht = {schluessel(n): a for n, a in (mengen or {}).items() if n}
 
     for k, eintrag in sorted(bedarf.items(), key=lambda kv: kv[1]["name"]):
         fehlt = eintrag["benoetigt"] - min(bestand.get(k, 0), eintrag["benoetigt"])
@@ -139,6 +145,21 @@ def fehlende_exemplare(bedarf: Dict[str, Dict[str, Any]],
             continue
         if auswahl is not None and k not in auswahl:
             continue
+
+        wunsch = gewuenscht.get(k)
+        if wunsch is not None:
+            try:
+                wunsch = int(wunsch)
+            except (TypeError, ValueError):
+                wunsch = None
+        if wunsch is not None:
+            # Der Deckel. Nach unten begrenzt auf 0, damit eine negative Zahl
+            # aus einer veränderten Anfrage nicht plötzlich als "unendlich"
+            # oder als Abzug wirkt.
+            fehlt = max(0, min(fehlt, wunsch))
+            if fehlt == 0:
+                continue
+
         if eintrag["standardland"] and not mit_standardlaendern:
             uebersprungene_laender += fehlt
             continue

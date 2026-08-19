@@ -299,3 +299,112 @@ async def test_standardlaender_lassen_sich_einzeln_auswaehlen(db):
     bestand = await _bestand(db)
     assert bestand[("Mountain", "Krenko")] == 12
     assert ("Sol Ring", "Krenko") not in bestand
+
+
+# ======================================================================
+# Stueckzahl anpassen
+# ======================================================================
+# Gewuenscht: "vielleicht auch die Stueckzahl anpassen."
+#
+# Die Anzahl ist ein WUNSCH, keine Anweisung. Der Server deckelt sie auf das,
+# was wirklich fehlt: weniger nehmen geht, mehr nicht. Ohne diesen Deckel
+# koennte eine veraenderte Anfrage die Sammlung aufblaehen, und zweimal
+# Druecken wuerde den Bestand verdoppeln.
+
+@pytest.mark.asyncio
+async def test_weniger_als_fehlt_laesst_sich_uebernehmen(db):
+    """Vier Blitzschlaege fehlen, gekauft hat man erst zwei."""
+    daten = _uebernehmen(db, nur_karten=[{"name": "Lightning Bolt", "anzahl": 2}]).json()
+
+    assert daten["hinzugefuegt"] == 2
+    bestand = await _bestand(db)
+    assert bestand[("Lightning Bolt", "Krenko")] == 2
+
+
+@pytest.mark.asyncio
+async def test_der_rest_laesst_sich_spaeter_nachholen(db):
+    """Nach einer Teiluebernahme muss der Rest weiterhin als fehlend gelten."""
+    _uebernehmen(db, nur_karten=[{"name": "Lightning Bolt", "anzahl": 2}])
+    _uebernehmen(db, nur_karten=[{"name": "Lightning Bolt"}])
+
+    bestand = await _bestand(db)
+    assert bestand[("Lightning Bolt", "Krenko")] == 4
+
+
+@pytest.mark.asyncio
+async def test_mehr_als_fehlt_wird_gedeckelt(db):
+    """Die Sicherheitseigenschaft: 999 angefordert, vier fehlen -- vier
+    werden angelegt. Sonst koennte eine veraenderte Anfrage die Sammlung
+    beliebig aufblaehen."""
+    daten = _uebernehmen(db, nur_karten=[{"name": "Lightning Bolt", "anzahl": 999}]).json()
+
+    assert daten["hinzugefuegt"] == 4
+    bestand = await _bestand(db)
+    assert bestand[("Lightning Bolt", "Krenko")] == 4
+
+
+@pytest.mark.asyncio
+async def test_null_stueck_legt_nichts_an(db):
+    daten = _uebernehmen(db, nur_karten=[{"name": "Lightning Bolt", "anzahl": 0},
+                                         {"name": "Sol Ring"}]).json()
+
+    assert daten["hinzugefuegt"] == 1
+    bestand = await _bestand(db)
+    assert ("Lightning Bolt", "Krenko") not in bestand
+
+
+@pytest.mark.asyncio
+async def test_negative_anzahl_zieht_nichts_ab(db):
+    """Aus einer veraenderten Anfrage kann eine negative Zahl kommen. Sie darf
+    weder als "unendlich" wirken noch Exemplare entfernen."""
+    daten = _uebernehmen(db, nur_karten=[{"name": "Lightning Bolt", "anzahl": -5}]).json()
+
+    assert daten["hinzugefuegt"] == 0
+    assert await _bestand(db) == {}
+
+
+@pytest.mark.asyncio
+async def test_name_ohne_anzahl_heisst_weiterhin_alles(db):
+    """Die alte Schreibweise muss unveraendert gelten -- sonst waere jede
+    bestehende Aufrufstelle still kaputt."""
+    gemischt = _uebernehmen(db, nur_karten=["Sol Ring",
+                                            {"name": "Lightning Bolt", "anzahl": 1}]).json()
+
+    assert gemischt["hinzugefuegt"] == 2
+    bestand = await _bestand(db)
+    assert bestand[("Sol Ring", "Krenko")] == 1
+    assert bestand[("Lightning Bolt", "Krenko")] == 1
+
+
+# ======================================================================
+# Zielordner
+# ======================================================================
+# Gewuenscht: "dass man bei der Analyse aussuchen kann, in welchen Ordner man
+# die Karten aus dem Deck uebernehmen will."
+
+@pytest.mark.asyncio
+async def test_karten_landen_im_gewaehlten_ordner(db):
+    _uebernehmen(db, album_name="Meine Rares")
+
+    bestand = await _bestand(db)
+    assert bestand[("Sol Ring", "Meine Rares")] == 1
+    assert ("Sol Ring", "Krenko") not in bestand
+
+
+@pytest.mark.asyncio
+async def test_ohne_ordnerangabe_gilt_der_deckname(db):
+    """Das bisherige Verhalten bleibt die Vorbelegung."""
+    daten = _uebernehmen(db).json()
+
+    assert daten["album"] == "Krenko"
+
+
+@pytest.mark.asyncio
+async def test_ein_anderer_ordner_zaehlt_trotzdem_als_bestand(db):
+    """Der Abgleich schaut auf die ganze Sammlung, nicht auf einen Ordner.
+    Wer eine Karte schon in "Handel" liegen hat, soll sie nicht ein zweites
+    Mal angelegt bekommen, nur weil ein anderer Ordner gewaehlt ist."""
+    _uebernehmen(db, album_name="Handel")
+    zweite = _uebernehmen(db, album_name="Krenko").json()
+
+    assert zweite["hinzugefuegt"] == 0

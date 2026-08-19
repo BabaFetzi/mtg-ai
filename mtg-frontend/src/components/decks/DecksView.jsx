@@ -8,6 +8,7 @@ import { Copy, Sparkles, Flame, CheckCircle2, AlertTriangle, Printer, RefreshCw,
 import DeckEditor from './DeckEditor';
 import Farbquellen from './Farbquellen';
 import SammlungsAbgleich from './SammlungsAbgleich';
+import { zaehleAuswahl } from './uebernahme';
 import DeckAnalysis from './DeckAnalysis';
 import { formatEuro, formatZahl } from '../../utils/format';
 import { useMeldung } from '../layout/Meldungen';
@@ -233,6 +234,8 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   const [manabasis, setManabasis] = useState(null);
   const [abgleich, setAbgleich] = useState(null);
   const [uebernimmt, setUebernimmt] = useState(false);
+  // Ordnernamen der Sammlung, für die Zielauswahl beim Übernehmen.
+  const [ordnerliste, setOrdnerliste] = useState([]);
   const [newDeckFormat, setNewDeckFormat] = useState("commander");
 
   const createInputRef = useRef(null);
@@ -522,16 +525,18 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
 
   // Fehlende Deckkarten in die Sammlung übernehmen. Angelegt werden genau die
   // fehlenden Exemplare, deshalb ist ein zweiter Druck folgenlos.
-  const uebernehmeInSammlung = async ({ mitStandardlaendern, nurKarten }) => {
+  const uebernehmeInSammlung = async ({ mitStandardlaendern, nurKarten, ordner }) => {
     if (!selectedDeck?.id || uebernimmt || !abgleich) return;
 
     // Bei einer Auswahl zählt nur, was angekreuzt ist -- sonst stünde in der
     // Rückfrage eine andere Zahl als auf dem Knopf.
-    const ausgewaehlt = Array.isArray(nurKarten)
-      ? (abgleich.karten || [])
-          .filter((k) => !k.standardland && k.fehlt > 0 && nurKarten.includes(k.name))
-          .reduce((summe, k) => summe + (k.fehlt || 0), 0)
-      : (abgleich.fehlend || 0);
+    //
+    // Die Liste enthält zwei Formen: einen blossen Namen ("alles, was von der
+    // Karte fehlt") oder {name, anzahl} für eine verringerte Stückzahl. Wer
+    // nur mit includes(name) sucht, übersieht die zweite Form -- die
+    // Rückfrage sagte dadurch "1 Exemplar", während der Knopf 3 anbot und
+    // hinterher auch 3 angelegt wurden.
+    const ausgewaehlt = zaehleAuswahl(nurKarten, abgleich.karten, abgleich.fehlend);
 
     const anzahl = ausgewaehlt
       + (mitStandardlaendern ? (abgleich.standardlaender_fehlend || 0) : 0);
@@ -540,10 +545,15 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
       return;
     }
 
+    // Der WIRKLICHE Zielordner, nicht der Deckname: Wer "Handel" gewählt hat,
+    // darf in der Rückfrage nicht "E2E Test" lesen und danach seine Karten
+    // woanders wiederfinden.
+    const zielordner = (ordner || '').trim() || selectedDeck.name;
+
     const ok = await bestaetige({
       titel: "Karten in die Sammlung übernehmen?",
       text: `${anzahl} ${anzahl === 1 ? 'Exemplar wird' : 'Exemplare werden'} im Ordner `
-        + `"${selectedDeck.name}" angelegt. Bereits vorhandene Karten bleiben unberührt.`,
+        + `"${zielordner}" angelegt. Bereits vorhandene Karten bleiben unberührt.`,
       bestaetigenText: "Ja, übernehmen",
     });
     if (!ok) return;
@@ -555,7 +565,7 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           deck_id: selectedDeck.id,
-          album_name: selectedDeck.name,
+          album_name: zielordner,
           mit_standardlaendern: !!mitStandardlaendern,
           // Nur mitschicken, wenn wirklich ausgewählt wurde. Ohne das Feld
           // nimmt der Server alles Fehlende -- und das ist bei "alle
@@ -770,6 +780,23 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
   };
 
   useEffect(() => { ladeDecks(); }, [currentUser]);
+
+  // Ordnernamen für die Zielauswahl beim Übernehmen. Eigener, leichter
+  // Endpunkt -- er liefert nur die Namen, nicht die ganze Sammlung.
+  useEffect(() => {
+    if (!currentUser) { setOrdnerliste([]); return; }
+    let abgebrochen = false;
+    fetch(`/api/sammlung/${encodeURIComponent(currentUser)}/alben`)
+      .then((r) => r.json())
+      .then((d) => {
+        // Ein Fehlschlag ist kein Grund für eine Meldung: ohne Liste steht im
+        // Auswahlfeld eben nur der Deckname, und das Übernehmen funktioniert
+        // unverändert.
+        if (!abgebrochen && Array.isArray(d?.alben)) setOrdnerliste(d.alben);
+      })
+      .catch(() => {});
+    return () => { abgebrochen = true; };
+  }, [currentUser]);
 
   useEffect(() => {
     if (deckId && decks.length > 0) {
@@ -1649,6 +1676,8 @@ function DecksView({ currentUser, userRole, onShowPremiumModal }) {
                 daten={abgleich}
                 onUebernehmen={uebernehmeInSammlung}
                 uebernimmt={uebernimmt}
+                ordnerliste={ordnerliste}
+                standardOrdner={selectedDeck?.name || ''}
               />
 
               {/* === MANAKURVE === */}

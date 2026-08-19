@@ -26,7 +26,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 from fastapi import (APIRouter, UploadFile, File, Form, Query, HTTPException,
                      BackgroundTasks, Depends, Request)
@@ -435,6 +435,14 @@ class DeleteAlbumData(BaseModel):
     benutzername: str
     album_name: str
 
+class KartenWunsch(BaseModel):
+    """Eine ausgewählte Karte, wahlweise mit Wunschanzahl."""
+    name: str
+    # None heisst "alles, was von dieser Karte fehlt" -- dasselbe wie ein
+    # blosser Name in der Liste.
+    anzahl: Optional[int] = None
+
+
 class DeckUebernahmeData(BaseModel):
     """Fehlende Karten eines Decks in die Sammlung übernehmen."""
     deck_id: int
@@ -444,13 +452,19 @@ class DeckUebernahmeData(BaseModel):
     mit_standardlaendern: bool = False
     # Auswahl einzelner Karten. Leer oder nicht gesetzt heisst: alle fehlenden.
     #
-    # Bewusst nur NAMEN, keine Stückzahlen: wie viele Exemplare fehlen, rechnet
-    # der Server aus Bedarf und Bestand. Käme die Anzahl aus der Oberfläche,
-    # könnte eine veränderte Anfrage beliebig viele Karten anlegen.
+    # Zwei Schreibweisen, damit ein blosser Name weiterhin "alles, was von
+    # dieser Karte fehlt" bedeutet:
+    #     ["Sol Ring"]                          -> alle fehlenden Exemplare
+    #     [{"name": "Sol Ring", "anzahl": 2}]   -> hoechstens zwei
+    #
+    # Die Anzahl ist ein WUNSCH, keine Anweisung: der Server deckelt sie auf
+    # das, was wirklich fehlt (services/bestand.fehlende_exemplare). Mehr als
+    # fehlt wird nie angelegt -- sonst koennte eine veraenderte Anfrage die
+    # Sammlung aufblaehen, und zweimal Druecken wuerde den Bestand verdoppeln.
     #
     # Die Obergrenze schützt davor, dass jemand eine Liste mit hunderttausend
     # Einträgen schickt und damit den Vergleich unnötig lange laufen lässt.
-    nur_karten: Optional[List[str]] = Field(default=None, max_length=500)
+    nur_karten: Optional[List[Union[str, KartenWunsch]]] = Field(default=None, max_length=500)
 
 
 class AddKarteData(BaseModel):
@@ -1106,10 +1120,23 @@ async def sammlung_aus_deck(data: DeckUebernahmeData, request: Request, current_
     # muss nichts anlegen, nicht alles. Deshalb wird auf None geprüft und
     # nicht auf Wahrheitswert -- sonst würde eine leere Liste stillschweigend
     # zu "alle fehlenden Karten".
+    nur_namen = None
+    mengen: Dict[str, int] = {}
+    if data.nur_karten is not None:
+        nur_namen = []
+        for eintrag in data.nur_karten:
+            if isinstance(eintrag, str):
+                nur_namen.append(eintrag)
+            else:
+                nur_namen.append(eintrag.name)
+                if eintrag.anzahl is not None:
+                    mengen[eintrag.name] = eintrag.anzahl
+
     plan = fehlende_exemplare(bedarf, bestand,
                               mit_standardlaendern=data.mit_standardlaendern,
                               grenze=MAX_UEBERNAHME,
-                              nur_namen=data.nur_karten)
+                              nur_namen=nur_namen,
+                              mengen=mengen)
 
     album = (data.album_name or "").strip() or deck["name"]
 

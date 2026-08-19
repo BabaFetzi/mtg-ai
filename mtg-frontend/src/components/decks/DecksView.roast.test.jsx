@@ -16,6 +16,12 @@ function mockFetch(roastResponse) {
     if (url === '/api/deck/roast') {
       return Promise.resolve({ json: async () => roastResponse });
     }
+    // Die Ordnernamen holt DecksView beim Mount fuer die Zielauswahl im
+    // Sammlungsabgleich. Fuer den Roast-Tab belanglos, aber der Aufruf
+    // passiert -- und dieser Mock laesst bewusst nichts Unbekanntes durch.
+    if (typeof url === 'string' && url.endsWith('/alben')) {
+      return Promise.resolve({ json: async () => ({ erfolg: true, alben: [] }) });
+    }
     throw new Error(`Unerwarteter fetch-Aufruf in diesem Test: ${url}`);
   });
 }
